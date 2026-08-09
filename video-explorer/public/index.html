@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Video Explorer</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#0e1116">
+  <link rel="icon" href="/icon-192.png" sizes="192x192">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <h1 class="brand">Video&nbsp;Explorer</h1>
+
+    <div class="folder-field">
+      <input id="dirInput" type="text" spellcheck="false" placeholder="Paste a folder path, e.g. D:\Videos">
+      <button id="browseBtn" class="btn" title="Pick a folder">Browse…</button>
+      <button id="scanBtn" class="btn btn-primary">Open</button>
+    </div>
+
+    <label class="check" title="Show every video beneath this folder in one flat list">
+      <input id="recursiveToggle" type="checkbox"> Flatten subfolders
+    </label>
+
+    <label class="check" title="List files that live in the cloud and are not downloaded to this PC. Uncheck to see only what is available offline.">
+      <input id="cloudToggle" type="checkbox" checked> Show Cloud Items ☁
+    </label>
+
+
+    <button id="advBtn" class="btn btn-icon" title="Advanced filters — folders, tags, rating">
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+        <path d="M1.5 2.5h13L9.5 8.6v4.2l-3 1.7V8.6z" fill="none" stroke="currentColor"
+              stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+      <span id="advDot" class="adv-dot" hidden></span>
+    </button>
+    <button id="settingsBtn" class="btn btn-icon" title="Settings">⚙</button>
+  </div>
+
+  <div class="topbar-row secondary">
+    <input id="searchInput" type="search" class="search"
+           placeholder="Filter by name, subfolder, or tag — #tag for tags only"
+           title="Terms are ANDed. A bare term matches the filename, subfolder, or any tag. Prefix with # or tag: to match tags only.">
+
+    <label class="field">Sort
+      <select id="sortSelect">
+        <option value="name">Name</option>
+        <option value="mtimeMs">Date modified</option>
+        <option value="size">File size</option>
+        <option value="duration">Duration</option>
+        <option value="rating">Rating</option>
+        <option value="relFolder">Folder</option>
+      </select>
+    </label>
+    <button id="sortDirBtn" class="btn btn-icon" title="Toggle sort direction">↑</button>
+
+    <label class="field">Card size
+      <input id="cardWidth" type="range" min="200" max="520" step="20" value="520">
+    </label>
+
+    <label class="field">Frame dwell <span id="dwellLabel" class="mono">1.0s</span>
+      <input id="dwellMs" type="range" min="1000" max="5000" step="250" value="1000">
+    </label>
+
+    <button id="buildAllBtn" class="btn">Build all previews</button>
+    <span id="status" class="status"></span>
+  </div>
+
+  <div id="selectionBar" class="selection-bar" hidden>
+    <span id="selectionCount" class="sel-count">0 selected</span>
+    <button class="btn" data-batch="tags">Tags…</button>
+    <span id="batchStars" class="stars stars-batch" title="Rate everything selected"></span>
+    <button class="btn" data-batch="copy">Copy to…</button>
+    <button class="btn" data-batch="move">Move to…</button>
+    <button class="btn" data-batch="embed" title="Write ratings and tags into the video files so they travel to other devices">Write into files</button>
+    <button class="btn btn-danger" data-batch="delete">Delete</button>
+    <button id="clearSelection" class="btn btn-ghost">Clear</button>
+    <span class="shortcut-hints">
+      <kbd>Esc</kbd> clear
+      <kbd>Del</kbd> delete
+      <kbd>C</kbd> copy
+      <kbd>M</kbd> move
+      <kbd>T</kbd> tags
+      <kbd>0</kbd>–<kbd>5</kbd> rate
+      <kbd>Ctrl</kbd>+<kbd>A</kbd> all
+    </span>
+  </div>
+</header>
+
+<nav id="breadcrumb" class="breadcrumb" hidden></nav>
+
+<section id="foldersSection" class="folders-pane" hidden>
+  <h2 class="section-head">
+    <button id="foldersCollapse" class="collapse-btn" title="Collapse or expand">▾</button>
+    Folders <span id="folderCount" class="count"></span>
+  </h2>
+  <div id="folders" class="folder-grid"></div>
+</section>
+
+<main id="scrollArea">
+  <div id="empty" class="empty">
+    <p class="empty-title">Point me at a folder of MP4s.</p>
+    <p>Type or <strong>Browse…</strong> to a path, then press <strong>Open</strong>. Hover any tile to play through 10 points in the video.</p>
+  </div>
+
+  <section id="filesSection" class="section" hidden>
+    <h2 class="section-head">Videos <span id="fileCount" class="count"></span></h2>
+    <div id="grid" class="grid"></div>
+  </section>
+</main>
+
+<!-- Folder picker -->
+<div id="pickerModal" class="modal" hidden>
+  <div class="modal-card">
+    <header class="modal-head">
+      <h2 id="pickerTitle">Choose a folder</h2>
+      <button class="btn btn-icon modal-close">✕</button>
+    </header>
+    <div class="picker-path">
+      <button id="pickerUp" class="btn btn-icon" title="Up one level">↑</button>
+      <input id="pickerPath" type="text" spellcheck="false">
+      <button id="pickerGo" class="btn">Go</button>
+    </div>
+    <div id="pickerRecent" class="picker-recent"></div>
+    <ul id="pickerList" class="picker-list"></ul>
+    <footer class="modal-foot">
+      <span id="pickerHint" class="hint"></span>
+      <button id="pickerConfirm" class="btn btn-primary">Use this folder</button>
+    </footer>
+  </div>
+</div>
+
+<!-- Inline player -->
+<div id="playerModal" class="modal" hidden>
+  <div class="modal-card modal-wide">
+    <header class="modal-head">
+      <h2 id="playerTitle">Playing</h2>
+      <button class="btn btn-icon modal-close">✕</button>
+    </header>
+    <div class="player-stage">
+      <video id="player" controls preload="metadata"></video>
+    </div>
+    <footer class="modal-foot">
+      <span id="playerMeta" class="hint mono"></span>
+      <div id="playerActions" class="quickbar quickbar-footer"></div>
+    </footer>
+  </div>
+</div>
+
+<!-- Advanced filters -->
+<div id="advModal" class="modal" hidden>
+  <div class="modal-card wide">
+    <header class="modal-head">
+      <h2>Advanced filters</h2>
+      <span id="advMatch" class="adv-match"></span>
+      <button class="btn btn-icon modal-close">✕</button>
+    </header>
+
+    <div class="adv-body">
+      <label class="adv-row">Name contains
+        <input id="advText" type="text" spellcheck="false" placeholder="all terms must match">
+      </label>
+
+      <div class="adv-block">
+        <div class="adv-label">
+          Rating
+          <button class="linkish" data-clear="rating">clear</button>
+        </div>
+        <div id="advRating" class="chip-row"></div>
+      </div>
+
+      <div class="adv-block">
+        <div class="adv-label">
+          Tags
+          <span class="adv-mode">
+            <label><input type="radio" name="tagMode" value="all" checked> all</label>
+            <label><input type="radio" name="tagMode" value="any"> any</label>
+          </span>
+          <button class="linkish" data-clear="tags">clear</button>
+        </div>
+        <div id="advTags" class="chip-row scroller"></div>
+      </div>
+
+      <div class="adv-block">
+        <div class="adv-label">
+          Availability
+          <button class="linkish" data-clear="cloud">clear</button>
+        </div>
+        <div id="advCloud" class="chip-row"></div>
+      </div>
+
+      <div class="adv-block grow">
+        <div class="adv-label">
+          Folders <span id="advFolderCount" class="dim"></span>
+          <input id="advFolderFind" type="search" class="adv-find" placeholder="find a folder…">
+          <button class="linkish" data-clear="folders">clear</button>
+        </div>
+        <div id="advFolders" class="folder-checks"></div>
+      </div>
+    </div>
+
+    <footer class="modal-foot">
+      <button id="advReset" class="btn btn-ghost">Reset all</button>
+      <button id="advApply" class="btn btn-primary">Apply</button>
+    </footer>
+  </div>
+</div>
+
+<!-- Tag editor -->
+<div id="tagModal" class="modal" hidden>
+  <div class="modal-card">
+    <header class="modal-head">
+      <h2 id="tagTitle">Tags</h2>
+      <button class="btn btn-icon modal-close">✕</button>
+    </header>
+    <div class="tag-body">
+      <input id="tagInput" type="text" class="tag-input" spellcheck="false"
+             placeholder="comma separated" list="tagVocab" autocomplete="off">
+      <datalist id="tagVocab"></datalist>
+      <div id="tagSuggest" class="tag-suggest"></div>
+      <p class="hint" id="tagHint"></p>
+    </div>
+    <footer class="modal-foot">
+      <button id="tagAdd" class="btn">Add</button>
+      <button id="tagReplace" class="btn btn-primary">Replace</button>
+    </footer>
+  </div>
+</div>
+
+<!-- Settings -->
+<div id="settingsModal" class="modal" hidden>
+  <div class="modal-card">
+    <header class="modal-head">
+      <h2>Settings</h2>
+      <button class="btn btn-icon modal-close">✕</button>
+    </header>
+    <div class="settings-body">
+      <label class="field-row">Default folder
+        <span class="field-path">
+          <input id="setHomeDir" type="text" spellcheck="false" placeholder="C:\Users\…\OneDrive">
+          <button id="setHomeBrowse" class="btn" type="button">Browse…</button>
+        </span>
+      </label>
+      <label class="field-row check">
+        <input id="setHomeFollow" type="checkbox"> Follow the signed-in OneDrive account
+      </label>
+      <p class="hint" id="homeHint">Where the app opens on launch, and where the 🏠 button in the breadcrumb goes.</p>
+      <label class="field-row">Hover engine
+        <select id="setPreviewMode">
+          <option value="live">Live video — instant, plays each segment</option>
+          <option value="sprite">Cached stills — pre-rendered, no decoding</option>
+        </select>
+      </label>
+      <p class="hint">Live needs no pre-processing: hovering seeks the real file and plays it. Cached stills take about a second per video the first time, then cost nothing to re-hover.</p>
+      <label class="field-row">Videos per page
+        <input id="setPageSize" type="number" min="4" max="200" step="4">
+      </label>
+      <label class="field-row">Preview segments per video
+        <input id="setFrames" type="number" min="2" max="24" step="1">
+      </label>
+      <label class="field-row">Preview tile width (px)
+        <input id="setTileWidth" type="number" min="120" max="640" step="20">
+      </label>
+      <label class="field-row check">
+        <input id="setScrub" type="checkbox"> Scrub frames with mouse position instead of a timer
+      </label>
+      <p class="hint">Changing frame count or tile width rebuilds previews on next hover. Existing sprites stay cached under <span class="mono">.cache</span>.</p>
+      <button id="clearCacheBtn" class="btn btn-danger">Clear preview cache</button>
+    </div>
+    <footer class="modal-foot">
+      <button id="settingsSave" class="btn btn-primary">Save</button>
+    </footer>
+  </div>
+</div>
+
+<div id="toasts" class="toasts"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

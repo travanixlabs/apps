@@ -1,0 +1,9 @@
+# Runtime state, not source: the folders you have opened, the last one you were
+# in, recent move destinations. Per-machine by definition, and it names your
+# actual library paths.
+config.json
+
+# Has its own repository (travanixlabs/video-explorer-mobile), which is what
+# GitHub Pages serves. Tracking it here would capture it as a submodule pointer
+# rather than files.
+mobile/
