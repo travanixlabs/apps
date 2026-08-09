@@ -22,7 +22,12 @@ const fsp = fs.promises;
 const path = require('path');
 const os = require('os');
 
-const EMPTY = { rating: 0, tags: [] };
+// Models are kept separate from tags rather than being a tag convention: they
+// are a different kind of fact, they want their own filter facet, and a
+// performer named "anal" would otherwise be indistinguishable from the tag.
+const EMPTY = { rating: 0, tags: [], models: [] };
+
+const LIST_FIELDS = ['tags', 'models'];
 
 let FILE = '';
 let data = { version: 1, records: {} };
@@ -62,7 +67,12 @@ function get(stat) {
 /** Always safe to spread onto a file entry, even with no record. */
 function decorate(stat) {
   const record = get(stat);
-  return record ? { rating: record.rating || 0, tags: record.tags || [] } : EMPTY;
+  if (!record) return EMPTY;
+  return {
+    rating: record.rating || 0,
+    tags: record.tags || [],
+    models: record.models || [],
+  };
 }
 
 function save() {
@@ -94,25 +104,29 @@ function normaliseTags(tags) {
  */
 function apply(stat, name, patch) {
   const key = keyFor(stat);
-  const current = data.records[key] || { rating: 0, tags: [], name };
+  const current = data.records[key] || { rating: 0, tags: [], models: [], name };
   const next = { ...current, name: name || current.name, updated: Date.now() };
 
   if (patch.rating !== undefined) {
     next.rating = Math.max(0, Math.min(5, Math.round(Number(patch.rating) || 0)));
   }
-  if (Array.isArray(patch.tags)) {
-    next.tags = normaliseTags(patch.tags);
-  }
-  if (Array.isArray(patch.addTags) && patch.addTags.length) {
-    next.tags = normaliseTags([...(next.tags || []), ...patch.addTags]);
-  }
-  if (Array.isArray(patch.removeTags) && patch.removeTags.length) {
-    const drop = new Set(patch.removeTags.map((t) => String(t).trim().toLowerCase()));
-    next.tags = (next.tags || []).filter((t) => !drop.has(t.toLowerCase()));
+
+  // tags/addTags/removeTags and models/addModels/removeModels behave
+  // identically, so they share one implementation rather than two that drift.
+  for (const field of LIST_FIELDS) {
+    const Field = field[0].toUpperCase() + field.slice(1);
+    if (Array.isArray(patch[field])) next[field] = normaliseTags(patch[field]);
+    if (Array.isArray(patch['add' + Field]) && patch['add' + Field].length) {
+      next[field] = normaliseTags([...(next[field] || []), ...patch['add' + Field]]);
+    }
+    if (Array.isArray(patch['remove' + Field]) && patch['remove' + Field].length) {
+      const drop = new Set(patch['remove' + Field].map((t) => String(t).trim().toLowerCase()));
+      next[field] = (next[field] || []).filter((t) => !drop.has(t.toLowerCase()));
+    }
   }
 
   // An empty record is noise in a file that syncs; drop it instead.
-  if (!next.rating && !(next.tags || []).length) {
+  if (!next.rating && !(next.tags || []).length && !(next.models || []).length) {
     delete data.records[key];
     save();
     return { ...EMPTY };
@@ -120,7 +134,7 @@ function apply(stat, name, patch) {
 
   data.records[key] = next;
   save();
-  return { rating: next.rating || 0, tags: next.tags || [] };
+  return { rating: next.rating || 0, tags: next.tags || [], models: next.models || [] };
 }
 
 /**
@@ -138,19 +152,22 @@ function rekey(oldStat, newStat, name) {
   save();
 }
 
-/** Every tag in use, most-used first — the vocabulary for autocomplete. */
-function tagCounts() {
-  const counts = new Map();
+/** Everything in use for a field, most-used first — the autocomplete vocabulary. */
+function counts(field = 'tags') {
+  const found = new Map();
   for (const record of Object.values(data.records)) {
-    for (const tag of record.tags || []) {
+    for (const tag of record[field] || []) {
       const lower = tag.toLowerCase();
-      const hit = counts.get(lower);
+      const hit = found.get(lower);
       if (hit) hit.count += 1;
-      else counts.set(lower, { tag, count: 1 });
+      else found.set(lower, { tag, count: 1 });
     }
   }
-  return [...counts.values()].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+  return [...found.values()].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
 }
+
+const tagCounts = () => counts('tags');
+const modelCounts = () => counts('models');
 
 function stats() {
   const records = Object.values(data.records);
@@ -159,7 +176,11 @@ function stats() {
     videos: records.length,
     rated: records.filter((r) => r.rating).length,
     tagged: records.filter((r) => (r.tags || []).length).length,
+    named: records.filter((r) => (r.models || []).length).length,
   };
 }
 
-module.exports = { init, keyFor, get, decorate, apply, rekey, tagCounts, stats, normaliseTags };
+module.exports = {
+  init, keyFor, get, decorate, apply, rekey,
+  counts, tagCounts, modelCounts, stats, normaliseTags,
+};

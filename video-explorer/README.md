@@ -258,7 +258,7 @@ the full path.
 
 - **Flatten subfolders** — collapse everything below into one grid (junction-loop safe, 12 levels deep)
 - **Filter** — matches video names, their subfolder, folder names, and **tags**; space-separated terms must all match. Prefix a term with `#` or `tag:` to match tags only — `#hd` finds what you tagged, `hd` also finds what's named that way. Clicking a tag chip fills in the `#` form.
-- **Sort** — name, date modified, size, duration, or folder, either direction
+- **Sort** — an icon in the top row, left of the filter funnel: name, date modified, size, duration, rating, or folder. Picking the field you are already on reverses it, and the icon flips so the direction reads without opening the menu. Defaults to **file size, biggest first**
 - **Card size** — grid tile width, 200–520px (defaults to the smallest)
 - **Frame dwell** — hover advance interval, 1–5s (defaults to 1s)
 
@@ -317,3 +317,40 @@ Sprite sheets and probed metadata live in `%LOCALAPPDATA%\video-explorer\cache`.
 - If your videos are cloud-only OneDrive placeholders, generating a preview
   forces a full download of that file. Mark the folder **Always keep on this
   device** first if you want to avoid surprise downloads.
+
+## Similar faces
+
+Labelling by hand is slow when filenames carry no names. The **◎** button on any
+downloaded video's hover toolbar ranks every other indexed video by how closely
+its faces match, so one manual identification can be applied to dozens at once.
+
+Two ONNX models do the work locally: YuNet finds faces and their five landmarks,
+SFace turns an aligned crop into a 128-d vector. They download once (~38 MB) into
+`%LOCALAPPDATA%\video-explorer\models`, pinned by SHA-256.
+
+**Alignment is the whole feature.** Measured over 100 downloaded videos and 345
+faces, warping each face by its landmarks onto the canonical template separates
+same-video pairs from different-video pairs **8:1**; a plain bounding-box crop
+manages 2.4:1. A mirrored template scores higher on raw similarity while being
+useless — 62% of same-video pairs above threshold, but 56% of unrelated ones too.
+Medians alone would have picked the worst option.
+
+**It ranks, it does not decide.** Roughly 1 suggestion in 25 is a false positive.
+That is hopeless for automatic clustering — an earlier attempt collapsed into 24
+clusters from 29 faces, 19 of them singletons — but fine when you tick the right
+ones. Matches above SFace's own threshold (0.363) start ticked; you untick the
+wrong ones, type a name, and it lands in the **Models** field on all of them.
+
+Faces are collapsed into one vector per person per video first. Within a single
+video the lighting barely changes, so grouping is easy there, and averaging over
+frames cancels most of the per-frame noise that makes face-to-face comparison
+unreliable.
+
+### Indexing
+
+10 frames per video, about 5 seconds each. Cloud-only files are skipped outright:
+sampling frames means reading bytes, and no background job is allowed to trigger
+a download. Progress appears under the toolbar with pause and stop, one video at
+a time so the ffmpeg pool stays free for hovers and posters. Vectors live in
+`%LOCALAPPDATA%\video-explorer\cache\faces.json`, keyed by size + modified time
+like everything else, so they survive renames and moves.

@@ -31,6 +31,28 @@
     </label>
 
 
+    <div class="menu-host">
+      <button id="sortBtn" class="btn btn-icon" title="Sort">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <path d="M4.5 12.5V3.5m0 9L2 10m2.5 2.5L7 10M11.5 3.5v9m0-9L9 6m2.5-2.5L14 6"
+                fill="none" stroke="currentColor" stroke-width="1.4"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <div id="sortMenu" class="menu" hidden></div>
+      <!-- Kept as the single source of truth for the current field, so the
+           menu is a view of it rather than a second place state can live. -->
+      <select id="sortSelect" hidden>
+        <option value="name">Name</option>
+        <option value="mtimeMs">Date modified</option>
+        <option value="size">File size</option>
+        <option value="duration">Duration</option>
+        <option value="rating">Rating</option>
+        <option value="relFolder">Folder</option>
+      </select>
+      <button id="sortDirBtn" hidden></button>
+    </div>
+
     <button id="advBtn" class="btn btn-icon" title="Advanced filters — folders, tags, rating">
       <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
         <path d="M1.5 2.5h13L9.5 8.6v4.2l-3 1.7V8.6z" fill="none" stroke="currentColor"
@@ -46,18 +68,6 @@
            placeholder="Filter by name, subfolder, or tag — #tag for tags only"
            title="Terms are ANDed. A bare term matches the filename, subfolder, or any tag. Prefix with # or tag: to match tags only.">
 
-    <label class="field">Sort
-      <select id="sortSelect">
-        <option value="name">Name</option>
-        <option value="mtimeMs">Date modified</option>
-        <option value="size">File size</option>
-        <option value="duration">Duration</option>
-        <option value="rating">Rating</option>
-        <option value="relFolder">Folder</option>
-      </select>
-    </label>
-    <button id="sortDirBtn" class="btn btn-icon" title="Toggle sort direction">↑</button>
-
     <label class="field">Card size
       <input id="cardWidth" type="range" min="200" max="520" step="20" value="520">
     </label>
@@ -70,8 +80,16 @@
     <span id="status" class="status"></span>
   </div>
 
+  <div id="faceBar" class="face-bar" hidden>
+    <span id="faceBarText" class="face-bar-text">indexing faces</span>
+    <span class="face-bar-track"><span id="faceBarFill" class="face-bar-fill"></span></span>
+    <button id="facePause" class="btn btn-ghost">Pause</button>
+    <button id="faceCancel" class="btn btn-ghost">Stop</button>
+  </div>
+
   <div id="selectionBar" class="selection-bar" hidden>
     <span id="selectionCount" class="sel-count">0 selected</span>
+    <button class="btn" data-batch="models">Models…</button>
     <button class="btn" data-batch="tags">Tags…</button>
     <span id="batchStars" class="stars stars-batch" title="Rate everything selected"></span>
     <button class="btn" data-batch="copy">Copy to…</button>
@@ -85,6 +103,7 @@
       <kbd>C</kbd> copy
       <kbd>M</kbd> move
       <kbd>T</kbd> tags
+      <kbd>N</kbd> models
       <kbd>0</kbd>–<kbd>5</kbd> rate
       <kbd>Ctrl</kbd>+<kbd>A</kbd> all
     </span>
@@ -151,6 +170,28 @@
   </div>
 </div>
 
+<!-- Similar faces -->
+<div id="facesModal" class="modal" hidden>
+  <div class="modal-card wide">
+    <header class="modal-head">
+      <h2>Similar faces</h2>
+      <span id="faceQuery" class="adv-match"></span>
+      <button class="btn btn-icon modal-close">✕</button>
+    </header>
+    <div class="faces-body">
+      <p class="hint" id="faceHint"></p>
+      <div id="faceResults" class="face-grid"></div>
+    </div>
+    <footer class="modal-foot faces-foot">
+      <input id="faceName" type="text" class="face-name" list="modelVocab"
+             spellcheck="false" placeholder="model name">
+      <datalist id="modelVocab"></datalist>
+      <button id="faceSelectAll" class="btn btn-ghost">Select matches</button>
+      <button id="faceApply" class="btn btn-primary">Add name to selected</button>
+    </footer>
+  </div>
+</div>
+
 <!-- Advanced filters -->
 <div id="advModal" class="modal" hidden>
   <div class="modal-card wide">
@@ -171,6 +212,14 @@
           <button class="linkish" data-clear="rating">clear</button>
         </div>
         <div id="advRating" class="chip-row"></div>
+      </div>
+
+      <div class="adv-block">
+        <div class="adv-label">
+          Models
+          <button class="linkish" data-clear="models">clear</button>
+        </div>
+        <div id="advModels" class="chip-row scroller"></div>
       </div>
 
       <div class="adv-block">

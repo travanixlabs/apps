@@ -32,7 +32,9 @@ const state = {
   failed: new Set(),
   picker: null,        // { dir, onConfirm, title }
   tagVocab: [],        // [{ tag, count }] across the whole library
-  tagTargets: [],      // files the open tag dialog will edit
+  modelVocab: [],      // the same, for performer names
+  tagTargets: [],      // files the open label dialog will edit
+  labelField: 'tags',  // which field that dialog is editing
   adv: newAdvFilter(), // the advanced filter currently applied
   advTree: null,       // { folders, total } for the folder picker, loaded on open
 };
@@ -47,6 +49,7 @@ function newAdvFilter() {
     text: '',
     folders: new Set(),   // relative folder paths, '.' being the scanned folder
     tags: new Set(),
+    models: new Set(),
     tagMode: 'all',
     ratings: new Set(),   // 0 means unrated
     cloud: 'all',         // 'all' | 'downloaded' | 'cloud'
@@ -54,7 +57,7 @@ function newAdvFilter() {
 }
 
 function advActive(adv = state.adv) {
-  return Boolean(adv.text) || adv.folders.size || adv.tags.size
+  return Boolean(adv.text) || adv.folders.size || adv.tags.size || adv.models.size
     || adv.ratings.size || adv.cloud !== 'all';
 }
 
@@ -294,7 +297,7 @@ function renderFolders() {
   // the folder section rather than leaving an unfiltered row above the results.
   const terms = parseQuery($('#searchInput').value.trim().toLowerCase());
   const folders = terms.length
-    ? state.folders.filter((f) => terms.every((t) => !t.tagOnly && f.name.toLowerCase().includes(t.value)))
+    ? state.folders.filter((f) => terms.every((t) => !t.field && f.name.toLowerCase().includes(t.value)))
     : state.folders;
 
   if (!folders.length) { section.hidden = true; return; }
@@ -365,9 +368,16 @@ function renderFolders() {
  */
 function parseQuery(query) {
   return query.split(/\s+/).filter(Boolean).map((raw) => {
-    const tagOnly = raw.startsWith('#') || raw.startsWith('tag:');
-    const value = tagOnly ? raw.replace(/^(#|tag:)/, '') : raw;
-    return value ? { value, tagOnly } : null;
+    let field = null;
+    let value = raw;
+    if (raw.startsWith('#') || raw.startsWith('tag:')) {
+      field = 'tags';
+      value = raw.replace(/^(#|tag:)/, '');
+    } else if (raw.startsWith('@') || raw.startsWith('model:')) {
+      field = 'models';
+      value = raw.replace(/^(@|model:)/, '');
+    }
+    return value ? { value, field } : null;
   }).filter(Boolean);
 }
 
@@ -392,12 +402,16 @@ function matchesAdvanced(file, adv) {
     if (!under) return false;
   }
 
-  if (adv.tags.size) {
-    const tags = new Set((file.tags || []).map((t) => t.toLowerCase()));
-    const wanted = [...adv.tags].map((t) => t.toLowerCase());
+  // Tags and models are matched the same way. The all/any switch governs both,
+  // but each facet is checked on its own: picking two models and one tag means
+  // "those models AND that tag", not one big pool.
+  for (const field of ['tags', 'models']) {
+    if (!adv[field].size) continue;
+    const have = new Set((file[field] || []).map((t) => t.toLowerCase()));
+    const wanted = [...adv[field]].map((t) => t.toLowerCase());
     const hit = adv.tagMode === 'any'
-      ? wanted.some((t) => tags.has(t))
-      : wanted.every((t) => tags.has(t));
+      ? wanted.some((t) => have.has(t))
+      : wanted.every((t) => have.has(t));
     if (!hit) return false;
   }
 
@@ -411,10 +425,14 @@ function matchesAdvanced(file, adv) {
 
 function matchesQuery(file, terms) {
   const haystack = (file.name + ' ' + file.relFolder).toLowerCase();
-  const tags = (file.tags || []).map((t) => t.toLowerCase());
-  return terms.every((term) => (term.tagOnly
-    ? tags.some((t) => t.includes(term.value))
-    : haystack.includes(term.value) || tags.some((t) => t.includes(term.value))));
+  const values = (field) => (file[field] || []).map((t) => t.toLowerCase());
+  return terms.every((term) => {
+    if (term.field) return values(term.field).some((t) => t.includes(term.value));
+    // A bare term searches everything: name, subfolder, tags and models.
+    return haystack.includes(term.value)
+      || values('tags').some((t) => t.includes(term.value))
+      || values('models').some((t) => t.includes(term.value));
+  });
 }
 
 function applyFilterSort() {
@@ -453,6 +471,237 @@ function applyFilterSort() {
   state.view = list;
 }
 
+// -------------------------------------------------------------------- sort
+
+const SORT_FIELDS = [
+  { value: 'name', label: 'Name' },
+  { value: 'mtimeMs', label: 'Date modified' },
+  { value: 'size', label: 'File size' },
+  { value: 'duration', label: 'Duration' },
+  { value: 'rating', label: 'Rating' },
+  { value: 'relFolder', label: 'Folder' },
+];
+
+/**
+ * A dropdown rather than a select, so the toolbar keeps one icon instead of a
+ * labelled control plus a direction button. Picking the field you are already
+ * sorted by flips the direction — the same gesture as a spreadsheet column
+ * header, and it saves a second control.
+ */
+function renderSortMenu() {
+  const menu = $('#sortMenu');
+  const current = $('#sortSelect').value;
+  const descending = state.config.sortDir === 'desc';
+  menu.innerHTML = '';
+
+  for (const field of SORT_FIELDS) {
+    const on = field.value === current;
+    const row = document.createElement('button');
+    row.className = 'menu-row' + (on ? ' on' : '');
+    row.type = 'button';
+
+    const label = document.createElement('span');
+    label.textContent = field.label;
+    row.appendChild(label);
+
+    const arrow = document.createElement('span');
+    arrow.className = 'menu-arrow';
+    arrow.textContent = on ? (descending ? '↓' : '↑') : '';
+    row.appendChild(arrow);
+
+    row.title = on
+      ? `Sorted by ${field.label} — click to reverse`
+      : `Sort by ${field.label}`;
+    row.addEventListener('click', () => {
+      if (on) {
+        const next = descending ? 'asc' : 'desc';
+        saveConfig({ sortDir: next });
+      } else {
+        $('#sortSelect').value = field.value;
+        saveConfig({ sort: field.value });
+      }
+      renderSortMenu();
+      syncSortButton();
+      render();
+    });
+    menu.appendChild(row);
+  }
+}
+
+/** The icon carries the direction, so the current order is readable at a glance. */
+function syncSortButton() {
+  const field = SORT_FIELDS.find((f) => f.value === $('#sortSelect').value) || SORT_FIELDS[0];
+  const descending = state.config.sortDir === 'desc';
+  $('#sortBtn').title = `Sort: ${field.label}, ${descending ? 'descending' : 'ascending'}`;
+  $('#sortBtn').classList.toggle('flip', descending);
+}
+
+function toggleSortMenu(open) {
+  const menu = $('#sortMenu');
+  const show = open === undefined ? menu.hidden : open;
+  if (show) renderSortMenu();
+  menu.hidden = !show;
+  $('#sortBtn').classList.toggle('on', show);
+}
+
+// ------------------------------------------------------------ similar faces
+
+/**
+ * Ranked retrieval, not automatic grouping. Measured over 100 videos, roughly
+ * 1 in 25 suggestions is a false positive — hopeless for clustering, but fine
+ * when a person ticks the right ones. The model only has to put good answers
+ * near the top.
+ */
+let faceMatches = [];
+let facePicked = new Set();
+
+async function openSimilar(file) {
+  faceMatches = [];
+  facePicked = new Set();
+  $('#faceQuery').textContent = file.name;
+  $('#faceResults').innerHTML = '';
+  $('#faceHint').textContent = 'Searching…';
+  $('#faceName').value = (file.models || [])[0] || '';
+  $('#facesModal').hidden = false;
+
+  try {
+    const data = await api(`/api/faces/similar?path=${encodeURIComponent(file.path)}`
+      + `&dir=${encodeURIComponent(state.dir)}`);
+    faceMatches = data.matches || [];
+    // Everything above SFace's own same-identity threshold starts ticked, so
+    // the common case is: glance, untick the wrong ones, apply.
+    for (const m of faceMatches) if (m.score >= data.threshold) facePicked.add(m.path);
+    $('#faceHint').textContent = `${data.faces} faces in ${data.tracks} track${data.tracks === 1 ? '' : 's'}`
+      + ` · ${faceMatches.filter((m) => m.score >= data.threshold).length} above the match threshold`
+      + ` (${data.threshold}) · ticked by default, untick anything wrong`;
+    renderFaceResults(data.threshold);
+  } catch (err) {
+    // The usual reason is simply that nothing here has been indexed yet.
+    $('#faceHint').innerHTML = '';
+    const box = $('#faceResults');
+    box.innerHTML = '';
+    const msg = document.createElement('p');
+    msg.className = 'hint';
+    msg.textContent = err.message + '. Indexing samples 10 frames per video and '
+      + 'only ever touches downloaded files — cloud items are skipped.';
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-primary';
+    btn.textContent = 'Index this folder now';
+    btn.addEventListener('click', () => { $('#facesModal').hidden = true; startFaceIndex(); });
+    box.appendChild(msg);
+    box.appendChild(btn);
+  }
+}
+
+function renderFaceResults(threshold) {
+  const box = $('#faceResults');
+  box.innerHTML = '';
+  if (!faceMatches.length) {
+    box.innerHTML = '<p class="hint">Nothing else in this folder is indexed yet.</p>';
+    return;
+  }
+
+  for (const match of faceMatches) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'face-card' + (facePicked.has(match.path) ? ' picked' : '')
+      + (match.score >= threshold ? ' strong' : '');
+    card.addEventListener('click', () => {
+      if (facePicked.has(match.path)) facePicked.delete(match.path);
+      else facePicked.add(match.path);
+      card.classList.toggle('picked', facePicked.has(match.path));
+      syncFaceFooter();
+    });
+
+    const shot = document.createElement('div');
+    shot.className = 'face-shot';
+    loadThumb(match.path, null, true).then((url) => {
+      if (url) { shot.style.backgroundImage = `url("${url}")`; }
+    }).catch(() => {});
+    card.appendChild(shot);
+
+    const score = document.createElement('span');
+    score.className = 'face-score';
+    score.textContent = match.score.toFixed(2);
+    shot.appendChild(score);
+
+    const name = document.createElement('span');
+    name.className = 'face-name-line';
+    name.textContent = match.name;
+    name.title = match.path;
+    card.appendChild(name);
+
+    if ((match.models || []).length) {
+      const models = document.createElement('span');
+      models.className = 'face-models';
+      models.textContent = match.models.join(', ');
+      card.appendChild(models);
+    }
+
+    box.appendChild(card);
+  }
+  syncFaceFooter();
+}
+
+function syncFaceFooter() {
+  $('#faceApply').textContent = facePicked.size
+    ? `Add name to ${facePicked.size}`
+    : 'Add name to selected';
+  $('#faceApply').disabled = !facePicked.size;
+}
+
+async function applyFaceName() {
+  const name = $('#faceName').value.trim();
+  if (!name) { toast('Type a model name first', 'err'); return; }
+  const paths = [...facePicked];
+  if (!paths.length) return;
+  $('#facesModal').hidden = true;
+  await editRecords(paths, { addModels: [name] });
+  toast(`Added "${name}" to ${paths.length} video${paths.length === 1 ? '' : 's'}`, 'ok');
+}
+
+// ---------------------------------------------------------- face indexing
+
+let facePoll = null;
+
+async function startFaceIndex() {
+  try {
+    const started = await api('/api/faces/index', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dir: state.dir }),
+    });
+    if (!started.available) { toast('Face indexing is unavailable in this build', 'err'); return; }
+    if (!started.queued) { toast('Everything here is already indexed', 'ok'); return; }
+    toast(`Indexing ${started.queued} video${started.queued === 1 ? '' : 's'} in the background`, 'ok');
+    pollFaceJob();
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+function pollFaceJob() {
+  clearInterval(facePoll);
+  facePoll = setInterval(async () => {
+    try {
+      const job = await api('/api/faces/status');
+      const bar = $('#faceBar');
+      bar.hidden = !job.running;
+      if (job.running) {
+        $('#faceBarText').textContent = `indexing faces · ${job.done}/${job.total}`
+          + (job.current ? ` · ${job.current.slice(0, 28)}` : '');
+        $('#faceBarFill').style.width = `${(100 * job.done) / Math.max(1, job.total)}%`;
+        $('#facePause').textContent = job.paused ? 'Resume' : 'Pause';
+      } else {
+        clearInterval(facePoll);
+        if (job.done) toast(`Indexed ${job.done} video${job.done === 1 ? '' : 's'}`, 'ok');
+      }
+    } catch {
+      clearInterval(facePoll);
+    }
+  }, 1200);
+}
+
 // -------------------------------------------------------- advanced filters
 
 // Edited in the dialog and only copied onto state.adv on Apply, so closing
@@ -464,6 +713,7 @@ async function openAdvanced() {
     ...state.adv,
     folders: new Set(state.adv.folders),
     tags: new Set(state.adv.tags),
+    models: new Set(state.adv.models),
     ratings: new Set(state.adv.ratings),
   };
   $('#advText').value = advDraft.text;
@@ -507,16 +757,19 @@ function renderAdvanced() {
     }));
   }
 
-  const tags = $('#advTags');
-  tags.innerHTML = '';
-  if (!state.tagVocab.length) {
-    tags.innerHTML = '<span class="dim">No tags yet — add some from a card first.</span>';
-  }
-  for (const entry of state.tagVocab) {
-    tags.appendChild(chipToggle(`${entry.tag} · ${entry.count}`, advDraft.tags.has(entry.tag), () => {
-      toggleIn(advDraft.tags, entry.tag);
-      renderAdvanced();
-    }));
+  for (const [field, el, empty] of [
+    ['models', '#advModels', 'No models yet — name someone from a card first.'],
+    ['tags', '#advTags', 'No tags yet — add some from a card first.'],
+  ]) {
+    const box = $(el);
+    const vocab = vocabFor(field);
+    box.innerHTML = vocab.length ? '' : `<span class="dim">${empty}</span>`;
+    for (const entry of vocab) {
+      box.appendChild(chipToggle(`${entry.tag} · ${entry.count}`, advDraft[field].has(entry.tag), () => {
+        toggleIn(advDraft[field], entry.tag);
+        renderAdvanced();
+      }));
+    }
   }
 
   renderAdvFolders();
@@ -584,6 +837,7 @@ function updateAdvMatch() {
   if (!advActive(advDraft)) { el.textContent = 'no filters — showing everything'; return; }
   const bits = [];
   if (advDraft.folders.size) bits.push(`${advDraft.folders.size} folder${advDraft.folders.size === 1 ? '' : 's'}`);
+  if (advDraft.models.size) bits.push(`${advDraft.models.size} model${advDraft.models.size === 1 ? '' : 's'}`);
   if (advDraft.tags.size) bits.push(`${advDraft.tags.size} tag${advDraft.tags.size === 1 ? '' : 's'} (${advDraft.tagMode})`);
   if (advDraft.ratings.size) bits.push(`${advDraft.ratings.size} rating${advDraft.ratings.size === 1 ? '' : 's'}`);
   if (advDraft.cloud !== 'all') bits.push(advDraft.cloud);
@@ -658,12 +912,14 @@ async function editRecords(paths, patch) {
       body: JSON.stringify({ paths, ...patch }),
     });
     state.tagVocab = data.tags || state.tagVocab;
+    state.modelVocab = data.models || state.modelVocab;
     for (const [filePath, record] of Object.entries(data.records || {})) {
       if (record.error) { toast(record.error, 'err'); continue; }
       const file = state.files.find((f) => f.path === filePath);
       if (!file) continue;
       file.rating = record.rating;
       file.tags = record.tags;
+      file.models = record.models;
       refreshCardRecord(file);
     }
     syncTagVocab();
@@ -701,52 +957,73 @@ function buildStars(current, onPick, { compact = false } = {}) {
   return wrap;
 }
 
-function buildRecordRow(file) {
-  const row = document.createElement('div');
-  row.className = 'record-row';
+/**
+ * Models and tags are the same shape, so one builder covers both. They stay
+ * separate fields rather than a tag naming convention: a performer wants their
+ * own filter facet, and a name that collides with a tag would be ambiguous.
+ */
+const LABEL_FIELDS = {
+  tags: { prefix: '#', empty: '+ tag', edit: 'Edit tags', chip: 'chip' },
+  models: { prefix: '@', empty: '+ model', edit: 'Edit models', chip: 'chip chip-model' },
+};
 
-  row.appendChild(buildStars(file.rating || 0, (rating) => editRecords([file.path], { rating }), { compact: true }));
-
+function buildLabelChips(file, field) {
+  const spec = LABEL_FIELDS[field];
+  const Field = field[0].toUpperCase() + field.slice(1);
   const chips = document.createElement('span');
   chips.className = 'chips';
-  for (const tag of file.tags || []) {
+
+  for (const value of file[field] || []) {
     const chip = document.createElement('button');
     chip.type = 'button';
-    chip.className = 'chip';
-    chip.textContent = tag;
-    chip.title = `Filter by "${tag}" — right-click to remove it from this video`;
+    chip.className = spec.chip;
+    chip.textContent = value;
+    chip.title = `Filter by "${value}" — right-click to remove it from this video`;
     chip.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      // "#" scopes it to tags, so clicking "hd" doesn't also drag in every
-      // file with "hd" in its name.
-      $('#searchInput').value = '#' + tag;
+      // The prefix scopes the search to this field, so clicking "hd" does not
+      // also drag in every file merely named that way.
+      $('#searchInput').value = spec.prefix + value;
       render();
     });
     chip.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      editRecords([file.path], { removeTags: [tag] });
+      editRecords([file.path], { ['remove' + Field]: [value] });
     });
     chips.appendChild(chip);
   }
 
   const add = document.createElement('button');
   add.type = 'button';
-  add.className = 'chip chip-add';
-  add.textContent = (file.tags || []).length ? '+' : '+ tag';
-  add.title = 'Edit tags';
-  add.addEventListener('click', (ev) => { ev.stopPropagation(); openTagDialog([file]); });
+  add.className = spec.chip + ' chip-add';
+  add.textContent = (file[field] || []).length ? '+' : spec.empty;
+  add.title = spec.edit;
+  add.addEventListener('click', (ev) => { ev.stopPropagation(); openLabelDialog([file], field); });
   chips.appendChild(add);
 
-  row.appendChild(chips);
+  return chips;
+}
+
+function buildRecordRow(file) {
+  const row = document.createElement('div');
+  row.className = 'record-row';
+
+  row.appendChild(buildStars(file.rating || 0, (rating) => editRecords([file.path], { rating }), { compact: true }));
+  row.appendChild(buildLabelChips(file, 'models'));
+  row.appendChild(buildLabelChips(file, 'tags'));
   return row;
+}
+
+function vocabFor(field) {
+  return field === 'models' ? state.modelVocab : state.tagVocab;
 }
 
 function syncTagVocab() {
   const list = $('#tagVocab');
   if (!list) return;
   list.innerHTML = '';
-  for (const entry of state.tagVocab) {
+  for (const entry of vocabFor(state.labelField)) {
     const option = document.createElement('option');
     option.value = entry.tag;
     option.label = `${entry.count}`;
@@ -758,20 +1035,29 @@ function parseTags(text) {
   return text.split(',').map((t) => t.trim()).filter(Boolean);
 }
 
-function openTagDialog(files) {
+/** One dialog for both fields — only the wording and the vocabulary differ. */
+function openLabelDialog(files, field = 'tags') {
   if (!files.length) return;
   state.tagTargets = files;
+  state.labelField = field;
   const single = files.length === 1;
-  $('#tagTitle').textContent = single ? files[0].name : `Tags · ${files.length} videos`;
-  // Pre-filling with one file's tags makes Replace a sensible edit. For many
-  // files there is no shared starting point, so the box starts empty and Add
-  // is the safe verb.
-  $('#tagInput').value = single ? (files[0].tags || []).join(', ') : '';
+  const noun = field === 'models' ? 'model' : 'tag';
+
+  $('#tagTitle').textContent = single
+    ? `${field === 'models' ? 'Models' : 'Tags'} · ${files[0].name}`
+    : `${field === 'models' ? 'Models' : 'Tags'} · ${files.length} videos`;
+  // Pre-filling with one file's values makes Replace a sensible edit. Across
+  // many files there is no shared starting point, so the box starts empty and
+  // Add is the safe verb.
+  $('#tagInput').value = single ? (files[0][field] || []).join(', ') : '';
+  $('#tagInput').placeholder = field === 'models' ? 'performer names, comma separated' : 'comma separated';
   $('#tagHint').textContent = single
-    ? 'Add appends, Replace overwrites. Right-click a chip on the card to remove one.'
-    : `Add appends to each video's existing tags. Replace overwrites all ${files.length}.`;
+    ? `Add appends, Replace overwrites. Right-click a chip on the card to remove one ${noun}.`
+    : `Add appends to each video's existing ${noun}s. Replace overwrites all ${files.length}.`;
   $('#tagReplace').textContent = single ? 'Replace' : `Replace on ${files.length}`;
   $('#tagAdd').textContent = single ? 'Add' : `Add to ${files.length}`;
+
+  syncTagVocab();
   renderTagSuggestions();
   $('#tagModal').hidden = false;
   $('#tagInput').focus();
@@ -779,12 +1065,12 @@ function openTagDialog(files) {
 }
 
 /** The existing vocabulary as one-click chips — faster than typing, and it
- *  keeps tags from splintering into near-duplicates. */
+ *  keeps names from splintering into near-duplicates. */
 function renderTagSuggestions() {
   const box = $('#tagSuggest');
   box.innerHTML = '';
   const used = new Set(parseTags($('#tagInput').value).map((t) => t.toLowerCase()));
-  for (const entry of state.tagVocab.slice(0, 40)) {
+  for (const entry of vocabFor(state.labelField).slice(0, 60)) {
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'chip suggest' + (used.has(entry.tag.toLowerCase()) ? ' on' : '');
@@ -802,13 +1088,17 @@ function renderTagSuggestions() {
 }
 
 async function commitTags(mode) {
-  const tags = parseTags($('#tagInput').value);
+  const values = parseTags($('#tagInput').value);
   const paths = state.tagTargets.map((f) => f.path);
+  const field = state.labelField;
+  const Field = field[0].toUpperCase() + field.slice(1);
+  const noun = field === 'models' ? 'model' : 'tag';
+
   $('#tagModal').hidden = true;
-  await editRecords(paths, mode === 'add' ? { addTags: tags } : { tags });
+  await editRecords(paths, mode === 'add' ? { ['add' + Field]: values } : { [field]: values });
   toast(mode === 'add'
-    ? `Added ${tags.length} tag${tags.length === 1 ? '' : 's'} to ${paths.length} video${paths.length === 1 ? '' : 's'}`
-    : `Tags set on ${paths.length} video${paths.length === 1 ? '' : 's'}`, 'ok');
+    ? `Added ${values.length} ${noun}${values.length === 1 ? '' : 's'} to ${paths.length} video${paths.length === 1 ? '' : 's'}`
+    : `${Field} set on ${paths.length} video${paths.length === 1 ? '' : 's'}`, 'ok');
 }
 
 /**
@@ -1752,7 +2042,17 @@ function actionsFor(file, { card = null, inPlayer = false } = {}) {
     {
       icon: '⌗',
       title: 'Tags',
-      run: () => openTagDialog([state.files.find((f) => f.path === file.path) || file]),
+      run: () => openLabelDialog([state.files.find((f) => f.path === file.path) || file], 'tags'),
+    },
+    ...(file.cloudOnly ? [] : [{
+      icon: '◎',
+      title: 'Find similar faces',
+      run: () => openSimilar(state.files.find((f) => f.path === file.path) || file),
+    }]),
+    {
+      icon: '☺',
+      title: 'Models',
+      run: () => openLabelDialog([state.files.find((f) => f.path === file.path) || file], 'models'),
     },
     {
       icon: '✎',
@@ -2102,15 +2402,13 @@ function wireEvents() {
     searchTimer = setTimeout(render, 140);
   });
 
-  $('#sortSelect').addEventListener('change', () => {
-    saveConfig({ sort: $('#sortSelect').value });
-    render();
+  $('#sortBtn').addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    toggleSortMenu();
   });
-  $('#sortDirBtn').addEventListener('click', () => {
-    const next = state.config.sortDir === 'desc' ? 'asc' : 'desc';
-    saveConfig({ sortDir: next });
-    $('#sortDirBtn').textContent = next === 'desc' ? '↓' : '↑';
-    render();
+  // Any click elsewhere dismisses it, which is what a menu is expected to do.
+  document.addEventListener('click', (ev) => {
+    if (!$('#sortMenu').hidden && !ev.target.closest('.menu-host')) toggleSortMenu(false);
   });
 
   $('#cardWidth').addEventListener('input', (ev) => {
@@ -2132,7 +2430,8 @@ function wireEvents() {
       const paths = selectedPaths();
       if (!paths.length) return;
       const op = btn.dataset.batch;
-      if (op === 'tags') return openTagDialog(state.files.filter((f) => state.selected.has(f.path)));
+      if (op === 'tags') return openLabelDialog(state.files.filter((f) => state.selected.has(f.path)), 'tags');
+      if (op === 'models') return openLabelDialog(state.files.filter((f) => state.selected.has(f.path)), 'models');
       if (op === 'embed') return embedSelection();
       if (op === 'delete') return confirmDelete(paths);
       if (op === 'copy') return pickFolder('Copy to folder', (dest) => doAction('copy', paths, { dest }));
@@ -2172,6 +2471,30 @@ function wireEvents() {
     closePicker();
     if (cb) cb(dest);
   });
+
+  // similar faces
+  $('#faceApply').addEventListener('click', applyFaceName);
+  $('#faceName').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') applyFaceName(); });
+  $('#faceSelectAll').addEventListener('click', () => {
+    const all = facePicked.size === faceMatches.length;
+    facePicked = all ? new Set() : new Set(faceMatches.map((m) => m.path));
+    for (const card of document.querySelectorAll('.face-card')) card.classList.toggle('picked', !all);
+    syncFaceFooter();
+  });
+  $('#facePause').addEventListener('click', async () => {
+    const job = await api('/api/faces/status');
+    await api('/api/faces/pause', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paused: !job.paused }),
+    });
+  });
+  $('#faceCancel').addEventListener('click', async () => {
+    await api('/api/faces/cancel', { method: 'POST' });
+    $('#faceBar').hidden = true;
+  });
+  // A job left running from a previous session should still show its progress.
+  api('/api/faces/status').then((job) => { if (job.running) pollFaceJob(); }).catch(() => {});
 
   // advanced filters
   $('#advBtn').addEventListener('click', openAdvanced);
@@ -2297,7 +2620,8 @@ function isTyping() {
 
 function modalOpen() {
   return !$('#playerModal').hidden || !$('#pickerModal').hidden
-    || !$('#settingsModal').hidden || !$('#tagModal').hidden || !$('#advModal').hidden;
+    || !$('#settingsModal').hidden || !$('#tagModal').hidden || !$('#advModal').hidden
+    || !$('#facesModal').hidden;
 }
 
 function onKeyDown(ev) {
@@ -2306,6 +2630,7 @@ function onKeyDown(ev) {
     if (!$('#pickerModal').hidden) return closePicker();
     if (!$('#tagModal').hidden) { $('#tagModal').hidden = true; return; }
     if (!$('#advModal').hidden) { $('#advModal').hidden = true; return; }
+    if (!$('#facesModal').hidden) { $('#facesModal').hidden = true; return; }
     if (!$('#playerModal').hidden) return closePlayer();
     if (!$('#settingsModal').hidden) { $('#settingsModal').hidden = true; return; }
     if (isTyping()) { document.activeElement.blur(); return; }
@@ -2358,7 +2683,10 @@ function onKeyDown(ev) {
     editRecords(paths, { rating: Number(ev.key) });
   } else if (ev.key === 't' || ev.key === 'T') {
     ev.preventDefault();
-    openTagDialog(state.files.filter((f) => state.selected.has(f.path)));
+    openLabelDialog(state.files.filter((f) => state.selected.has(f.path)), 'tags');
+  } else if (ev.key === 'n' || ev.key === 'N') {
+    ev.preventDefault();
+    openLabelDialog(state.files.filter((f) => state.selected.has(f.path)), 'models');
   } else if (ev.key === 'Delete') {
     ev.preventDefault();
     confirmDelete(paths);
@@ -2380,7 +2708,7 @@ async function init() {
   } catch {
     state.config = {
       previewMode: 'live', frames: 10, dwellMs: 1000, tileWidth: 640, cardWidth: 520,
-      pageSize: 24, showCloud: true, recursive: false, sortDir: 'asc', sort: 'name',
+      pageSize: 24, showCloud: true, recursive: false, sortDir: 'desc', sort: 'size',
     };
   }
 
@@ -2392,7 +2720,7 @@ async function init() {
   $('#recursiveToggle').checked = state.config.recursive === true;
   $('#cloudToggle').checked = state.config.showCloud === true;
   $('#sortSelect').value = state.config.sort || 'name';
-  $('#sortDirBtn').textContent = state.config.sortDir === 'desc' ? '↓' : '↑';
+  syncSortButton();
   $('#cardWidth').value = state.config.cardWidth || 520;
   document.documentElement.style.setProperty('--card-width', (state.config.cardWidth || 520) + 'px');
   $('#dwellMs').value = state.config.dwellMs || 1000;

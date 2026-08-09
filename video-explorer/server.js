@@ -23,6 +23,7 @@ try {
 }
 
 const library = require('./library');
+const faces = require('./faces');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -64,8 +65,11 @@ const DEFAULT_CONFIG = {
   foldersCollapsed: false,
   recursive: false,   // explorer-style by default: one folder level at a time
   scrubWithMouse: false,
-  sort: 'name',
-  sortDir: 'asc',
+  // Biggest first: in a library where most files are cloud placeholders, size
+  // is the closest thing the scan knows to "is this worth my attention" —
+  // duration needs a probe, and name order is arbitrary.
+  sort: 'size',
+  sortDir: 'desc',
 };
 
 let config = { ...DEFAULT_CONFIG };
@@ -1100,6 +1104,67 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { dir: resolved, folders, total: videos.length });
     }
 
+    if (req.method === 'GET' && route === '/api/faces/status') {
+      return sendJson(res, 200, faces.status());
+    }
+
+    if (req.method === 'POST' && route === '/api/faces/index') {
+      const body = await readBody(req);
+      const resolved = authoriseOrThrow(body.dir || config.lastDir);
+      const videos = await collectVideos(resolved);
+      // Cloud files are excluded outright: reading one to sample frames would
+      // hydrate it, which no background job is allowed to do.
+      const todo = [];
+      for (const video of videos) {
+        if (video.cloudOnly) continue;
+        const stat = { size: video.size, mtimeMs: video.mtimeMs };
+        if (faces.isIndexed(stat)) continue;
+        const known = cachedMeta(video.path, stat);
+        todo.push({ file: video.path, stat, duration: (known && known.duration) || 0 });
+      }
+      log(`face indexing: ${todo.length} of ${videos.length} to do under ${resolved}`);
+      await faces.startJob(todo);
+      return sendJson(res, 200, { ...faces.status(), queued: todo.length });
+    }
+
+    if (req.method === 'POST' && route === '/api/faces/pause') {
+      const body = await readBody(req);
+      return sendJson(res, 200, faces.pause(body.paused !== false));
+    }
+
+    if (req.method === 'POST' && route === '/api/faces/cancel') {
+      return sendJson(res, 200, faces.cancel());
+    }
+
+    if (req.method === 'GET' && route === '/api/faces/similar') {
+      const target = authoriseOrThrow(url.searchParams.get('path') || '');
+      const scope = authoriseOrThrow(url.searchParams.get('dir') || config.lastDir);
+      const stat = await fsp.stat(target);
+      const ranked = faces.similar(stat);
+      if (!ranked) return sendJson(res, 409, { error: 'This video has not been indexed yet' });
+
+      // Vectors are keyed by size + mtime, so matches come back as keys. Walking
+      // the search scope turns them into paths the grid can actually show.
+      const byKey = new Map();
+      for (const video of await collectVideos(scope)) {
+        byKey.set(faces.keyFor({ size: video.size, mtimeMs: video.mtimeMs }), video);
+      }
+      const matches = ranked.matches.map((m) => {
+        const video = byKey.get(m.key);
+        if (!video) return null;
+        return {
+          path: video.path,
+          name: path.basename(video.path),
+          relFolder: path.relative(scope, path.dirname(video.path)) || '.',
+          size: video.size,
+          score: Number(m.score.toFixed(3)),
+          ...library.decorate(video),
+        };
+      }).filter(Boolean);
+
+      return sendJson(res, 200, { ...ranked, matches });
+    }
+
     if (req.method === 'GET' && route === '/api/sprite') {
       const target = authoriseOrThrow(url.searchParams.get('path') || '');
       const { stat, cloudOnly } = await statWithCloud(target);
@@ -1152,7 +1217,11 @@ const server = http.createServer(async (req, res) => {
 
     if (route === '/api/library') {
       if (req.method === 'GET') {
-        return sendJson(res, 200, { tags: library.tagCounts(), stats: library.stats() });
+        return sendJson(res, 200, {
+          tags: library.tagCounts(),
+          models: library.modelCounts(),
+          stats: library.stats(),
+        });
       }
       if (req.method === 'POST') {
         const body = await readBody(req);
@@ -1167,7 +1236,11 @@ const server = http.createServer(async (req, res) => {
             records[raw] = { error: err.message || String(err) };
           }
         }
-        return sendJson(res, 200, { records, tags: library.tagCounts() });
+        return sendJson(res, 200, {
+          records,
+          tags: library.tagCounts(),
+          models: library.modelCounts(),
+        });
       }
     }
 
@@ -1330,6 +1403,9 @@ async function main() {
   await applyHomeDir();
   const lib = await library.init(ONEDRIVE_ROOT);
   log(`ratings and tags: ${lib.count} records at ${lib.file}`);
+  const face = await faces.init(CACHE_DIR);
+  log(`faces: ${face.count} videos indexed`
+    + `${face.available ? '' : ' (onnxruntime missing — feature disabled)'}`);
   metaIndex = loadJsonSync(META_FILE, {});
   log(`${Object.keys(metaIndex).length} cached metadata entries`);
   await checkFfmpeg();

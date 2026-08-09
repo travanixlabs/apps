@@ -641,6 +641,131 @@ main { padding: 16px; }
   white-space: nowrap;
 }
 
+/* ----------------------------------------------------------- similar faces */
+
+.faces-body { padding: 12px 16px; overflow-y: auto; min-height: 0; }
+.faces-foot { gap: 8px; }
+.face-name { flex: 1; min-width: 0; }
+
+.face-grid {
+  margin-top: 10px;
+  display: grid;
+  gap: 9px;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+}
+
+.face-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 5px;
+  text-align: left;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  cursor: pointer;
+}
+.face-card:hover { border-color: var(--border-strong); }
+/* Above the model's own match threshold — a hint, not a verdict. */
+.face-card.strong { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.face-card.picked {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-elev));
+}
+
+.face-shot {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: 6px;
+  background: #05080c center/cover no-repeat;
+}
+.face-score {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .66);
+  color: var(--text-dim);
+}
+.face-card.strong .face-score { color: var(--accent); }
+.face-name-line {
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.face-models { font-size: 11px; color: #f0c060; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Progress for the background job, under the toolbar. */
+.face-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elev);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.face-bar[hidden] { display: none; }
+.face-bar-text { white-space: nowrap; }
+.face-bar-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-elev-2);
+  overflow: hidden;
+}
+.face-bar-fill { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+
+/* ------------------------------------------------------------------- menus */
+
+.menu-host { position: relative; display: inline-flex; }
+
+#sortBtn.on { border-color: var(--accent); color: var(--accent); }
+/* The icon points the way the list runs, so the order reads at a glance. */
+#sortBtn svg { transition: transform .14s; }
+#sortBtn.flip svg { transform: scaleY(-1); }
+
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  min-width: 190px;
+  padding: 4px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .5);
+}
+.menu[hidden] { display: none; }
+
+.menu-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.menu-row:hover { background: var(--bg-elev); color: var(--text); }
+.menu-row.on { color: var(--text); font-weight: 600; }
+.menu-arrow {
+  margin-left: auto;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ------------------------------------------------------- advanced filters */
 
 #advBtn { position: relative; }
@@ -800,6 +925,14 @@ main { padding: 16px; }
   border-style: dashed;
   color: var(--text-faint);
 }
+/* Models read as people, not attributes, so they get their own colour and sit
+   first on the card — a name is the thing you scan for. */
+.chip-model {
+  border-color: color-mix(in srgb, #f5b52b 45%, var(--border-strong));
+  color: #f0c060;
+}
+.chip-model:hover { border-color: #f5b52b; color: #ffd479; }
+.record-row .chips + .chips { margin-left: 2px; }
 /* The bare "+" only earns its space once a card has tags to sit beside. */
 .card:not(:hover) .chip-add { opacity: 0; }
 .chip.suggest.on {

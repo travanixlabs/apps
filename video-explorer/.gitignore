@@ -7,3 +7,7 @@ config.json
 # GitHub Pages serves. Tracking it here would capture it as a submodule pointer
 # rather than files.
 mobile/
+
+# onnxruntime-node is 258 MB of prebuilt binaries for three platforms. It is a
+# declared dependency; the build script trims it to win32-x64 CPU on the way in.
+node_modules/
