@@ -24,7 +24,7 @@ const fsp = fs.promises;
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 
 let ort = null;
 try {
@@ -341,12 +341,16 @@ function isIndexed(stat) {
 
 // ------------------------------------------------------------------ indexing
 
-async function indexVideo(file, stat, duration) {
+/**
+ * Samples a video and returns one vector per person in it. Pure computation —
+ * it never touches the store, so the worker process can run it without there
+ * being two writers.
+ */
+async function computeTracks(file, duration) {
   const { det, emb } = await ensureSessions();
   const vectors = [];
 
   for (let i = 0; i < FRAMES; i += 1) {
-    if (job.cancel) break;
     const at = duration > 0 ? (duration * (i + 1)) / (FRAMES + 1) : 60 * (i + 1);
     let rgb;
     try { rgb = await grabFrame(file, at); } catch { continue; }
@@ -365,14 +369,21 @@ async function indexVideo(file, stat, duration) {
   }
 
   const tracks = toTracks(vectors);
-  store.videos[keyFor(stat)] = {
-    name: path.basename(file),
+  return {
     faces: vectors.length,
     tracks: tracks.map((t) => ({ v: pack(t.vec), seen: t.seen })),
+  };
+}
+
+/** Records a worker's result. The parent process is the only writer. */
+function record(key, name, result) {
+  store.videos[key] = {
+    name,
+    faces: result.faces,
+    tracks: result.tracks,
     at: Date.now(),
   };
   save();
-  return { faces: vectors.length, tracks: tracks.length };
 }
 
 /**
@@ -381,36 +392,90 @@ async function indexVideo(file, stat, duration) {
  * behind a queue of frame extractions is the one thing a background job must
  * never cause.
  */
+let worker = null;
+
+/**
+ * Feeds a list through a child process one item at a time.
+ *
+ * Concurrency is deliberately one: the app's own ffmpeg pool serves hovers and
+ * posters, and a hover queued behind a backlog of frame extractions is the one
+ * thing a background job must never cause.
+ *
+ * If the worker dies — a native fault in onnxruntime will do it — the item it
+ * was on is counted as an error and a fresh worker picks up the rest. The app
+ * itself is never at risk.
+ */
 async function startJob(items, { onProgress } = {}) {
   if (job.running) return job;
-  Object.assign(job, { running: true, paused: false, cancel: false, done: 0, total: items.length, errors: 0, current: '' });
+  Object.assign(job, {
+    running: true, paused: false, cancel: false, done: 0, total: items.length, errors: 0, current: '',
+  });
 
-  (async () => {
-    try {
-      await ensureSessions((msg) => { job.current = msg; });
-      for (const item of items) {
-        if (job.cancel) break;
-        while (job.paused && !job.cancel) await new Promise((r) => setTimeout(r, 400));
-        job.current = path.basename(item.file);
-        try {
-          await indexVideo(item.file, item.stat, item.duration || 0);
-        } catch {
-          job.errors += 1;
-        }
+  const queue = items.slice();
+  let inFlight = null;
+
+  const finish = () => {
+    job.running = false;
+    job.current = '';
+    if (worker) { try { worker.kill(); } catch { /* already gone */ } worker = null; }
+    clearTimeout(saveTimer);
+    fsp.writeFile(storeFile, JSON.stringify(store)).catch(() => {});
+  };
+
+  const feed = () => {
+    if (!worker || job.cancel) return;
+    if (job.paused) { setTimeout(feed, 400); return; }
+    const next = queue.shift();
+    if (!next) { finish(); return; }
+    inFlight = next;
+    job.current = path.basename(next.file);
+    worker.stdin.write(JSON.stringify({
+      key: keyFor(next.stat), name: path.basename(next.file), file: next.file, duration: next.duration || 0,
+    }) + '\n');
+  };
+
+  const spawnWorker = () => {
+    worker = spawn(process.execPath, [path.join(__dirname, 'faces-worker.js')], {
+      stdio: ['pipe', 'pipe', 'ignore'],
+      windowsHide: true,
+    });
+
+    let buffer = '';
+    worker.stdout.on('data', (chunk) => {
+      buffer += chunk;
+      let at = buffer.indexOf('\n');
+      while (at >= 0) {
+        const line = buffer.slice(0, at);
+        buffer = buffer.slice(at + 1);
+        at = buffer.indexOf('\n');
+        let msg;
+        try { msg = JSON.parse(line); } catch { continue; }
+
+        if (msg.type === 'status') { job.current = msg.message; continue; }
+        if (msg.type === 'ready') { feed(); continue; }
+        if (msg.type === 'fatal') { job.current = msg.message; job.errors += 1; job.cancel = true; finish(); continue; }
+
+        if (msg.type === 'done') record(msg.key, msg.name, msg);
+        else if (msg.type === 'failed') job.errors += 1;
+
+        inFlight = null;
         job.done += 1;
         if (onProgress) onProgress(job);
+        feed();
       }
-    } catch (err) {
-      job.current = err.message;
-      job.errors += 1;
-    } finally {
-      job.running = false;
-      job.current = '';
-      clearTimeout(saveTimer);
-      fsp.writeFile(storeFile, JSON.stringify(store)).catch(() => {});
-    }
-  })();
+    });
 
+    worker.on('exit', () => {
+      if (!job.running || job.cancel) return;
+      // Died mid-item: count it, drop it, and carry on with a new worker.
+      if (inFlight) { job.errors += 1; job.done += 1; inFlight = null; }
+      if (!queue.length) { finish(); return; }
+      spawnWorker();
+    });
+    worker.on('error', () => { job.errors += 1; finish(); });
+  };
+
+  spawnWorker();
   return job;
 }
 
@@ -421,7 +486,13 @@ const status = () => ({
   modelsReady: modelsReady(),
 });
 const pause = (on) => { job.paused = Boolean(on); return status(); };
-const cancel = () => { job.cancel = true; job.paused = false; return status(); };
+const cancel = () => {
+  job.cancel = true;
+  job.paused = false;
+  job.running = false;
+  if (worker) { try { worker.kill(); } catch { /* already gone */ } worker = null; }
+  return status();
+};
 
 // ------------------------------------------------------------------- search
 
@@ -463,6 +534,7 @@ function similar(stat, { limit = 60 } = {}) {
 
 module.exports = {
   init, available, modelsReady, keyFor, isIndexed,
-  indexVideo, startJob, status, pause, cancel, similar,
+  computeTracks, record, startJob, status, pause, cancel, similar,
+  loadModels: ensureSessions,
   MATCH_AT,
 };

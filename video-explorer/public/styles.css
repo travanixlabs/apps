@@ -899,6 +899,26 @@ main { padding: 16px; }
 .stars:hover .star { color: #f5b52b; }
 .stars .star:hover ~ .star { color: var(--text-faint); }
 
+/* Face-index state, sat beside the stars. Dim by default so an unindexed
+   library does not read as covered in warnings. */
+.index-mark {
+  flex: none;
+  border: 0;
+  background: none;
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--text-faint);
+  opacity: .45;
+  transition: color .12s, opacity .12s;
+}
+.index-mark:hover { opacity: 1; color: var(--text); }
+.index-mark.on { color: var(--accent); opacity: 1; }
+/* Cloud files can never be indexed, so this is a statement, not a to-do. */
+.index-mark.na { opacity: .18; cursor: default; }
+.index-mark.na:hover { color: var(--text-faint); opacity: .18; }
+
 .chips {
   display: flex;
   flex-wrap: wrap;

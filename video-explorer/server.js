@@ -717,6 +717,8 @@ async function scanDirectory(dir, recursive, includeCloud) {
     // Free: the scan already holds the stat these are keyed by, so ratings and
     // tags arrive with the listing rather than costing a second round trip.
     ...library.decorate(video),
+    // A map lookup on the same key — cheap enough to do for every row.
+    indexed: faces.isIndexed(video),
   }));
 
   const cloudBelow = videos.reduce((n, v) => n + (v.cloudOnly ? 1 : 0), 0);

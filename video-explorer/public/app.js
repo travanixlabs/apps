@@ -53,12 +53,13 @@ function newAdvFilter() {
     tagMode: 'all',
     ratings: new Set(),   // 0 means unrated
     cloud: 'all',         // 'all' | 'downloaded' | 'cloud'
+    indexed: 'all',       // 'all' | 'yes' | 'no'
   };
 }
 
 function advActive(adv = state.adv) {
   return Boolean(adv.text) || adv.folders.size || adv.tags.size || adv.models.size
-    || adv.ratings.size || adv.cloud !== 'all';
+    || adv.ratings.size || adv.cloud !== 'all' || adv.indexed !== 'all';
 }
 
 // ----------------------------------------------------------------- utilities
@@ -420,6 +421,11 @@ function matchesAdvanced(file, adv) {
   if (adv.cloud === 'downloaded' && file.cloudOnly) return false;
   if (adv.cloud === 'cloud' && !file.cloudOnly) return false;
 
+  if (adv.indexed === 'yes' && !file.indexed) return false;
+  // "Not indexed" means work still to do, so cloud files — which can never be
+  // indexed — are excluded rather than padding a to-do list you cannot action.
+  if (adv.indexed === 'no' && (file.indexed || file.cloudOnly)) return false;
+
   return true;
 }
 
@@ -694,7 +700,12 @@ function pollFaceJob() {
         $('#facePause').textContent = job.paused ? 'Resume' : 'Pause';
       } else {
         clearInterval(facePoll);
-        if (job.done) toast(`Indexed ${job.done} video${job.done === 1 ? '' : 's'}`, 'ok');
+        if (job.done) {
+          toast(`Indexed ${job.done} video${job.done === 1 ? '' : 's'}`, 'ok');
+          // The ◎ marks are baked into the listing, so they only tell the truth
+          // again after a re-scan.
+          scan(state.dir, { record: false });
+        }
       }
     } catch {
       clearInterval(facePoll);
@@ -753,6 +764,15 @@ function renderAdvanced() {
   for (const [value, label] of [['all', 'everything'], ['downloaded', 'downloaded only'], ['cloud', 'cloud only ☁']]) {
     cloud.appendChild(chipToggle(label, advDraft.cloud === value, () => {
       advDraft.cloud = value;
+      renderAdvanced();
+    }));
+  }
+
+  const indexed = $('#advIndexed');
+  indexed.innerHTML = '';
+  for (const [value, label] of [['all', 'everything'], ['yes', 'indexed ◎'], ['no', 'not indexed']]) {
+    indexed.appendChild(chipToggle(label, advDraft.indexed === value, () => {
+      advDraft.indexed = value;
       renderAdvanced();
     }));
   }
@@ -841,6 +861,7 @@ function updateAdvMatch() {
   if (advDraft.tags.size) bits.push(`${advDraft.tags.size} tag${advDraft.tags.size === 1 ? '' : 's'} (${advDraft.tagMode})`);
   if (advDraft.ratings.size) bits.push(`${advDraft.ratings.size} rating${advDraft.ratings.size === 1 ? '' : 's'}`);
   if (advDraft.cloud !== 'all') bits.push(advDraft.cloud);
+  if (advDraft.indexed !== 'all') bits.push(advDraft.indexed === 'yes' ? 'indexed' : 'not indexed');
   if (advDraft.text) bits.push(`"${advDraft.text}"`);
   el.textContent = bits.join(' · ');
 }
@@ -1010,6 +1031,24 @@ function buildRecordRow(file) {
   row.className = 'record-row';
 
   row.appendChild(buildStars(file.rating || 0, (rating) => editRecords([file.path], { rating }), { compact: true }));
+
+  // Whether this video's faces have been indexed. Cloud files are never
+  // indexed by design, so they say so rather than looking merely unfinished.
+  const mark = document.createElement('button');
+  mark.type = 'button';
+  mark.className = 'index-mark' + (file.indexed ? ' on' : '') + (file.cloudOnly ? ' na' : '');
+  mark.textContent = '◎';
+  mark.title = file.cloudOnly
+    ? 'Cloud-only — face indexing skips these, since sampling frames would download the file'
+    : (file.indexed ? 'Faces indexed — click to find similar' : 'Not indexed yet — click to index this folder');
+  mark.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    if (file.cloudOnly) return;
+    if (file.indexed) openSimilar(file);
+    else startFaceIndex();
+  });
+  row.appendChild(mark);
+
   row.appendChild(buildLabelChips(file, 'models'));
   row.appendChild(buildLabelChips(file, 'tags'));
   return row;
@@ -2505,7 +2544,7 @@ function wireEvents() {
   for (const btn of document.querySelectorAll('[data-clear]')) {
     btn.addEventListener('click', () => {
       const what = btn.dataset.clear;
-      if (what === 'cloud') advDraft.cloud = 'all';
+      if (what === 'cloud' || what === 'indexed') advDraft[what] = 'all';
       else advDraft[what === 'rating' ? 'ratings' : what].clear();
       renderAdvanced();
     });
