@@ -76,6 +76,7 @@
       <input id="dwellMs" type="range" min="1000" max="5000" step="250" value="1000">
     </label>
 
+    <button id="importBtn" class="btn" title="Bulk-assign models from pasted CODE → name lines">Import labels…</button>
     <button id="buildAllBtn" class="btn">Build all previews</button>
     <span id="status" class="status"></span>
   </div>
@@ -160,6 +161,36 @@
     <footer class="modal-foot">
       <span id="playerMeta" class="hint mono"></span>
       <div id="playerActions" class="quickbar quickbar-footer"></div>
+    </footer>
+  </div>
+</div>
+
+<!-- Import labels -->
+<div id="importModal" class="modal" hidden>
+  <div class="modal-card wide">
+    <header class="modal-head">
+      <h2>Import labels</h2>
+      <span id="importScope" class="adv-match"></span>
+      <button class="btn btn-icon modal-close">✕</button>
+    </header>
+    <div class="import-body">
+      <p class="hint">
+        One line per release: the catalogue code, then the names. Separators are
+        flexible — tab, comma, colon or spaces — and <span class="mono">MD-0155</span>,
+        <span class="mono">md_0155</span> and <span class="mono">MD0155</span> all match the
+        same files. Names split on commas or semicolons. Lines starting with
+        <span class="mono">#</span> are ignored.
+      </p>
+      <textarea id="importText" class="import-text" spellcheck="false"
+                placeholder="MD-262    Alice Chen, Bob Wu&#10;PMC-105   Alice Chen&#10;MCY-0043  Carol Lin"></textarea>
+      <label class="check">
+        <input id="importReplace" type="checkbox"> Replace existing models instead of adding to them
+      </label>
+      <div id="importResult" class="import-result" hidden></div>
+    </div>
+    <footer class="modal-foot">
+      <span id="importCount" class="hint"></span>
+      <button id="importApply" class="btn btn-primary">Apply</button>
     </footer>
   </div>
 </div>

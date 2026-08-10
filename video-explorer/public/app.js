@@ -376,6 +376,9 @@ function parseQuery(query) {
     } else if (raw.startsWith('@') || raw.startsWith('model:')) {
       field = 'models';
       value = raw.replace(/^(@|model:)/, '');
+    } else if (raw.startsWith('code:')) {
+      field = 'code';
+      value = raw.slice(5);
     }
     return value ? { value, field } : null;
   }).filter(Boolean);
@@ -426,7 +429,12 @@ function matchesAdvanced(file, adv) {
 function matchesQuery(file, terms) {
   const haystack = (file.name + ' ' + file.relFolder).toLowerCase();
   const values = (field) => (file[field] || []).map((t) => t.toLowerCase());
+  // Separators vary between sources, so "md0155" finds "MD-0155".
+  const flatCode = String(file.code || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   return terms.every((term) => {
+    if (term.field === 'code') {
+      return flatCode.includes(term.value.replace(/[^a-z0-9]/g, ''));
+    }
     if (term.field) return values(term.field).some((t) => t.includes(term.value));
     // A bare term searches everything: name, subfolder, tags and models.
     return haystack.includes(term.value)
@@ -542,6 +550,73 @@ function toggleSortMenu(open) {
   if (show) renderSortMenu();
   menu.hidden = !show;
   $('#sortBtn').classList.toggle('on', show);
+}
+
+// -------------------------------------------------------- importing labels
+
+/**
+ * Bulk-assigns models from pasted "CODE  names" lines. The lookup stays with the
+ * user, so there is nothing to scrape and nothing to break when a third-party
+ * site changes shape — and 90% of the downloaded library carries a code, which
+ * is a far better handle than anything recoverable from the pixels.
+ */
+function openImport() {
+  $('#importScope').textContent = state.recursive ? state.dir : `${state.dir} and below`;
+  $('#importResult').hidden = true;
+  $('#importCount').textContent = '';
+  $('#importModal').hidden = false;
+  $('#importText').focus();
+  syncImportCount();
+}
+
+function syncImportCount() {
+  const lines = $('#importText').value.split(/\r?\n/)
+    .filter((l) => l.trim() && !l.trim().startsWith('#')).length;
+  $('#importCount').textContent = lines ? `${lines} line${lines === 1 ? '' : 's'} to apply` : '';
+}
+
+async function applyImport() {
+  const text = $('#importText').value.trim();
+  if (!text) { toast('Paste some lines first', 'err'); return; }
+
+  $('#importApply').disabled = true;
+  $('#importCount').textContent = 'Applying…';
+  try {
+    const data = await api('/api/library/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, dir: state.dir, mode: $('#importReplace').checked ? 'replace' : 'add' }),
+    });
+    state.modelVocab = data.models || state.modelVocab;
+
+    const box = $('#importResult');
+    box.hidden = false;
+    box.innerHTML = '';
+    const summary = document.createElement('p');
+    summary.className = 'import-summary';
+    summary.textContent = `Labelled ${data.files} of ${data.scanned} videos scanned`
+      + ` · ${data.matched} of ${data.codes} codes matched`;
+    box.appendChild(summary);
+
+    if (data.unmatched.length) {
+      const miss = document.createElement('p');
+      miss.className = 'hint';
+      // Reported rather than silently dropped: an unmatched code usually means a
+      // typo or a file you have not downloaded, and both are worth seeing.
+      miss.textContent = `No files for: ${data.unmatched.join(', ')}`
+        + (data.unmatched.length >= 100 ? ' …' : '');
+      box.appendChild(miss);
+    }
+
+    $('#importCount').textContent = '';
+    await scan(state.dir, { record: false });
+    toast(`Labelled ${data.files} video${data.files === 1 ? '' : 's'}`, 'ok');
+  } catch (err) {
+    $('#importCount').textContent = '';
+    toast(err.message, 'err');
+  } finally {
+    $('#importApply').disabled = false;
+  }
 }
 
 // -------------------------------------------------------- advanced filters
@@ -1848,6 +1923,8 @@ function buildCard(file, index) {
 /** Size and date come from the cheap scan; the rest waits on a probe. */
 function metaLineHtml(file, info) {
   const bits = [];
+  // The catalogue code leads: it is the handle you label and search by.
+  if (file.code) bits.push(`<b class="code">${file.code}</b>`);
   if (info.duration) bits.push(`<b>${fmtDuration(info.duration)}</b>`);
   if (info.width) bits.push(`${info.width}×${info.height}`);
   if (info.fps) bits.push(`${info.fps} fps`);
@@ -2311,6 +2388,11 @@ function wireEvents() {
     if (cb) cb(dest);
   });
 
+  // importing labels
+  $('#importBtn').addEventListener('click', openImport);
+  $('#importApply').addEventListener('click', applyImport);
+  $('#importText').addEventListener('input', syncImportCount);
+
   // advanced filters
   $('#advBtn').addEventListener('click', openAdvanced);
   $('#advApply').addEventListener('click', applyAdvanced);
@@ -2435,7 +2517,8 @@ function isTyping() {
 
 function modalOpen() {
   return !$('#playerModal').hidden || !$('#pickerModal').hidden
-    || !$('#settingsModal').hidden || !$('#tagModal').hidden || !$('#advModal').hidden;
+    || !$('#settingsModal').hidden || !$('#tagModal').hidden || !$('#advModal').hidden
+    || !$('#importModal').hidden;
 }
 
 function onKeyDown(ev) {
@@ -2444,6 +2527,7 @@ function onKeyDown(ev) {
     if (!$('#pickerModal').hidden) return closePicker();
     if (!$('#tagModal').hidden) { $('#tagModal').hidden = true; return; }
     if (!$('#advModal').hidden) { $('#advModal').hidden = true; return; }
+    if (!$('#importModal').hidden) { $('#importModal').hidden = true; return; }
     if (!$('#playerModal').hidden) return closePlayer();
     if (!$('#settingsModal').hidden) { $('#settingsModal').hidden = true; return; }
     if (isTyping()) { document.activeElement.blur(); return; }
