@@ -53,13 +53,12 @@ function newAdvFilter() {
     tagMode: 'all',
     ratings: new Set(),   // 0 means unrated
     cloud: 'all',         // 'all' | 'downloaded' | 'cloud'
-    indexed: 'all',       // 'all' | 'yes' | 'no'
   };
 }
 
 function advActive(adv = state.adv) {
   return Boolean(adv.text) || adv.folders.size || adv.tags.size || adv.models.size
-    || adv.ratings.size || adv.cloud !== 'all' || adv.indexed !== 'all';
+    || adv.ratings.size || adv.cloud !== 'all';
 }
 
 // ----------------------------------------------------------------- utilities
@@ -421,11 +420,6 @@ function matchesAdvanced(file, adv) {
   if (adv.cloud === 'downloaded' && file.cloudOnly) return false;
   if (adv.cloud === 'cloud' && !file.cloudOnly) return false;
 
-  if (adv.indexed === 'yes' && !file.indexed) return false;
-  // "Not indexed" means work still to do, so cloud files — which can never be
-  // indexed — are excluded rather than padding a to-do list you cannot action.
-  if (adv.indexed === 'no' && (file.indexed || file.cloudOnly)) return false;
-
   return true;
 }
 
@@ -550,169 +544,6 @@ function toggleSortMenu(open) {
   $('#sortBtn').classList.toggle('on', show);
 }
 
-// ------------------------------------------------------------ similar faces
-
-/**
- * Ranked retrieval, not automatic grouping. Measured over 100 videos, roughly
- * 1 in 25 suggestions is a false positive — hopeless for clustering, but fine
- * when a person ticks the right ones. The model only has to put good answers
- * near the top.
- */
-let faceMatches = [];
-let facePicked = new Set();
-
-async function openSimilar(file) {
-  faceMatches = [];
-  facePicked = new Set();
-  $('#faceQuery').textContent = file.name;
-  $('#faceResults').innerHTML = '';
-  $('#faceHint').textContent = 'Searching…';
-  $('#faceName').value = (file.models || [])[0] || '';
-  $('#facesModal').hidden = false;
-
-  try {
-    const data = await api(`/api/faces/similar?path=${encodeURIComponent(file.path)}`
-      + `&dir=${encodeURIComponent(state.dir)}`);
-    faceMatches = data.matches || [];
-    // Everything above SFace's own same-identity threshold starts ticked, so
-    // the common case is: glance, untick the wrong ones, apply.
-    for (const m of faceMatches) if (m.score >= data.threshold) facePicked.add(m.path);
-    $('#faceHint').textContent = `${data.faces} faces in ${data.tracks} track${data.tracks === 1 ? '' : 's'}`
-      + ` · ${faceMatches.filter((m) => m.score >= data.threshold).length} above the match threshold`
-      + ` (${data.threshold}) · ticked by default, untick anything wrong`;
-    renderFaceResults(data.threshold);
-  } catch (err) {
-    // The usual reason is simply that nothing here has been indexed yet.
-    $('#faceHint').innerHTML = '';
-    const box = $('#faceResults');
-    box.innerHTML = '';
-    const msg = document.createElement('p');
-    msg.className = 'hint';
-    msg.textContent = err.message + '. Indexing samples 10 frames per video and '
-      + 'only ever touches downloaded files — cloud items are skipped.';
-    const btn = document.createElement('button');
-    btn.className = 'btn btn-primary';
-    btn.textContent = 'Index this folder now';
-    btn.addEventListener('click', () => { $('#facesModal').hidden = true; startFaceIndex(); });
-    box.appendChild(msg);
-    box.appendChild(btn);
-  }
-}
-
-function renderFaceResults(threshold) {
-  const box = $('#faceResults');
-  box.innerHTML = '';
-  if (!faceMatches.length) {
-    box.innerHTML = '<p class="hint">Nothing else in this folder is indexed yet.</p>';
-    return;
-  }
-
-  for (const match of faceMatches) {
-    const card = document.createElement('button');
-    card.type = 'button';
-    card.className = 'face-card' + (facePicked.has(match.path) ? ' picked' : '')
-      + (match.score >= threshold ? ' strong' : '');
-    card.addEventListener('click', () => {
-      if (facePicked.has(match.path)) facePicked.delete(match.path);
-      else facePicked.add(match.path);
-      card.classList.toggle('picked', facePicked.has(match.path));
-      syncFaceFooter();
-    });
-
-    const shot = document.createElement('div');
-    shot.className = 'face-shot';
-    loadThumb(match.path, null, true).then((url) => {
-      if (url) { shot.style.backgroundImage = `url("${url}")`; }
-    }).catch(() => {});
-    card.appendChild(shot);
-
-    const score = document.createElement('span');
-    score.className = 'face-score';
-    score.textContent = match.score.toFixed(2);
-    shot.appendChild(score);
-
-    const name = document.createElement('span');
-    name.className = 'face-name-line';
-    name.textContent = match.name;
-    name.title = match.path;
-    card.appendChild(name);
-
-    if ((match.models || []).length) {
-      const models = document.createElement('span');
-      models.className = 'face-models';
-      models.textContent = match.models.join(', ');
-      card.appendChild(models);
-    }
-
-    box.appendChild(card);
-  }
-  syncFaceFooter();
-}
-
-function syncFaceFooter() {
-  $('#faceApply').textContent = facePicked.size
-    ? `Add name to ${facePicked.size}`
-    : 'Add name to selected';
-  $('#faceApply').disabled = !facePicked.size;
-}
-
-async function applyFaceName() {
-  const name = $('#faceName').value.trim();
-  if (!name) { toast('Type a model name first', 'err'); return; }
-  const paths = [...facePicked];
-  if (!paths.length) return;
-  $('#facesModal').hidden = true;
-  await editRecords(paths, { addModels: [name] });
-  toast(`Added "${name}" to ${paths.length} video${paths.length === 1 ? '' : 's'}`, 'ok');
-}
-
-// ---------------------------------------------------------- face indexing
-
-let facePoll = null;
-
-async function startFaceIndex() {
-  try {
-    const started = await api('/api/faces/index', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dir: state.dir }),
-    });
-    if (!started.available) { toast('Face indexing is unavailable in this build', 'err'); return; }
-    if (!started.queued) { toast('Everything here is already indexed', 'ok'); return; }
-    toast(`Indexing ${started.queued} video${started.queued === 1 ? '' : 's'} in the background`, 'ok');
-    pollFaceJob();
-  } catch (err) {
-    toast(err.message, 'err');
-  }
-}
-
-function pollFaceJob() {
-  clearInterval(facePoll);
-  facePoll = setInterval(async () => {
-    try {
-      const job = await api('/api/faces/status');
-      const bar = $('#faceBar');
-      bar.hidden = !job.running;
-      if (job.running) {
-        $('#faceBarText').textContent = `indexing faces · ${job.done}/${job.total}`
-          + (job.current ? ` · ${job.current.slice(0, 28)}` : '');
-        $('#faceBarFill').style.width = `${(100 * job.done) / Math.max(1, job.total)}%`;
-        $('#facePause').textContent = job.paused ? 'Resume' : 'Pause';
-      } else {
-        clearInterval(facePoll);
-        if (job.done) {
-          toast(`Indexed ${job.done} video${job.done === 1 ? '' : 's'}`, 'ok');
-          // The ◎ marks are baked into the listing, so they only tell the truth
-          // again after a re-scan.
-          scan(state.dir, { record: false });
-        }
-      }
-    } catch {
-      clearInterval(facePoll);
-    }
-  }, 1200);
-}
-
 // -------------------------------------------------------- advanced filters
 
 // Edited in the dialog and only copied onto state.adv on Apply, so closing
@@ -768,14 +599,6 @@ function renderAdvanced() {
     }));
   }
 
-  const indexed = $('#advIndexed');
-  indexed.innerHTML = '';
-  for (const [value, label] of [['all', 'everything'], ['yes', 'indexed ◎'], ['no', 'not indexed']]) {
-    indexed.appendChild(chipToggle(label, advDraft.indexed === value, () => {
-      advDraft.indexed = value;
-      renderAdvanced();
-    }));
-  }
 
   for (const [field, el, empty] of [
     ['models', '#advModels', 'No models yet — name someone from a card first.'],
@@ -861,7 +684,6 @@ function updateAdvMatch() {
   if (advDraft.tags.size) bits.push(`${advDraft.tags.size} tag${advDraft.tags.size === 1 ? '' : 's'} (${advDraft.tagMode})`);
   if (advDraft.ratings.size) bits.push(`${advDraft.ratings.size} rating${advDraft.ratings.size === 1 ? '' : 's'}`);
   if (advDraft.cloud !== 'all') bits.push(advDraft.cloud);
-  if (advDraft.indexed !== 'all') bits.push(advDraft.indexed === 'yes' ? 'indexed' : 'not indexed');
   if (advDraft.text) bits.push(`"${advDraft.text}"`);
   el.textContent = bits.join(' · ');
 }
@@ -1031,23 +853,6 @@ function buildRecordRow(file) {
   row.className = 'record-row';
 
   row.appendChild(buildStars(file.rating || 0, (rating) => editRecords([file.path], { rating }), { compact: true }));
-
-  // Whether this video's faces have been indexed. Cloud files are never
-  // indexed by design, so they say so rather than looking merely unfinished.
-  const mark = document.createElement('button');
-  mark.type = 'button';
-  mark.className = 'index-mark' + (file.indexed ? ' on' : '') + (file.cloudOnly ? ' na' : '');
-  mark.textContent = '◎';
-  mark.title = file.cloudOnly
-    ? 'Cloud-only — face indexing skips these, since sampling frames would download the file'
-    : (file.indexed ? 'Faces indexed — click to find similar' : 'Not indexed yet — click to index this folder');
-  mark.addEventListener('click', (ev) => {
-    ev.stopPropagation();
-    if (file.cloudOnly) return;
-    if (file.indexed) openSimilar(file);
-    else startFaceIndex();
-  });
-  row.appendChild(mark);
 
   row.appendChild(buildLabelChips(file, 'models'));
   row.appendChild(buildLabelChips(file, 'tags'));
@@ -2083,11 +1888,6 @@ function actionsFor(file, { card = null, inPlayer = false } = {}) {
       title: 'Tags',
       run: () => openLabelDialog([state.files.find((f) => f.path === file.path) || file], 'tags'),
     },
-    ...(file.cloudOnly ? [] : [{
-      icon: '◎',
-      title: 'Find similar faces',
-      run: () => openSimilar(state.files.find((f) => f.path === file.path) || file),
-    }]),
     {
       icon: '☺',
       title: 'Models',
@@ -2511,30 +2311,6 @@ function wireEvents() {
     if (cb) cb(dest);
   });
 
-  // similar faces
-  $('#faceApply').addEventListener('click', applyFaceName);
-  $('#faceName').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') applyFaceName(); });
-  $('#faceSelectAll').addEventListener('click', () => {
-    const all = facePicked.size === faceMatches.length;
-    facePicked = all ? new Set() : new Set(faceMatches.map((m) => m.path));
-    for (const card of document.querySelectorAll('.face-card')) card.classList.toggle('picked', !all);
-    syncFaceFooter();
-  });
-  $('#facePause').addEventListener('click', async () => {
-    const job = await api('/api/faces/status');
-    await api('/api/faces/pause', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paused: !job.paused }),
-    });
-  });
-  $('#faceCancel').addEventListener('click', async () => {
-    await api('/api/faces/cancel', { method: 'POST' });
-    $('#faceBar').hidden = true;
-  });
-  // A job left running from a previous session should still show its progress.
-  api('/api/faces/status').then((job) => { if (job.running) pollFaceJob(); }).catch(() => {});
-
   // advanced filters
   $('#advBtn').addEventListener('click', openAdvanced);
   $('#advApply').addEventListener('click', applyAdvanced);
@@ -2544,7 +2320,7 @@ function wireEvents() {
   for (const btn of document.querySelectorAll('[data-clear]')) {
     btn.addEventListener('click', () => {
       const what = btn.dataset.clear;
-      if (what === 'cloud' || what === 'indexed') advDraft[what] = 'all';
+      if (what === 'cloud') advDraft.cloud = 'all';
       else advDraft[what === 'rating' ? 'ratings' : what].clear();
       renderAdvanced();
     });
@@ -2659,8 +2435,7 @@ function isTyping() {
 
 function modalOpen() {
   return !$('#playerModal').hidden || !$('#pickerModal').hidden
-    || !$('#settingsModal').hidden || !$('#tagModal').hidden || !$('#advModal').hidden
-    || !$('#facesModal').hidden;
+    || !$('#settingsModal').hidden || !$('#tagModal').hidden || !$('#advModal').hidden;
 }
 
 function onKeyDown(ev) {
@@ -2669,7 +2444,6 @@ function onKeyDown(ev) {
     if (!$('#pickerModal').hidden) return closePicker();
     if (!$('#tagModal').hidden) { $('#tagModal').hidden = true; return; }
     if (!$('#advModal').hidden) { $('#advModal').hidden = true; return; }
-    if (!$('#facesModal').hidden) { $('#facesModal').hidden = true; return; }
     if (!$('#playerModal').hidden) return closePlayer();
     if (!$('#settingsModal').hidden) { $('#settingsModal').hidden = true; return; }
     if (isTyping()) { document.activeElement.blur(); return; }

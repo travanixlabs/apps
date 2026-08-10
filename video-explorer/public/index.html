@@ -80,12 +80,6 @@
     <span id="status" class="status"></span>
   </div>
 
-  <div id="faceBar" class="face-bar" hidden>
-    <span id="faceBarText" class="face-bar-text">indexing faces</span>
-    <span class="face-bar-track"><span id="faceBarFill" class="face-bar-fill"></span></span>
-    <button id="facePause" class="btn btn-ghost">Pause</button>
-    <button id="faceCancel" class="btn btn-ghost">Stop</button>
-  </div>
 
   <div id="selectionBar" class="selection-bar" hidden>
     <span id="selectionCount" class="sel-count">0 selected</span>
@@ -170,28 +164,6 @@
   </div>
 </div>
 
-<!-- Similar faces -->
-<div id="facesModal" class="modal" hidden>
-  <div class="modal-card wide">
-    <header class="modal-head">
-      <h2>Similar faces</h2>
-      <span id="faceQuery" class="adv-match"></span>
-      <button class="btn btn-icon modal-close">✕</button>
-    </header>
-    <div class="faces-body">
-      <p class="hint" id="faceHint"></p>
-      <div id="faceResults" class="face-grid"></div>
-    </div>
-    <footer class="modal-foot faces-foot">
-      <input id="faceName" type="text" class="face-name" list="modelVocab"
-             spellcheck="false" placeholder="model name">
-      <datalist id="modelVocab"></datalist>
-      <button id="faceSelectAll" class="btn btn-ghost">Select matches</button>
-      <button id="faceApply" class="btn btn-primary">Add name to selected</button>
-    </footer>
-  </div>
-</div>
-
 <!-- Advanced filters -->
 <div id="advModal" class="modal" hidden>
   <div class="modal-card wide">
@@ -242,13 +214,6 @@
         <div id="advCloud" class="chip-row"></div>
       </div>
 
-      <div class="adv-block">
-        <div class="adv-label">
-          Face index
-          <button class="linkish" data-clear="indexed">clear</button>
-        </div>
-        <div id="advIndexed" class="chip-row"></div>
-      </div>
 
       <div class="adv-block grow">
         <div class="adv-label">

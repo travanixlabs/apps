@@ -10,8 +10,5 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
-  "dependencies": {
-    "onnxruntime-node": "^1.27.0"
-  }
+  "type": "commonjs"
 }
