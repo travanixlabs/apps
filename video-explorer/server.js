@@ -286,25 +286,6 @@ function run(cmd, args, opts = {}) {
   });
 }
 
-/**
- * Studio catalogue code from a filename — "MD-0155-2.mp4" -> MD-0155.
- *
- * 90% of the downloaded library carries one of these, which makes it a far
- * better handle for labelling than anything recoverable from the pixels. Note a
- * code identifies a *release*, not a person: 2,821 files hold 2,325 distinct
- * codes, so this is a key to look names up against, not an answer in itself.
- */
-function parseCode(name) {
-  const m = /^([A-Za-z]{2,6})[-_ ]?(\d{2,5})/.exec(name);
-  if (!m) return null;
-  return `${m[1].toUpperCase()}-${m[2]}`;
-}
-
-/** Separators and case vary between sources, so both sides get flattened. */
-function codeKey(code) {
-  return String(code).toUpperCase().replace(/[^A-Z0-9]/g, '');
-}
-
 function cacheKey(file, stat, salt) {
   return crypto.createHash('sha1')
     .update([path.resolve(file), stat.size, Math.round(stat.mtimeMs), salt].join('|'))
@@ -735,8 +716,6 @@ async function scanDirectory(dir, recursive, includeCloud) {
     // Free: the scan already holds the stat these are keyed by, so ratings and
     // tags arrive with the listing rather than costing a second round trip.
     ...library.decorate(video),
-    // Derived from the name, so there is nothing to index or store.
-    code: parseCode(path.basename(video.path)),
   }));
 
   const cloudBelow = videos.reduce((n, v) => n + (v.cloudOnly ? 1 : 0), 0);
@@ -1202,64 +1181,6 @@ const server = http.createServer(async (req, res) => {
           models: library.modelCounts(),
         });
       }
-    }
-
-    /**
-     * Bulk-assigns models from pasted "CODE  name, name" lines.
-     *
-     * The lookup itself stays with the user — no scraping, nothing to break when
-     * a third-party site changes shape. One paste can label thousands of files,
-     * and every code that matched nothing is reported back rather than silently
-     * dropped.
-     */
-    if (req.method === 'POST' && route === '/api/library/import') {
-      const body = await readBody(req);
-      const scope = authoriseOrThrow(body.dir || config.lastDir);
-      const replace = body.mode === 'replace';
-
-      const wanted = new Map(); // codeKey -> { code, names }
-      for (const raw of String(body.text || '').split(/\r?\n/)) {
-        const line = raw.trim();
-        if (!line || line.startsWith('#')) continue;
-        // "CODE<sep>names" where the separator is a tab, comma, colon or run of
-        // spaces — whichever the source happened to use.
-        const m = /^(\S+)\s*[\t,:]?\s+(.+)$/.exec(line);
-        if (!m) continue;
-        const code = parseCode(m[1]) || m[1];
-        const names = m[2].split(/[,;/]/).map((n) => n.trim()).filter(Boolean);
-        if (!names.length) continue;
-        const key = codeKey(code);
-        const hit = wanted.get(key);
-        if (hit) hit.names.push(...names);
-        else wanted.set(key, { code, names });
-      }
-
-      const videos = await collectVideos(scope);
-      let files = 0;
-      const matched = new Set();
-      for (const video of videos) {
-        const code = parseCode(path.basename(video.path));
-        if (!code) continue;
-        const entry = wanted.get(codeKey(code));
-        if (!entry) continue;
-        matched.add(codeKey(code));
-        library.apply(video, path.basename(video.path),
-          replace ? { models: entry.names } : { addModels: entry.names });
-        files += 1;
-      }
-
-      const unmatched = [...wanted.values()]
-        .filter((e) => !matched.has(codeKey(e.code)))
-        .map((e) => e.code);
-      log(`label import: ${wanted.size} codes -> ${files} files, ${unmatched.length} unmatched`);
-      return sendJson(res, 200, {
-        codes: wanted.size,
-        matched: matched.size,
-        files,
-        scanned: videos.length,
-        unmatched: unmatched.slice(0, 100),
-        models: library.modelCounts(),
-      });
     }
 
     if (req.method === 'POST' && route === '/api/library/embed') {

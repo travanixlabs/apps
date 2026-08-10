@@ -248,41 +248,6 @@ metadata and has no local record, any embedded tags and rating are adopted into
 the sidecar. That is the return leg: tag on this machine, write into the files,
 and another machine picks them up the first time it looks at them.
 
-## Labelling by catalogue code
-
-Filenames here carry no performer names, but **90% of the downloaded library
-carries a studio catalogue code** — `MD-262`, `PMC-105`, `MCY-0043`. Measured
-across the library: 2,536 of 2,821 downloaded files parse a code, spanning 74
-series. Across everything including cloud files it is 23%, so this helps the
-downloaded set far more than the rest.
-
-The code is derived from the name, so there is nothing to index and nothing to
-store — it appears on every card the moment a folder is scanned, and
-`code:md0155` searches it regardless of how the separator was written.
-
-**Import labels** in the toolbar turns that into bulk assignment. Paste one line
-per release:
-
-```
-MD-262    Alice Chen, Bob Wu
-PMC-105   Alice Chen
-MCY-0043  Carol Lin; Dana Ko
-```
-
-Separators are flexible — tab, comma, colon or spaces — and `MD-0155`,
-`md_0155` and `MD0155` all match the same files. It walks the current folder
-and everything below, applies the names to the **Models** field, and reports how
-many videos were labelled out of how many were scanned. Every code that matched
-nothing is listed back, since an unmatched code is usually a typo or a file you
-have not downloaded — both worth seeing.
-
-A code identifies a *release*, not a person: 2,821 files hold 2,325 distinct
-codes. So this is a pipeline for applying names you have obtained however you
-prefer, not a way of discovering them. The lookup stays with you — there is
-nothing to scrape and nothing to break when a third-party site changes shape.
-Multi-part releases come free: 140 codes span more than one file, and labelling
-the code covers all of them.
-
 ## Details under each preview
 
 Filename, then duration, resolution, frame rate, file size, bitrate, and codec,
