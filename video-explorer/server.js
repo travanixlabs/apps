@@ -64,10 +64,9 @@ const DEFAULT_CONFIG = {
   foldersCollapsed: false,
   recursive: false,   // explorer-style by default: one folder level at a time
   scrubWithMouse: false,
-  // Biggest first: in a library where most files are cloud placeholders, size
-  // is the closest thing the scan knows to "is this worth my attention" —
-  // duration needs a probe, and name order is arbitrary.
-  sort: 'size',
+  // Highest rated first: your own judgement beats any property of the file.
+  // Everything unrated falls below, in name order.
+  sort: 'rating',
   sortDir: 'desc',
 };
 

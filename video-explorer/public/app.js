@@ -458,10 +458,11 @@ function applyFilterSort() {
       const bv = Number((state.meta.get(b.path) || {}).duration) || 0;
       cmp = av - bv;
     } else if (key === 'rating') {
-      // Ties on rating fall back to name, so the unrated bulk stays browsable
-      // instead of arriving in filesystem order.
       cmp = (Number(a.rating) || 0) - (Number(b.rating) || 0);
-      if (cmp === 0) cmp = a.name.localeCompare(b.name, undefined, { numeric: true });
+      // The name tiebreak is returned unflipped: within one rating band, names
+      // should read A→Z whichever way the ratings are pointing. Multiplying it
+      // by dir would put the unrated bulk in reverse alphabetical order.
+      if (cmp === 0) return a.name.localeCompare(b.name, undefined, { numeric: true });
     } else {
       cmp = (Number(a[key]) || 0) - (Number(b[key]) || 0);
     }
@@ -2521,7 +2522,7 @@ async function init() {
   } catch {
     state.config = {
       previewMode: 'live', frames: 10, dwellMs: 1000, tileWidth: 640, cardWidth: 520,
-      pageSize: 24, showCloud: true, recursive: false, sortDir: 'desc', sort: 'size',
+      pageSize: 24, showCloud: true, recursive: false, sortDir: 'desc', sort: 'rating',
     };
   }
 
