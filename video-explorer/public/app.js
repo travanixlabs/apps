@@ -314,7 +314,7 @@ function renderFolders() {
     const downloaded = folder.videoCount - (folder.cloudCount || 0);
     const relevant = state.config.showCloud ? folder.videoCount : downloaded;
     const tile = document.createElement('button');
-    tile.className = 'folder-tile' + (relevant === 0 ? ' empty' : '');
+    tile.className = 'folder-tile' + (relevant === 0 ? ' no-videos' : '');
     tile.title = `${folder.path}\nDrop videos here to move them · hold Ctrl to copy`;
     tile.addEventListener('click', () => navigateTo(folder.path));
     attachDropTarget(tile, folder.path, folder.name);
@@ -2652,10 +2652,13 @@ async function init() {
     };
   }
 
-  // Launch in the default folder, not wherever the last session wandered to —
-  // that folder is one click deep from home anyway, and starting somewhere
-  // predictable beats resuming somewhere forgotten.
-  const start = state.config.homeDir || state.config.lastDir || '';
+  // A cold launch opens the default folder: starting somewhere predictable beats
+  // resuming somewhere forgotten, and the last folder is a click deep from home
+  // anyway. A refresh is the opposite case — you are already somewhere and only
+  // want the page rebuilt — so it resumes the folder you were in.
+  const reloaded = (performance.getEntriesByType('navigation')[0] || {}).type === 'reload';
+  const start = (reloaded ? state.config.lastDir : '')
+    || state.config.homeDir || state.config.lastDir || '';
   $('#dirInput').value = start;
   $('#recursiveToggle').checked = state.config.recursive === true;
   $('#cloudToggle').checked = state.config.showCloud === true;

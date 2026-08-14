@@ -290,14 +290,10 @@ kbd {
 .folder-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
-  /* Every row is implicit here, and both of these matter only at the OneDrive
-     root — the one place with no videos, so the pane is .expanded and has
-     hundreds of spare pixels for a row to grow into. Elsewhere the 38vh cap
-     leaves no slack and the bug cannot show itself.
-
-     min-content: a row is as tall as its tallest tile and no taller.
-     align-content: start: leftover height stays at the bottom of the pane
-     instead of being shared out between the rows. */
+  /* Every row here is implicit. min-content keeps a row as tall as its tallest
+     tile and no taller; align-content: start leaves the leftover height at the
+     bottom of the pane instead of sharing it out between the rows. Both matter
+     only where the pane is .expanded and has spare pixels to give away. */
   grid-auto-rows: min-content;
   align-content: start;
   gap: 11px;
@@ -321,8 +317,12 @@ kbd {
   border-color: var(--accent);
   transform: translateY(-1px);
 }
-.folder-tile.empty { opacity: .5; }
-.folder-tile.empty:hover { opacity: .85; }
+/* Named for what it is rather than a bare `empty`, which is also the class on
+   the page's empty-state panel — and that panel's `margin: 12vh auto` was
+   landing on these tiles, giving their grid row a 200px+ min-content height
+   that every sibling then stretched to fill. */
+.folder-tile.no-videos { opacity: .5; }
+.folder-tile.no-videos:hover { opacity: .85; }
 
 .folder-cover {
   flex: 0 0 auto;
@@ -373,7 +373,10 @@ main { padding: 16px; }
   gap: 16px;
 }
 
-.empty {
+/* Scoped to the one element it describes: as a bare class it also matched any
+   other "empty" thing, and margins meant for a centred panel are ruinous
+   anywhere else. */
+#empty {
   max-width: 560px;
   margin: 12vh auto;
   text-align: center;

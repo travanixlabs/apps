@@ -31,6 +31,12 @@ flip. When more than one account is present the tie is broken by asking Graph
 which account this app is actually signed into, so cloud thumbnails and
 streaming resolve against the same drive the grid is showing.
 
+A **refresh** is the exception: it resumes the folder you were in. A cold launch
+should be predictable, but F5 is what you press when you're already somewhere and
+only want the page rebuilt, so losing your place there is pure cost. The two are
+told apart by the navigation type the browser reports, not by a flag the app has
+to remember to clear.
+
 Uncheck **Follow the signed-in OneDrive account** under ⚙ to pin a fixed folder
 instead. Re-checking it re-resolves, and the path box goes read-only while it's
 on, since the value is derived rather than chosen.
