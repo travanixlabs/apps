@@ -775,9 +775,23 @@ async function editRecords(paths, patch) {
 /** Repaints just the stars and chips, so an edit never disturbs a playing hover. */
 function refreshCardRecord(file) {
   const card = document.querySelector(`.card[data-path="${CSS.escape(file.path)}"]`);
-  if (!card) return;
-  const row = card.querySelector('.record-row');
-  if (row) row.replaceWith(buildRecordRow(file));
+  if (card) {
+    const row = card.querySelector('.record-row');
+    if (row) row.replaceWith(buildRecordRow(file));
+  }
+  // The player shows the same row, so an edit made in either place has to land
+  // in both — otherwise the footer keeps showing the rating you just changed.
+  if (state.playing && state.playing.path === file.path) buildPlayerRecord(file);
+}
+
+/** The card's rating and label row, repeated in the player footer. */
+function buildPlayerRecord(file) {
+  const holder = $('#playerRecord');
+  if (!holder) return;
+  // Prefer the live entry: editing elsewhere mutates that, not the snapshot the
+  // player was opened with.
+  const current = state.files.find((f) => f.path === file.path) || file;
+  holder.replaceChildren(buildRecordRow(current));
 }
 
 function buildStars(current, onPick, { compact = false } = {}) {
@@ -1233,6 +1247,9 @@ function ensureLiveVideo() {
 
 function startLive(previewEl, file) {
   stopLive();
+  // Never scrub behind a dialog. The player sits over the grid, so a preview
+  // that kept cycling would be competing with the thing you actually opened.
+  if (modalOpen()) return;
 
   const count = Math.max(2, Number(state.config.frames) || 10);
   const video = ensureLiveVideo();
@@ -1314,6 +1331,10 @@ function attachHover(previewEl, file) {
   previewEl.addEventListener('mouseenter', async () => {
     // Hovering must never trigger a multi-hundred-MB download.
     if (file.cloudOnly && !state.cloudOptIn.has(file.path)) return;
+    // Opening the player moves the cursor onto the modal, which fires mouseenter
+    // on whatever sits underneath it. Without this, watching something starts a
+    // second preview behind the dialog.
+    if (modalOpen()) return;
 
     if (state.config.previewMode !== 'sprite') {
       startLive(previewEl, file);
@@ -1497,6 +1518,7 @@ function closePicker() {
 /** Drops the stream so the OS lets go of the file, keeping the modal open. */
 function releasePlayer() {
   const player = $('#player');
+  stopPlayerPreview(); // a timer left running would seek a released element
   player.pause();
   player.removeAttribute('src');
   player.load();
@@ -1529,6 +1551,7 @@ async function renameFromPlayer(file) {
 }
 
 function buildPlayerActions(file) {
+  buildPlayerRecord(file);
   const bar = $('#playerActions');
   bar.innerHTML = '';
   for (const action of actionsFor(file, { inPlayer: true })) {
@@ -1579,7 +1602,93 @@ function playFile(file) {
   };
   player.src = `/api/video?path=${encodeURIComponent(file.path)}`;
   $('#playerModal').hidden = false;
-  player.play().catch(() => {});
+  syncPlayerNav();
+  startPlayerPreview();
+}
+
+/**
+ * Walks the listing you can see -- state.view, so the arrows follow the current
+ * filter and sort rather than the folder on disk. Wraps at both ends, which
+ * keeps the buttons live instead of leaving one dead at each edge.
+ */
+function playSibling(step) {
+  const list = state.view;
+  if (!state.playing || list.length < 2) return;
+  const at = list.findIndex((f) => f.path === state.playing.path);
+  if (at < 0) return; // an edit filtered the open video out of the listing
+  playFile(list[(at + step + list.length) % list.length]);
+}
+
+function syncPlayerNav() {
+  const list = state.view;
+  const at = state.playing ? list.findIndex((f) => f.path === state.playing.path) : -1;
+  const usable = list.length > 1 && at >= 0;
+  $('#playerPrev').hidden = !usable;
+  $('#playerNext').hidden = !usable;
+  const pos = $('#playerPos');
+  pos.hidden = at < 0;
+  pos.textContent = at < 0 ? '' : `${at + 1} / ${list.length}`;
+}
+
+/**
+ * The player opens on the same 10-segment preview the thumbnail shows, just
+ * bigger — so you can tell what a video is before committing to watching it.
+ * Playback starts only when you press ▶.
+ *
+ * The native controls stay hidden until then. They would be scrubbing a
+ * preview rather than a playthrough, and their play button would be
+ * indistinguishable from the seeking this does to render each segment.
+ */
+const preview = { timer: null, index: 0, count: 10 };
+
+function startPlayerPreview() {
+  stopPlayerPreview();
+  const player = $('#player');
+  preview.count = Math.max(2, Number(state.config.frames) || 10);
+  preview.index = 0;
+
+  player.controls = false;
+  player.muted = true; // a preview that blares audio is not a preview
+  player.loop = false;
+  $('#playerPlay').hidden = false;
+  $('#playerBadge').hidden = false;
+
+  const show = (index) => {
+    preview.index = index;
+    const duration = Number.isFinite(player.duration) && player.duration > 0 ? player.duration : 0;
+    if (duration <= 0) return; // metadata not in yet; the timer retries
+    const at = segmentTime(duration, index, preview.count);
+    try { player.currentTime = at; } catch { return; }
+    const played = player.play();
+    if (played && played.catch) played.catch(() => {});
+    $('#playerBadge').textContent = `${index + 1}/${preview.count} · ${fmtDuration(at)}`;
+  };
+
+  player.addEventListener('loadedmetadata', () => show(0), { once: true });
+  if (player.readyState >= 1) show(0);
+
+  preview.timer = setInterval(
+    () => show((preview.index + 1) % preview.count),
+    Number(state.config.dwellMs) || 1000,
+  );
+}
+
+function stopPlayerPreview() {
+  clearInterval(preview.timer);
+  preview.timer = null;
+}
+
+/** ▶ turns the preview into a real playthrough: sound on, controls back, from the top. */
+function beginPlayback() {
+  stopPlayerPreview();
+  const player = $('#player');
+  $('#playerPlay').hidden = true;
+  $('#playerBadge').hidden = true;
+  player.controls = true;
+  player.muted = false;
+  try { player.currentTime = 0; } catch { /* not seekable yet; it will start at 0 anyway */ }
+  const played = player.play();
+  if (played && played.catch) played.catch(() => {});
 }
 
 function closePlayer() {
@@ -1757,10 +1866,9 @@ function buildCard(file, index) {
   preview.className = 'preview' + (file.cloudOnly ? ' cloud' : '');
   preview.dataset.path = file.path;
   preview.dataset.duration = String(info.duration || 0);
-  preview.title = file.cloudOnly
-    ? `Cloud-only (${fmtBytes(file.size)}) — streams from OneDrive, nothing downloaded\n`
-      + `Click to select · centre ▶ to watch\n${file.path}`
-    : 'Click to select · shift-click for a range · centre ▶ to view\n' + file.path;
+  // No title attribute: a browser tooltip covers the very preview you hovered to
+  // watch. The path is still on the folder line, and the controls explain
+  // themselves through their own tooltips.
 
   const ticks = document.createElement('div');
   ticks.className = 'ticks';
@@ -1805,12 +1913,33 @@ function buildCard(file, index) {
 
   preview.appendChild(buildQuickbar(file, card));
 
-  // Clicking the thumbnail selects it; shift-click extends the range.
+  /**
+   * The thumbnail plays; the ring selects.
+   *
+   * Watching something is the common case, so a bare click does that. Once a
+   * selection exists you are plainly in the middle of picking things, and a
+   * click adds to it rather than interrupting with a player — so building a
+   * selection stays a one-click-per-item job after the first.
+   *
+   * The first item therefore has to come from the ring, which is the only
+   * unambiguous way to say "select" rather than "play".
+   */
   preview.addEventListener('click', (ev) => {
     if (ev.target.closest('.quickbar') || ev.target.closest('.play-center')) return;
+    if (ev.target.closest('.select-mark')) return; // the ring handles itself
+
+    const selecting = state.selected.size > 0 || ev.shiftKey;
+    if (!selecting) { playFile(file); return; }
     if (ev.shiftKey) ev.preventDefault(); // stop shift-click text selection
     toggleSelect(file.path, index, ev.shiftKey);
   });
+
+  selectMark.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    toggleSelect(file.path, index, ev.shiftKey);
+  });
+  selectMark.title = 'Select';
 
   attachHover(preview, file);
   // Cloud tiles are observed too: the server serves an already-cached poster
@@ -1877,32 +2006,24 @@ function actionsFor(file, { card = null, inPlayer = false } = {}) {
       title: `Fetch preview — downloads ${fmtBytes(file.size)} from OneDrive`,
       run: () => optInCloud(file, cardFor()),
     }] : []),
-    // Cards open the player from the centre button instead, so this is
-    // player-only: the raw stream in a browser tab.
-    ...(inPlayer ? [{
-      icon: '↗',
-      title: 'Play in new tab',
-      run: () => window.open(`/api/video?path=${encodeURIComponent(file.path)}`, '_blank'),
-    }] : []),
-    {
-      icon: '⌗',
-      title: 'Tags',
-      run: () => openLabelDialog([state.files.find((f) => f.path === file.path) || file], 'tags'),
-    },
-    {
-      icon: '☺',
-      title: 'Models',
-      run: () => openLabelDialog([state.files.find((f) => f.path === file.path) || file], 'models'),
-    },
+    // Card-only: the player footer carries the rating and label row itself, so
+    // these would be a second way to reach what is already sitting next to them.
+    ...(inPlayer ? [] : [
+      {
+        icon: '⌗',
+        title: 'Tags',
+        run: () => openLabelDialog([state.files.find((f) => f.path === file.path) || file], 'tags'),
+      },
+      {
+        icon: '☺',
+        title: 'Models',
+        run: () => openLabelDialog([state.files.find((f) => f.path === file.path) || file], 'models'),
+      },
+    ]),
     {
       icon: '✎',
       title: 'Rename',
       run: () => (inPlayer ? renameFromPlayer(file) : startRename(file, cardFor())),
-    },
-    {
-      icon: '⧉',
-      title: 'Copy to…',
-      run: () => pickFolder('Copy to folder', (dest) => doAction('copy', [file.path], { dest })),
     },
     {
       icon: '➜',
@@ -1914,7 +2035,6 @@ function actionsFor(file, { card = null, inPlayer = false } = {}) {
         else if (inPlayer) reopenPlayer(file);
       }),
     },
-    { icon: '⧟', title: 'Copy full path', run: () => copyPath(file.path) },
     {
       icon: '🗑',
       title: 'Delete (Recycle Bin)',
@@ -1982,14 +2102,6 @@ async function optInCloud(file, card) {
   toast('Downloaded — hover now previews it', 'ok');
 }
 
-async function copyPath(text) {
-  try {
-    await navigator.clipboard.writeText(text);
-    toast('Path copied', 'ok');
-  } catch {
-    toast('Clipboard blocked by the browser', 'err');
-  }
-}
 
 function startRename(file, card) {
   const nameEl = card.querySelector('.file-name');
@@ -2274,7 +2386,6 @@ function wireEvents() {
       if (op === 'models') return openLabelDialog(state.files.filter((f) => state.selected.has(f.path)), 'models');
       if (op === 'embed') return embedSelection();
       if (op === 'delete') return confirmDelete(paths);
-      if (op === 'copy') return pickFolder('Copy to folder', (dest) => doAction('copy', paths, { dest }));
       if (op === 'move') return pickFolder('Move to folder', (dest) => doAction('move', paths, { dest }));
       return doAction(op, paths);
     });
@@ -2394,6 +2505,11 @@ function wireEvents() {
     }
   });
 
+  // player
+  $('#playerPlay').addEventListener('click', beginPlayback);
+  $('#playerPrev').addEventListener('click', () => playSibling(-1));
+  $('#playerNext').addEventListener('click', () => playSibling(1));
+
   // modal chrome
   for (const btn of document.querySelectorAll('.modal-close')) {
     btn.addEventListener('click', () => {
@@ -2463,6 +2579,19 @@ function onKeyDown(ev) {
     return;
   }
 
+  // Arrows step through the listing while the player is open. Once playback has
+  // started the bare arrows belong to the video element, which seeks with them,
+  // so from then on stepping needs Shift.
+  if (!ev.ctrlKey && !ev.metaKey && !$('#playerModal').hidden
+      && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) {
+    const previewing = !$('#playerPlay').hidden;
+    if (previewing || ev.shiftKey) {
+      ev.preventDefault();
+      playSibling(ev.key === 'ArrowLeft' ? -1 : 1);
+      return;
+    }
+  }
+
   if (isTyping() || modalOpen()) return;
 
   // Backspace goes up a level, matching File Explorer.
@@ -2504,9 +2633,6 @@ function onKeyDown(ev) {
   } else if (ev.key === 'Delete') {
     ev.preventDefault();
     confirmDelete(paths);
-  } else if (ev.key === 'c' || ev.key === 'C') {
-    ev.preventDefault();
-    pickFolder('Copy to folder', (dest) => doAction('copy', paths, { dest }));
   } else if (ev.key === 'm' || ev.key === 'M') {
     ev.preventDefault();
     pickFolder('Move to folder', (dest) => doAction('move', paths, { dest }));

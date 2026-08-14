@@ -528,9 +528,17 @@ main { padding: 16px; }
   font-size: 13px;
   font-weight: 700;
   opacity: 0;
-  transition: opacity .14s, background .14s, border-color .14s, color .14s;
-  pointer-events: none;
-  z-index: 3;
+  transition: opacity .14s, background .14s, border-color .14s, color .14s, transform .1s;
+  /* Clickable, unlike the other overlays: it is the only way to start a
+     selection now that a bare click on the thumbnail plays instead. */
+  pointer-events: auto;
+  cursor: pointer;
+  z-index: 4;
+}
+.select-mark:hover {
+  border-color: var(--accent);
+  background: rgba(76, 154, 255, .35);
+  transform: scale(1.12);
 }
 .card:hover .select-mark { opacity: 1; }
 .card.selected .select-mark {
@@ -969,10 +977,89 @@ body.dragging .card { cursor: grabbing; }
 .modal-foot .btn-primary { margin-left: auto; }
 .hint { color: var(--text-faint); font-size: 12px; }
 
-.player-stage { background: #000; }
+/* The stage is a positioning context so the preview badge and play button can
+   sit over the video rather than beside it. */
+.player-stage { background: #000; position: relative; }
+
+/* Bigger than the tile's button, because there is more room and this is now the
+   only way playback starts. */
+.play-center.player-play {
+  width: 76px;
+  height: 76px;
+  font-size: 26px;
+  opacity: 1;
+  transform: translate(-50%, -50%);
+}
+.play-center.player-play:hover { transform: translate(-50%, -50%) scale(1.06); }
+.play-center.player-play[hidden] { display: none; }
+
+/* Step through the listing without going back to the grid. Sat at the vertical
+   middle so they clear both the native controls along the bottom and the ▶ in
+   the centre. */
+.player-nav {
+  position: absolute;
+  top: 50%;
+  width: 44px;
+  height: 68px;
+  display: grid;
+  place-content: center;
+  border: 1px solid rgba(255, 255, 255, .28);
+  border-radius: 8px;
+  background: rgba(8, 11, 16, .58);
+  color: #fff;
+  font-size: 30px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: .5;
+  transform: translateY(-50%);
+  transition: opacity .14s, background .14s, border-color .14s;
+  z-index: 5;
+}
+.player-nav.prev { left: 10px; }
+.player-nav.next { right: 10px; }
+.player-nav:hover {
+  opacity: 1;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.player-stage:hover .player-nav { opacity: .85; }
+.player-nav[hidden] { display: none; }
+
+/* Which of how many, so the arrows say where you are in the listing. */
+.player-pos {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: rgba(8, 11, 16, .66);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  z-index: 3;
+}
+.player-pos[hidden] { display: none; }
+
+.player-badge {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  opacity: 1;
+  z-index: 3;
+}
+.player-badge[hidden] { display: none; }
 /* Let the metadata text shrink so the action bar keeps its full width. */
 #playerMeta { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 #player { width: 100%; max-height: 68vh; background: #000; display: block; }
+
+/* The card's rating and labels, repeated here so a video can be judged while
+   you are watching it rather than only from the grid. */
+.player-record { flex: none; }
+.player-record .record-row { margin-top: 0; }
+/* The footer already has the metadata line and the actions competing for width,
+   so the chips wrap rather than push them apart. */
+.player-record .chips { max-width: 260px; }
 
 /* Same actions as the hover bar, sitting to the right of the metadata line. */
 .quickbar-footer {

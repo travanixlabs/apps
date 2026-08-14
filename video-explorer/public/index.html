@@ -86,7 +86,6 @@
     <button class="btn" data-batch="models">Models…</button>
     <button class="btn" data-batch="tags">Tags…</button>
     <span id="batchStars" class="stars stars-batch" title="Rate everything selected"></span>
-    <button class="btn" data-batch="copy">Copy to…</button>
     <button class="btn" data-batch="move">Move to…</button>
     <button class="btn" data-batch="embed" title="Write ratings and tags into the video files so they travel to other devices">Write into files</button>
     <button class="btn btn-danger" data-batch="delete">Delete</button>
@@ -94,7 +93,6 @@
     <span class="shortcut-hints">
       <kbd>Esc</kbd> clear
       <kbd>Del</kbd> delete
-      <kbd>C</kbd> copy
       <kbd>M</kbd> move
       <kbd>T</kbd> tags
       <kbd>N</kbd> models
@@ -155,10 +153,16 @@
       <button class="btn btn-icon modal-close">✕</button>
     </header>
     <div class="player-stage">
-      <video id="player" controls preload="metadata"></video>
+      <video id="player" preload="metadata"></video>
+      <span id="playerBadge" class="badge badge-frame player-badge"></span>
+      <button id="playerPlay" class="play-center player-play" title="Play from the start">▶</button>
+      <button id="playerPrev" class="player-nav prev" title="Previous video (←)" aria-label="Previous video">‹</button>
+      <button id="playerNext" class="player-nav next" title="Next video (→)" aria-label="Next video">›</button>
+      <span id="playerPos" class="player-pos"></span>
     </div>
     <footer class="modal-foot">
       <span id="playerMeta" class="hint mono"></span>
+      <div id="playerRecord" class="player-record"></div>
       <div id="playerActions" class="quickbar quickbar-footer"></div>
     </footer>
   </div>

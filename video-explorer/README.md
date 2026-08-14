@@ -154,10 +154,9 @@ Hover any tile for a toolbar in the top-right corner:
 | ------ | ------ |
 | ☁ | Cloud-only files only: download and build a preview |
 | ⌗ | Edit tags |
+| ☺ | Edit models |
 | ✎ | Rename inline |
-| ⧉ | Copy to a folder |
 | ➜ | Move to a folder |
-| ⧟ | Copy the full path to the clipboard |
 | 🗑 | Delete |
 
 **Deletes go to the Windows Recycle Bin**, never a permanent unlink — a misclick
@@ -181,22 +180,40 @@ no-collision rule would turn a no-op drop into ten `clip (2).mp4` duplicates.
 
 ### Selecting
 
-**Clicking a thumbnail selects it** — it does not start playback. Shift-click
-extends the range. A ring appears in the tile's top-left corner on hover and
-fills in once selected, so there's no separate checkbox to aim at. A bar then
-appears under the toolbar to copy, move, or delete everything selected at once.
+A **selection starts from the ring** in the tile's top-left corner, which appears
+on hover and fills in once selected — there's no separate checkbox to aim at.
+While a selection exists, clicking any thumbnail adds or removes it, and
+shift-click extends the range; a bar under the toolbar then moves, rates, labels,
+or deletes everything selected at once.
 
-To watch something, use the round **▶** button in the dead centre of the
-thumbnail. It fades in on hover and is the one part of the tile that doesn't
-toggle selection. That opens the player modal, streamed with HTTP range requests
-so seeking doesn't download the whole file.
+With nothing selected, **clicking a thumbnail opens the player** — the common case
+gets the whole tile as its target, and the ring keeps a way to begin selecting
+without playing anything. The round **▶** in the dead centre does the same. The
+stream is served with HTTP range requests, so seeking doesn't download the whole
+file.
 
-The same action bar appears in the player's footer, right of the metadata line,
-driven by one shared definition so the two can't drift apart. Two differences in
-that context: it gains **↗**, which opens the raw stream in a browser tab (a
-"view" button would be pointless when you're already watching), and rename
-prompts for a name rather than editing in place. A move or delete closes the
-player instead of leaving it playing a file that no longer exists.
+### The player
+
+It opens on the same 10-segment preview the thumbnail plays, just bigger, so a
+video can be recognised before committing to watching it. Native controls stay
+hidden until you press the big **▶**, which turns the preview into a real
+playthrough: sound on, controls back, from the top. Nothing autoplays.
+
+**‹ and ›** step to the previous or next video without going back to the grid,
+following `state.view` — the listing as filtered and sorted, not the folder on
+disk — and wrapping at both ends so neither button is ever dead. A counter in the
+bottom-right corner says where you are. The bare arrow keys do the same while the
+preview is showing; once playback has started they belong to the video element,
+which seeks with them, so from then on stepping needs `Shift`.
+
+The card's action bar appears in the footer, driven by one shared definition so
+the two can't drift apart, with the **rating and label row** to its left — a video
+can be judged while you're watching it rather than only from the grid, and an edit
+in either place lands in both. The **⌗** and **☺** buttons are dropped here, since
+the chips they would open a dialog for are sitting immediately to their left. One
+other difference: rename prompts for a name rather than editing in place. A move
+or delete closes the player instead of leaving it playing a file that no longer
+exists.
 
 ## Ratings and tags
 
@@ -267,13 +284,15 @@ the full path.
 | Key | Action |
 | --- | ------ |
 | `Alt`+`←` / `Alt`+`→` | Back / forward through visited folders |
+| `←` / `→` | Previous / next video, while the player's preview is showing |
+| `Shift`+`←` / `Shift`+`→` | Previous / next video once playback has started, when the bare arrows seek |
 | `Backspace` | Up one folder |
 | `/` | Focus the filter box |
 | `Ctrl`+`A` | Select every video in the current listing |
 | `0`–`5` | Rate the selection |
 | `T` | Edit tags on the selection |
+| `N` | Edit models on the selection |
 | `Delete` | Recycle the selection |
-| `C` | Copy the selection to a folder |
 | `M` | Move the selection to a folder |
 | `Esc` | Unwind one layer: picker → player → settings → text field → selection |
 
