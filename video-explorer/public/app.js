@@ -24,6 +24,7 @@ const state = {
   metaAsked: new Set(),
   cloudOptIn: new Set(), // cloud files the user explicitly chose to fetch
   playing: null,      // file open in the player modal
+  playingAnchor: null, // the slot it held, once a filter drops it from the view
   selected: new Set(),
   lastClickedIndex: -1,
   sprites: new Map(),  // path -> { url, frames }
@@ -62,6 +63,28 @@ const FACETS = ['folders', 'tags', 'models', 'ratings'];
 /** The values a facet includes, or excludes — the two are always read apart. */
 function picked(facet, want) {
   return [...facet].filter(([, mode]) => mode === want).map(([value]) => value);
+}
+
+/**
+ * How the listing is set up, as opposed to how the app is configured. A refresh
+ * puts these back; card size, preview engine and the default folder are
+ * preferences and survive it.
+ */
+const VIEW_DEFAULTS = { sort: 'rating', sortDir: 'desc', recursive: false, showCloud: true };
+const RESET_KEY = 've-reset-home';
+
+/** Drops filters, search and sort back to the defaults, saving as it goes. */
+function resetView() {
+  Object.assign(state.config, VIEW_DEFAULTS);
+  saveConfig({ ...VIEW_DEFAULTS });
+  state.adv = newAdvFilter();
+  advDraft = newAdvFilter();
+  // Chromium restores form values across a reload, so these are cleared rather
+  // than assumed empty.
+  $('#searchInput').value = '';
+  $('#advText').value = '';
+  $('#advFolderFind').value = '';
+  syncAdvBadge();
 }
 
 function advActive(adv = state.adv) {
@@ -821,10 +844,57 @@ async function editRecords(paths, patch) {
       file.models = record.models;
       refreshCardRecord(file);
     }
+    pruneFiltered(Object.keys(data.records || {}));
     syncTagVocab();
   } catch (err) {
     toast(err.message, 'err');
   }
+}
+
+/**
+ * An edit can take a video out of the filter that found it: rate something 3
+ * while listing four stars only, and it no longer belongs on screen. The card
+ * leaves rather than sitting there contradicting the filter.
+ *
+ * Only the edited files are re-tested and only removal is acted on — a full
+ * re-render would rebuild every thumbnail and lose the scroll position, and
+ * re-sorting would make cards jump under the cursor mid-edit.
+ */
+function pruneFiltered(paths) {
+  const terms = parseQuery($('#searchInput').value.trim().toLowerCase());
+  if (!paths.length || (!terms.length && !advActive())) return;
+
+  const gone = new Set();
+  for (const path of paths) {
+    const file = state.files.find((f) => f.path === path);
+    if (!file) continue;
+    const keep = matchesQuery(file, terms) && (!advActive() || matchesAdvanced(file, state.adv));
+    if (!keep) gone.add(path);
+  }
+  if (!gone.size) return;
+
+  // Remember where the open video sat before it goes, so the player's arrows
+  // still know which way is next.
+  if (state.playing && gone.has(state.playing.path)) {
+    const at = state.view.findIndex((f) => f.path === state.playing.path);
+    state.playingAnchor = at >= 0 ? at : null;
+  }
+
+  state.view = state.view.filter((f) => !gone.has(f.path));
+  for (const path of gone) {
+    state.selected.delete(path);
+    const card = document.querySelector(`.card[data-path="${CSS.escape(path)}"]`);
+    if (!card) continue;
+    card.remove();
+    state.rendered = Math.max(0, state.rendered - 1); // one fewer of state.view on screen
+  }
+
+  syncFileCount();
+  updateSelectionBar();
+  updateStatusLine();
+  syncPlayerNav();
+  renderEmptyState();
+  toast(`${gone.size} no longer match${gone.size === 1 ? 'es' : ''} the filter`, 'ok');
 }
 
 /** Repaints just the stars and chips, so an edit never disturbs a playing hover. */
@@ -1626,6 +1696,7 @@ function buildPlayerActions(file) {
 function playFile(file) {
   stopLive(); // free the hover decoder before opening a second one
   state.playing = file;
+  state.playingAnchor = null; // this one is in the listing until told otherwise
   buildPlayerActions(file);
   $('#playerTitle').textContent = file.name;
   const info = state.meta.get(file.path) || {};
@@ -1668,25 +1739,39 @@ function playFile(file) {
  */
 function playSibling(step) {
   const list = state.view;
-  if (!state.playing || list.length < 2) return;
+  if (!state.playing || !list.length) return;
   const at = list.findIndex((f) => f.path === state.playing.path);
-  if (at < 0) return; // an edit filtered the open video out of the listing
-  playFile(list[(at + step + list.length) % list.length]);
+
+  // An edit can filter the open video out of the listing while you are watching
+  // it. The arrows then work from the slot it vacated: forward lands on whatever
+  // slid into that slot, back on the one before it.
+  const target = at >= 0
+    ? at + step
+    : (state.playingAnchor === null ? null : state.playingAnchor + (step > 0 ? 0 : -1));
+  if (target === null) return;
+
+  playFile(list[((target % list.length) + list.length) % list.length]);
 }
 
 function syncPlayerNav() {
   const list = state.view;
   const at = state.playing ? list.findIndex((f) => f.path === state.playing.path) : -1;
-  const usable = list.length > 1 && at >= 0;
+  const adrift = Boolean(at < 0 && state.playing && state.playingAnchor !== null && list.length);
+  const usable = (at >= 0 && list.length > 1) || adrift;
   $('#playerPrev').hidden = !usable;
   $('#playerNext').hidden = !usable;
+
   // Reads as a sentence rather than "3 / 2112", since it now sits in the
   // details popup instead of beside the arrows.
   const pos = $('#playerPos');
-  pos.hidden = at < 0;
-  pos.textContent = at < 0
-    ? ''
-    : `${(at + 1).toLocaleString()} of ${list.length.toLocaleString()} in this listing`;
+  pos.hidden = !state.playing;
+  if (at >= 0) {
+    pos.textContent = `${(at + 1).toLocaleString()} of ${list.length.toLocaleString()} in this listing`;
+  } else if (adrift) {
+    pos.textContent = `filtered out · ${list.length.toLocaleString()} still listed`;
+  } else {
+    pos.textContent = '';
+  }
 }
 
 /**
@@ -1755,6 +1840,7 @@ function closePlayer() {
   releasePlayer();
   $('#playerActions').innerHTML = '';
   state.playing = null;
+  state.playingAnchor = null;
   $('#playerModal').hidden = true;
 }
 
@@ -1799,13 +1885,17 @@ function appendPage() {
   }
   state.rendered = end;
 
-  $('#fileCount').textContent = state.rendered < state.view.length
-    ? `(${state.rendered} of ${state.view.length})`
-    : `(${state.view.length}${state.view.length === state.files.length ? '' : ' of ' + state.files.length})`;
-
+  syncFileCount();
   renderPager();
   fetchMetaFor(batch);   // probe just this page, local files only
   updateStatusLine();
+}
+
+/** Loaded of matching, or matching of scanned — whichever the listing is short of. */
+function syncFileCount() {
+  $('#fileCount').textContent = state.rendered < state.view.length
+    ? `(${state.rendered} of ${state.view.length})`
+    : `(${state.view.length}${state.view.length === state.files.length ? '' : ' of ' + state.files.length})`;
 }
 
 function renderPager() {
@@ -2630,6 +2720,17 @@ function onKeyDown(ev) {
     return;
   }
 
+  // Ctrl+Shift+R starts over: home folder, no filters, default sort. The flag
+  // survives the reload that follows, and is read once on the way back up.
+  // preventDefault is belt and braces — if the shell reloads anyway, the flag
+  // is already set and the outcome is the same.
+  if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && (ev.key === 'r' || ev.key === 'R')) {
+    ev.preventDefault();
+    sessionStorage.setItem(RESET_KEY, '1');
+    location.reload();
+    return;
+  }
+
   // Alt+arrows navigate history, as in a browser or File Explorer.
   if (ev.altKey && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) {
     if (modalOpen()) return;
@@ -2711,12 +2812,22 @@ async function init() {
     };
   }
 
-  // A cold launch opens the default folder: starting somewhere predictable beats
-  // resuming somewhere forgotten, and the last folder is a click deep from home
-  // anyway. A refresh is the opposite case — you are already somewhere and only
-  // want the page rebuilt — so it resumes the folder you were in.
+  // Three ways in, and they differ only in where you land:
+  //
+  //   cold launch    the default folder, keeping how you had the view set up
+  //   F5             the folder you were in, with the view back to defaults
+  //   Ctrl+Shift+R   the default folder, with the view back to defaults
+  //
+  // A refresh is what you press when the view has got away from you, so both
+  // reload paths drop the filters and the sort. Only the folder is at stake
+  // between them, which is why Ctrl+Shift+R needs nothing more than a flag.
   const reloaded = (performance.getEntriesByType('navigation')[0] || {}).type === 'reload';
-  const start = (reloaded ? state.config.lastDir : '')
+  const toHome = sessionStorage.getItem(RESET_KEY) === '1';
+  sessionStorage.removeItem(RESET_KEY);
+
+  if (reloaded || toHome) resetView();
+
+  const start = (reloaded && !toHome ? state.config.lastDir : '')
     || state.config.homeDir || state.config.lastDir || '';
   $('#dirInput').value = start;
   $('#recursiveToggle').checked = state.config.recursive === true;

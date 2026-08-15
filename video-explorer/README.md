@@ -31,11 +31,24 @@ flip. When more than one account is present the tie is broken by asking Graph
 which account this app is actually signed into, so cloud thumbnails and
 streaming resolve against the same drive the grid is showing.
 
-A **refresh** is the exception: it resumes the folder you were in. A cold launch
-should be predictable, but F5 is what you press when you're already somewhere and
-only want the page rebuilt, so losing your place there is pure cost. The two are
-told apart by the navigation type the browser reports, not by a flag the app has
-to remember to clear.
+Three ways in, differing only in where you land:
+
+| | Folder | View |
+| --- | --- | --- |
+| Cold launch | default folder | left as you had it |
+| `F5` | the folder you were in | filters, search and sort back to defaults |
+| `Ctrl`+`Shift`+`R` | default folder | filters, search and sort back to defaults |
+
+A cold launch should be predictable, but `F5` is what you press when you're
+already somewhere and only want the page rebuilt — losing your place there is
+pure cost, while a view that has got away from you is exactly what you were
+trying to clear. Cold launch and refresh are told apart by the navigation type
+the browser already reports; `Ctrl`+`Shift`+`R` needs only a flag on top of
+that, since the folder is the sole difference.
+
+"View" means the listing: filters, search text, sort field and direction, flatten
+and the cloud toggle. Card size, hover engine, page size and the default folder
+are preferences, and no refresh touches them.
 
 Uncheck **Follow the signed-in OneDrive account** under ⚙ to pin a fixed folder
 instead. Re-checking it re-resolves, and the path box goes read-only while it's
@@ -303,10 +316,21 @@ included tags, while exclusions are always all-of, since "not this" means not
 this either way. Picking a folder covers everything beneath it, so excluding a
 child of an included parent is how you carve out a subtree.
 
+**An edit that breaks the filter removes the card.** Listing four stars only and
+rating something 3 — from the grid or from the player — drops it from the
+listing, rather than leaving it on screen contradicting the filter you are
+working to. Only the edited files are re-tested, and only removal is acted on: a
+full re-render would rebuild every thumbnail and lose your scroll position, and
+re-sorting would make cards jump under the cursor mid-edit. If the video you are
+watching is the one that goes, the player stays open and its arrows work from the
+slot it vacated — forward lands on whatever slid into that slot.
+
 ## Keyboard
 
 | Key | Action |
 | --- | ------ |
+| `F5` | Rebuild the page, same folder, view back to defaults |
+| `Ctrl`+`Shift`+`R` | Start over: default folder, view back to defaults |
 | `Alt`+`←` / `Alt`+`→` | Back / forward through visited folders |
 | `←` / `→` | Previous / next video, while the player's preview is showing |
 | `Shift`+`←` / `Shift`+`→` | Previous / next video once playback has started, when the bare arrows seek |
