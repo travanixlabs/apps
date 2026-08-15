@@ -46,9 +46,9 @@ trying to clear. Cold launch and refresh are told apart by the navigation type
 the browser already reports; `Ctrl`+`Shift`+`R` needs only a flag on top of
 that, since the folder is the sole difference.
 
-"View" means the listing: filters, search text, sort field and direction, flatten
-and the cloud toggle. Card size, hover engine, page size and the default folder
-are preferences, and no refresh touches them.
+"View" means the listing: filters, search text, sort field and direction, and
+flatten. Card size, hover engine, page size and the default folder are
+preferences, and no refresh touches them.
 
 Uncheck **Follow the signed-in OneDrive account** under ⚙ to pin a fixed folder
 instead. Re-checking it re-resolves, and the path box goes read-only while it's
@@ -88,16 +88,18 @@ Detection is free: the scan already calls `stat` on every file, and
 `stat.blocks === 0` identifies a placeholder exactly as reliably as the Windows
 `RECALL_ON_DATA_ACCESS` attribute.
 
-**Show Cloud Items ☁** in the toolbar is **on at every launch**, so the whole
-library is listed by default — cloud files are 92% of it here, and a grid that
-hid them would be showing a rounding error. Their posters come from Microsoft
-Graph rather than the local bytes (see below), so they look like any other tile.
+**A scan lists everything that is in the folder**, cloud items included — they
+are 92% of the library here, and a grid that hid them would be showing a rounding
+error. Their posters come from Microsoft Graph rather than the local bytes (see
+below), so they look like any other tile.
 
-Unchecking it narrows the grid to what is downloaded — the "what can I watch
-offline?" view. That's a per-session choice: it resets to on next launch rather
-than quietly persisting a mostly-empty library. The hidden count is reported in
-the status bar (*"47 cloud items hidden ☁"*), and folder tiles lead with what's
-usable offline — *"12 downloaded of 47"*.
+Narrowing to what is downloaded — the "what can I watch offline?" view — is
+**Advanced filters → Availability**, alongside every other way of narrowing the
+listing. It used to be a toolbar checkbox as well, which meant two controls for
+one question and, worse, two kinds of narrowing: the checkbox re-scanned and
+changed what the folder appeared to contain, while the filter merely hid rows.
+Now the heading count always describes the folder, and folder tiles still lead
+with what's usable offline — *"12 downloaded of 47"*.
 
 Hovering a cloud item does nothing — a hover must never start a 400 MB download.
 The ☁ button in the hover toolbar fetches one deliberately, after a confirmation

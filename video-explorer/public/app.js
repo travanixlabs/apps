@@ -18,7 +18,6 @@ const state = {
   historyIndex: -1,   // where we currently sit in that list
   totalBelow: 0,
   cloudBelow: 0,
-  cloudHidden: 0,
   rendered: 0,        // how many of state.view are on screen (pagination)
   meta: new Map(),    // path -> probed metadata, filled in per page
   metaAsked: new Set(),
@@ -70,7 +69,7 @@ function picked(facet, want) {
  * puts these back; card size, preview engine and the default folder are
  * preferences and survive it.
  */
-const VIEW_DEFAULTS = { sort: 'rating', sortDir: 'desc', recursive: false, showCloud: true };
+const VIEW_DEFAULTS = { sort: 'rating', sortDir: 'desc', recursive: false };
 const RESET_KEY = 've-reset-home';
 
 /** Drops filters, search and sort back to the defaults, saving as it goes. */
@@ -170,10 +169,12 @@ async function scan(dir, { record = true } = {}) {
   setStatus('Scanning…');
   $('#empty').hidden = true;
   try {
+    // The scan always lists everything that is there. Narrowing to what is
+    // downloaded is a filter, not a different listing — Advanced filters →
+    // Availability — so the count in the heading stays honest about the folder.
     const recursive = $('#recursiveToggle').checked ? '1' : '0';
-    const cloud = $('#cloudToggle').checked ? '1' : '0';
     const data = await api(
-      `/api/scan?dir=${encodeURIComponent(target)}&recursive=${recursive}&cloud=${cloud}`,
+      `/api/scan?dir=${encodeURIComponent(target)}&recursive=${recursive}`,
     );
     state.dir = data.dir;
     state.parent = data.parent;
@@ -182,7 +183,6 @@ async function scan(dir, { record = true } = {}) {
     state.folders = data.folders || [];
     state.totalBelow = data.totalBelow || 0;
     state.cloudBelow = data.cloudBelow || 0;
-    state.cloudHidden = data.cloudHidden || 0;
     state.selected.clear();
     state.lastClickedIndex = -1;
     state.meta.clear();
@@ -192,7 +192,6 @@ async function scan(dir, { record = true } = {}) {
     saveConfig({
       lastDir: data.dir,
       recursive: $('#recursiveToggle').checked,
-      showCloud: $('#cloudToggle').checked,
     });
     render();
     if (scrollRoot) scrollRoot.scrollTop = 0;
@@ -343,9 +342,8 @@ function renderFolders() {
 
   for (const folder of folders) {
     const downloaded = folder.videoCount - (folder.cloudCount || 0);
-    const relevant = state.config.showCloud ? folder.videoCount : downloaded;
     const tile = document.createElement('button');
-    tile.className = 'folder-tile' + (relevant === 0 ? ' no-videos' : '');
+    tile.className = 'folder-tile' + (folder.videoCount === 0 ? ' no-videos' : '');
     tile.title = `${folder.path}\nDrop videos here to move them · hold Ctrl to copy`;
     tile.addEventListener('click', () => navigateTo(folder.path));
     attachDropTarget(tile, folder.path, folder.name);
@@ -1944,10 +1942,7 @@ function updateStatusLine() {
       : `${state.view.length} of ${state.files.length} shown`;
     bits.push(state.rendered < state.view.length ? `${shown} · ${state.rendered} loaded` : shown);
   }
-  if (state.cloudHidden) {
-    bits.push(`${state.cloudHidden.toLocaleString()} cloud items hidden ☁`);
-  }
-  if (!state.config.recursive && state.totalBelow > state.files.length + state.cloudHidden) {
+  if (!state.config.recursive && state.totalBelow > state.files.length) {
     bits.push(`${state.totalBelow.toLocaleString()} below`);
   }
   setStatus(bits.join('  ·  '));
@@ -2484,7 +2479,6 @@ function wireEvents() {
   $('#scanBtn').addEventListener('click', () => scan());
   $('#dirInput').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') scan(); });
   $('#recursiveToggle').addEventListener('change', () => scan());
-  $('#cloudToggle').addEventListener('change', () => scan());
 
   $('#foldersCollapse').addEventListener('click', (ev) => {
     ev.stopPropagation();
@@ -2808,7 +2802,7 @@ async function init() {
   } catch {
     state.config = {
       previewMode: 'live', frames: 10, dwellMs: 1000, tileWidth: 640, cardWidth: 520,
-      pageSize: 24, showCloud: true, recursive: false, sortDir: 'desc', sort: 'rating',
+      pageSize: 24, recursive: false, sortDir: 'desc', sort: 'rating',
     };
   }
 
@@ -2831,7 +2825,6 @@ async function init() {
     || state.config.homeDir || state.config.lastDir || '';
   $('#dirInput').value = start;
   $('#recursiveToggle').checked = state.config.recursive === true;
-  $('#cloudToggle').checked = state.config.showCloud === true;
   $('#sortSelect').value = state.config.sort || 'name';
   syncSortButton();
   $('#cardWidth').value = state.config.cardWidth || 520;

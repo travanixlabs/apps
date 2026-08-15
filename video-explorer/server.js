@@ -60,7 +60,6 @@ const DEFAULT_CONFIG = {
   tileWidth: 640,     // poster/sprite tile width; matches the largest card size
   cardWidth: 520,     // largest tile: biggest preview per video
   pageSize: 24,       // videos rendered per page
-  showCloud: true,    // list cloud files too, not just what is downloaded here
   foldersCollapsed: false,
   recursive: false,   // explorer-style by default: one folder level at a time
   scrubWithMouse: false,
@@ -1060,7 +1059,10 @@ const server = http.createServer(async (req, res) => {
       const recursive = url.searchParams.get('recursive') === '1';
       rememberRoot(resolved);
       const started = Date.now();
-      const includeCloud = url.searchParams.get('cloud') === '1';
+      // Absent means yes: a listing tells you what is in the folder, and
+      // narrowing to what is downloaded is the availability filter's job. Only
+      // an explicit cloud=0 holds cloud items back.
+      const includeCloud = url.searchParams.get('cloud') !== '0';
       const scanned = await scanDirectory(resolved, recursive, includeCloud);
       const parent = path.dirname(resolved);
       log(`scanned ${resolved} -> ${scanned.files.length} listed, ${scanned.cloudHidden} cloud hidden, `
@@ -1334,12 +1336,8 @@ async function checkFfmpeg() {
 async function main() {
   await fsp.mkdir(CACHE_DIR, { recursive: true });
   config = { ...DEFAULT_CONFIG, ...loadJsonSync(CONFIG_FILE, {}) };
-  // Cloud items are the library — 92% of it here — so every launch starts with
-  // them visible. Hiding them is a deliberate "what can I watch offline?"
-  // question, and it lasts for the session rather than silently persisting.
-  config.showCloud = true;
-  // Same reasoning for flattening: it is a view you reach for, not a mode you
-  // live in, and reopening the app into 5,682 videos from one folder is jarring.
+  // Flattening is a view you reach for, not a mode you live in: reopening the
+  // app into 5,682 videos from one folder is jarring, so it starts off.
   config.recursive = false;
   await applyHomeDir();
   const lib = await library.init(ONEDRIVE_ROOT);
