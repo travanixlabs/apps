@@ -40,25 +40,33 @@ const state = {
 };
 
 /**
- * The advanced filter. Empty sets mean "no constraint" rather than "match
- * nothing", so a fresh filter is transparent and the UI never has to
- * special-case "everything is unchecked".
+ * The advanced filter. Each facet is a Map of value → 'in' | 'out': clicking a
+ * chip cycles include → exclude → gone. An empty map means "no constraint"
+ * rather than "match nothing", so a fresh filter is transparent and the UI never
+ * has to special-case "everything is unchecked".
  */
 function newAdvFilter() {
   return {
     text: '',
-    folders: new Set(),   // relative folder paths, '.' being the scanned folder
-    tags: new Set(),
-    models: new Set(),
+    folders: new Map(),   // relative folder paths, '.' being the scanned folder
+    tags: new Map(),
+    models: new Map(),
     tagMode: 'all',
-    ratings: new Set(),   // 0 means unrated
+    ratings: new Map(),   // 0 means unrated
     cloud: 'all',         // 'all' | 'downloaded' | 'cloud'
   };
 }
 
+const FACETS = ['folders', 'tags', 'models', 'ratings'];
+
+/** The values a facet includes, or excludes — the two are always read apart. */
+function picked(facet, want) {
+  return [...facet].filter(([, mode]) => mode === want).map(([value]) => value);
+}
+
 function advActive(adv = state.adv) {
-  return Boolean(adv.text) || adv.folders.size || adv.tags.size || adv.models.size
-    || adv.ratings.size || adv.cloud !== 'all';
+  return Boolean(adv.text) || adv.cloud !== 'all'
+    || FACETS.some((f) => adv[f].size > 0);
 }
 
 // ----------------------------------------------------------------- utilities
@@ -392,30 +400,42 @@ function matchesAdvanced(file, adv) {
   }
 
   if (adv.folders.size) {
-    // A selected folder includes everything beneath it, so picking a parent is
-    // not silently narrower than picking its children.
+    // A chosen folder covers everything beneath it, so picking a parent is not
+    // silently narrower than picking its children — and excluding a child of an
+    // included parent is the way to say "this branch, but not that corner".
     const rel = file.relFolder === '.' ? '' : file.relFolder.toLowerCase();
-    const under = [...adv.folders].some((sel) => {
+    const under = (sel) => {
       const s = sel === '.' ? '' : sel.toLowerCase();
       return s === '' || rel === s || rel.startsWith(s + '\\') || rel.startsWith(s + '/');
-    });
-    if (!under) return false;
+    };
+    const include = picked(adv.folders, 'in');
+    if (include.length && !include.some(under)) return false;
+    if (picked(adv.folders, 'out').some(under)) return false;
   }
 
   // Tags and models are matched the same way. The all/any switch governs both,
   // but each facet is checked on its own: picking two models and one tag means
-  // "those models AND that tag", not one big pool.
+  // "those models AND that tag", not one big pool. Exclusions are always all-of:
+  // "not this" means not this, whichever way the include switch is set.
   for (const field of ['tags', 'models']) {
     if (!adv[field].size) continue;
     const have = new Set((file[field] || []).map((t) => t.toLowerCase()));
-    const wanted = [...adv[field]].map((t) => t.toLowerCase());
-    const hit = adv.tagMode === 'any'
-      ? wanted.some((t) => have.has(t))
-      : wanted.every((t) => have.has(t));
-    if (!hit) return false;
+    const wanted = picked(adv[field], 'in').map((t) => t.toLowerCase());
+    if (wanted.length) {
+      const hit = adv.tagMode === 'any'
+        ? wanted.some((t) => have.has(t))
+        : wanted.every((t) => have.has(t));
+      if (!hit) return false;
+    }
+    if (picked(adv[field], 'out').map((t) => t.toLowerCase()).some((t) => have.has(t))) return false;
   }
 
-  if (adv.ratings.size && !adv.ratings.has(file.rating || 0)) return false;
+  if (adv.ratings.size) {
+    const rating = file.rating || 0;
+    const wanted = picked(adv.ratings, 'in');
+    if (wanted.length && !wanted.includes(rating)) return false;
+    if (picked(adv.ratings, 'out').includes(rating)) return false;
+  }
 
   if (adv.cloud === 'downloaded' && file.cloudOnly) return false;
   if (adv.cloud === 'cloud' && !file.cloudOnly) return false;
@@ -554,10 +574,10 @@ let advDraft = newAdvFilter();
 async function openAdvanced() {
   advDraft = {
     ...state.adv,
-    folders: new Set(state.adv.folders),
-    tags: new Set(state.adv.tags),
-    models: new Set(state.adv.models),
-    ratings: new Set(state.adv.ratings),
+    folders: new Map(state.adv.folders),
+    tags: new Map(state.adv.tags),
+    models: new Map(state.adv.models),
+    ratings: new Map(state.adv.ratings),
   };
   $('#advText').value = advDraft.text;
   for (const radio of document.querySelectorAll('input[name="tagMode"]')) {
@@ -584,10 +604,10 @@ function renderAdvanced() {
   const ratings = $('#advRating');
   ratings.innerHTML = '';
   for (const value of [0, 1, 2, 3, 4, 5]) {
-    ratings.appendChild(chipToggle(
+    ratings.appendChild(chipCycle(
       value === 0 ? 'unrated' : '★'.repeat(value),
-      advDraft.ratings.has(value),
-      () => { toggleIn(advDraft.ratings, value); renderAdvanced(); },
+      advDraft.ratings.get(value),
+      () => { cycleIn(advDraft.ratings, value); renderAdvanced(); },
     ));
   }
 
@@ -609,8 +629,8 @@ function renderAdvanced() {
     const vocab = vocabFor(field);
     box.innerHTML = vocab.length ? '' : `<span class="dim">${empty}</span>`;
     for (const entry of vocab) {
-      box.appendChild(chipToggle(`${entry.tag} · ${entry.count}`, advDraft[field].has(entry.tag), () => {
-        toggleIn(advDraft[field], entry.tag);
+      box.appendChild(chipCycle(`${entry.tag} · ${entry.count}`, advDraft[field].get(entry.tag), () => {
+        cycleIn(advDraft[field], entry.tag);
         renderAdvanced();
       }));
     }
@@ -641,16 +661,20 @@ function renderAdvFolders() {
   }
 
   for (const folder of list) {
-    const row = document.createElement('label');
-    row.className = 'folder-check';
-
-    const box = document.createElement('input');
-    box.type = 'checkbox';
-    box.checked = advDraft.folders.has(folder.rel);
-    box.addEventListener('change', () => {
-      toggleIn(advDraft.folders, folder.rel);
+    const mode = advDraft.folders.get(folder.rel);
+    // A button, not a checkbox: a checkbox has two states and this has three.
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'folder-check' + (mode ? ' ' + mode : '');
+    row.addEventListener('click', () => {
+      cycleIn(advDraft.folders, folder.rel);
+      renderAdvFolders();
       updateAdvMatch();
     });
+
+    const box = document.createElement('span');
+    box.className = 'tri-box';
+    box.textContent = mode === 'in' ? '✓' : mode === 'out' ? '✕' : '';
     row.appendChild(box);
 
     const name = document.createElement('span');
@@ -679,11 +703,19 @@ function renderAdvFolders() {
 function updateAdvMatch() {
   const el = $('#advMatch');
   if (!advActive(advDraft)) { el.textContent = 'no filters — showing everything'; return; }
+  // Included and excluded are counted apart, since "2 tags" would otherwise
+  // read the same whether they were wanted or banned.
   const bits = [];
-  if (advDraft.folders.size) bits.push(`${advDraft.folders.size} folder${advDraft.folders.size === 1 ? '' : 's'}`);
-  if (advDraft.models.size) bits.push(`${advDraft.models.size} model${advDraft.models.size === 1 ? '' : 's'}`);
-  if (advDraft.tags.size) bits.push(`${advDraft.tags.size} tag${advDraft.tags.size === 1 ? '' : 's'} (${advDraft.tagMode})`);
-  if (advDraft.ratings.size) bits.push(`${advDraft.ratings.size} rating${advDraft.ratings.size === 1 ? '' : 's'}`);
+  const say = (facet, one, many = one + 's', extra = '') => {
+    const inn = picked(advDraft[facet], 'in').length;
+    const out = picked(advDraft[facet], 'out').length;
+    if (inn) bits.push(`${inn} ${inn === 1 ? one : many}${extra}`);
+    if (out) bits.push(`without ${out} ${out === 1 ? one : many}`);
+  };
+  say('folders', 'folder');
+  say('models', 'model');
+  say('tags', 'tag', 'tags', ` (${advDraft.tagMode})`);
+  say('ratings', 'rating');
   if (advDraft.cloud !== 'all') bits.push(advDraft.cloud);
   if (advDraft.text) bits.push(`"${advDraft.text}"`);
   el.textContent = bits.join(' · ');
@@ -698,9 +730,32 @@ function chipToggle(label, on, onClick) {
   return chip;
 }
 
-function toggleIn(set, value) {
-  if (set.has(value)) set.delete(value);
-  else set.add(value);
+/**
+ * Three states from one click target: include, exclude, off. A separate
+ * "exclude" control would double the width of every row for a choice that is
+ * only ever one of three.
+ */
+function chipCycle(label, mode, onClick) {
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.className = 'chip tri' + (mode ? ' ' + mode : '');
+  chip.title = mode === 'in' ? 'Included — click to exclude'
+    : mode === 'out' ? 'Excluded — click to clear'
+      : 'Click to include, again to exclude';
+  const mark = document.createElement('span');
+  mark.className = 'tri-mark';
+  mark.textContent = mode === 'in' ? '+' : mode === 'out' ? '−' : '';
+  chip.appendChild(mark);
+  chip.appendChild(document.createTextNode(label));
+  chip.addEventListener('click', onClick);
+  return chip;
+}
+
+function cycleIn(map, value) {
+  const mode = map.get(value);
+  if (!mode) map.set(value, 'in');
+  else if (mode === 'in') map.set(value, 'out');
+  else map.delete(value);
 }
 
 async function applyAdvanced() {

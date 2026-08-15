@@ -285,6 +285,24 @@ the full path.
 - **Card size** — grid tile width, 200–520px (defaults to the smallest)
 - **Frame dwell** — hover advance interval, 1–5s (defaults to 1s)
 
+### Advanced filters (the funnel)
+
+Rating, models, tags, availability and folders, counted live against the whole
+tree rather than the loaded page — the match line at the top moves as you pick,
+and nothing is applied until **Apply**.
+
+Every rating, model, tag and folder is a **three-state** control: click once to
+**include** (green, `+`), again to **exclude** (red, `−`), a third time to clear
+it. Exclusion is the half that used to be missing — "everything tagged `hd`
+*except* what is also tagged `anal`", or a whole branch minus one corner of it —
+and it needed no second column of controls, because a value is only ever in one
+of the three states.
+
+Includes and excludes are read separately: the **all / any** switch governs the
+included tags, while exclusions are always all-of, since "not this" means not
+this either way. Picking a folder covers everything beneath it, so excluding a
+child of an included parent is how you carve out a subtree.
+
 ## Keyboard
 
 | Key | Action |
