@@ -156,14 +156,27 @@
       <video id="player" preload="metadata"></video>
       <span id="playerBadge" class="badge badge-frame player-badge"></span>
       <button id="playerPlay" class="play-center player-play" title="Play from the start">▶</button>
-      <button id="playerPrev" class="player-nav prev" title="Previous video (←)" aria-label="Previous video">‹</button>
-      <button id="playerNext" class="player-nav next" title="Next video (→)" aria-label="Next video">›</button>
-      <span id="playerPos" class="player-pos"></span>
     </div>
     <footer class="modal-foot">
-      <span id="playerMeta" class="hint mono"></span>
+      <div class="player-nav">
+        <button id="playerPrev" class="qbtn" title="Previous video (←)" aria-label="Previous video">‹</button>
+        <button id="playerNext" class="qbtn" title="Next video (→)" aria-label="Next video">›</button>
+      </div>
       <div id="playerRecord" class="player-record"></div>
       <div id="playerActions" class="quickbar quickbar-footer"></div>
+      <span class="info-host">
+        <button id="playerInfo" class="qbtn" aria-label="File details" aria-describedby="playerInfoPop">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <circle cx="8" cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <path d="M8 7.1v4.1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            <circle cx="8" cy="4.6" r=".95" fill="currentColor"/>
+          </svg>
+        </button>
+        <span id="playerInfoPop" class="info-pop" role="tooltip">
+          <span id="playerPos" class="info-pos"></span>
+          <span id="playerMeta" class="mono"></span>
+        </span>
+      </span>
     </footer>
   </div>
 </div>

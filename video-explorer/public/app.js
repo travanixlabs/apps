@@ -1625,9 +1625,13 @@ function syncPlayerNav() {
   const usable = list.length > 1 && at >= 0;
   $('#playerPrev').hidden = !usable;
   $('#playerNext').hidden = !usable;
+  // Reads as a sentence rather than "3 / 2112", since it now sits in the
+  // details popup instead of beside the arrows.
   const pos = $('#playerPos');
   pos.hidden = at < 0;
-  pos.textContent = at < 0 ? '' : `${at + 1} / ${list.length}`;
+  pos.textContent = at < 0
+    ? ''
+    : `${(at + 1).toLocaleString()} of ${list.length.toLocaleString()} in this listing`;
 }
 
 /**
