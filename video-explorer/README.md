@@ -35,7 +35,7 @@ Three ways in, differing only in where you land:
 
 | | Folder | View |
 | --- | --- | --- |
-| Cold launch | default folder | left as you had it |
+| Cold launch | default folder | defaults — a launch carries nothing over |
 | `F5` | the folder you were in | filters, search and sort back to defaults |
 | `Ctrl`+`Shift`+`R` | default folder | filters, search and sort back to defaults |
 
