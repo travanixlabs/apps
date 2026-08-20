@@ -11,8 +11,11 @@
   --accent-ink: #08131f;
   --danger: #f4685f;
   --ok: #56d364;
+  --menu: #29323e;   /* native popups: light enough to read as a menu */
   --card-width: 520px;
   --radius: 10px;
+  /* Draw browser widgets -- scrollbars, option lists -- from the dark palette. */
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -100,6 +103,11 @@ input[type="text"]:focus, input[type="search"]:focus, input[type="number"]:focus
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(76, 154, 255, .2);
 }
+/* A select's option list is drawn by the browser from the select's own colours,
+   and --bg is the page: an open menu came out black on black. */
+select { background: var(--bg-elev-2); }
+select option { background: var(--menu); color: var(--text); }
+select option:checked { background: var(--accent); color: var(--accent-ink); }
 .search { flex: 1 1 260px; min-width: 180px; }
 
 .field {
