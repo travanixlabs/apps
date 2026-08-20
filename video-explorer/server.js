@@ -1339,6 +1339,12 @@ async function main() {
   // Flattening is a view you reach for, not a mode you live in: reopening the
   // app into 5,682 videos from one folder is jarring, so it starts off.
   config.recursive = false;
+  // Same for the ordering: every launch starts on your own judgement, highest
+  // first, with the unrated bulk below it. A session can sort however it likes
+  // and that choice is still written down -- it just does not decide what you
+  // see when you next open the app.
+  config.sort = 'rating';
+  config.sortDir = 'desc';
   await applyHomeDir();
   const lib = await library.init(ONEDRIVE_ROOT);
   log(`ratings and tags: ${lib.count} records at ${lib.file}`);
