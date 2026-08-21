@@ -32,9 +32,7 @@ const state = {
   failed: new Set(),
   picker: null,        // { dir, onConfirm, title }
   tagVocab: [],        // [{ tag, count }] across the whole library
-  modelVocab: [],      // the same, for performer names
   tagTargets: [],      // files the open label dialog will edit
-  labelField: 'tags',  // which field that dialog is editing
   adv: newAdvFilter(), // the advanced filter currently applied
   advTree: null,       // { folders, total } for the folder picker, loaded on open
 };
@@ -50,14 +48,13 @@ function newAdvFilter() {
     text: '',
     folders: new Map(),   // relative folder paths, '.' being the scanned folder
     tags: new Map(),
-    models: new Map(),
     tagMode: 'all',
     ratings: new Map(),   // 0 means unrated
     cloud: 'all',         // 'all' | 'downloaded' | 'cloud'
   };
 }
 
-const FACETS = ['folders', 'tags', 'models', 'ratings'];
+const FACETS = ['folders', 'tags', 'ratings'];
 
 /** The values a facet includes, or excludes — the two are always read apart. */
 function picked(facet, want) {
@@ -402,9 +399,6 @@ function parseQuery(query) {
     if (raw.startsWith('#') || raw.startsWith('tag:')) {
       field = 'tags';
       value = raw.replace(/^(#|tag:)/, '');
-    } else if (raw.startsWith('@') || raw.startsWith('model:')) {
-      field = 'models';
-      value = raw.replace(/^(@|model:)/, '');
     }
     return value ? { value, field } : null;
   }).filter(Boolean);
@@ -434,21 +428,18 @@ function matchesAdvanced(file, adv) {
     if (picked(adv.folders, 'out').some(under)) return false;
   }
 
-  // Tags and models are matched the same way. The all/any switch governs both,
-  // but each facet is checked on its own: picking two models and one tag means
-  // "those models AND that tag", not one big pool. Exclusions are always all-of:
-  // "not this" means not this, whichever way the include switch is set.
-  for (const field of ['tags', 'models']) {
-    if (!adv[field].size) continue;
-    const have = new Set((file[field] || []).map((t) => t.toLowerCase()));
-    const wanted = picked(adv[field], 'in').map((t) => t.toLowerCase());
+  // Exclusions are always all-of: "not this" means not this, whichever way the
+  // all/any switch is set for the included tags.
+  if (adv.tags.size) {
+    const have = new Set((file.tags || []).map((t) => t.toLowerCase()));
+    const wanted = picked(adv.tags, 'in').map((t) => t.toLowerCase());
     if (wanted.length) {
       const hit = adv.tagMode === 'any'
         ? wanted.some((t) => have.has(t))
         : wanted.every((t) => have.has(t));
       if (!hit) return false;
     }
-    if (picked(adv[field], 'out').map((t) => t.toLowerCase()).some((t) => have.has(t))) return false;
+    if (picked(adv.tags, 'out').map((t) => t.toLowerCase()).some((t) => have.has(t))) return false;
   }
 
   if (adv.ratings.size) {
@@ -469,10 +460,9 @@ function matchesQuery(file, terms) {
   const values = (field) => (file[field] || []).map((t) => t.toLowerCase());
   return terms.every((term) => {
     if (term.field) return values(term.field).some((t) => t.includes(term.value));
-    // A bare term searches everything: name, subfolder, tags and models.
+    // A bare term searches everything: name, subfolder and tags.
     return haystack.includes(term.value)
-      || values('tags').some((t) => t.includes(term.value))
-      || values('models').some((t) => t.includes(term.value));
+      || values('tags').some((t) => t.includes(term.value));
   });
 }
 
@@ -597,7 +587,6 @@ async function openAdvanced() {
     ...state.adv,
     folders: new Map(state.adv.folders),
     tags: new Map(state.adv.tags),
-    models: new Map(state.adv.models),
     ratings: new Map(state.adv.ratings),
   };
   $('#advText').value = advDraft.text;
@@ -642,19 +631,13 @@ function renderAdvanced() {
   }
 
 
-  for (const [field, el, empty] of [
-    ['models', '#advModels', 'No models yet — name someone from a card first.'],
-    ['tags', '#advTags', 'No tags yet — add some from a card first.'],
-  ]) {
-    const box = $(el);
-    const vocab = vocabFor(field);
-    box.innerHTML = vocab.length ? '' : `<span class="dim">${empty}</span>`;
-    for (const entry of vocab) {
-      box.appendChild(chipCycle(`${entry.tag} · ${entry.count}`, advDraft[field].get(entry.tag), () => {
-        cycleIn(advDraft[field], entry.tag);
-        renderAdvanced();
-      }));
-    }
+  const box = $('#advTags');
+  box.innerHTML = state.tagVocab.length ? '' : '<span class="dim">No tags yet — add some from a card first.</span>';
+  for (const entry of state.tagVocab) {
+    box.appendChild(chipCycle(`${entry.tag} · ${entry.count}`, advDraft.tags.get(entry.tag), () => {
+      cycleIn(advDraft.tags, entry.tag);
+      renderAdvanced();
+    }));
   }
 
   renderAdvFolders();
@@ -734,7 +717,6 @@ function updateAdvMatch() {
     if (out) bits.push(`without ${out} ${out === 1 ? one : many}`);
   };
   say('folders', 'folder');
-  say('models', 'model');
   say('tags', 'tag', 'tags', ` (${advDraft.tagMode})`);
   say('ratings', 'rating');
   if (advDraft.cloud !== 'all') bits.push(advDraft.cloud);
@@ -832,14 +814,12 @@ async function editRecords(paths, patch) {
       body: JSON.stringify({ paths, ...patch }),
     });
     state.tagVocab = data.tags || state.tagVocab;
-    state.modelVocab = data.models || state.modelVocab;
     for (const [filePath, record] of Object.entries(data.records || {})) {
       if (record.error) { toast(record.error, 'err'); continue; }
       const file = state.files.find((f) => f.path === filePath);
       if (!file) continue;
       file.rating = record.rating;
       file.tags = record.tags;
-      file.models = record.models;
       refreshCardRecord(file);
     }
     pruneFiltered(Object.keys(data.records || {}));
@@ -938,49 +918,37 @@ function buildStars(current, onPick, { compact = false } = {}) {
   return wrap;
 }
 
-/**
- * Models and tags are the same shape, so one builder covers both. They stay
- * separate fields rather than a tag naming convention: a performer wants their
- * own filter facet, and a name that collides with a tag would be ambiguous.
- */
-const LABEL_FIELDS = {
-  tags: { prefix: '#', empty: '+ tag', edit: 'Edit tags', chip: 'chip' },
-  models: { prefix: '@', empty: '+ model', edit: 'Edit models', chip: 'chip chip-model' },
-};
-
-function buildLabelChips(file, field) {
-  const spec = LABEL_FIELDS[field];
-  const Field = field[0].toUpperCase() + field.slice(1);
+function buildTagChips(file) {
   const chips = document.createElement('span');
   chips.className = 'chips';
 
-  for (const value of file[field] || []) {
+  for (const value of file.tags || []) {
     const chip = document.createElement('button');
     chip.type = 'button';
-    chip.className = spec.chip;
+    chip.className = 'chip';
     chip.textContent = value;
     chip.title = `Filter by "${value}" — right-click to remove it from this video`;
     chip.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      // The prefix scopes the search to this field, so clicking "hd" does not
-      // also drag in every file merely named that way.
-      $('#searchInput').value = spec.prefix + value;
+      // The # scopes the search to tags, so clicking "hd" does not also drag in
+      // every file merely named that way.
+      $('#searchInput').value = '#' + value;
       render();
     });
     chip.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      editRecords([file.path], { ['remove' + Field]: [value] });
+      editRecords([file.path], { removeTags: [value] });
     });
     chips.appendChild(chip);
   }
 
   const add = document.createElement('button');
   add.type = 'button';
-  add.className = spec.chip + ' chip-add';
-  add.textContent = (file[field] || []).length ? '+' : spec.empty;
-  add.title = spec.edit;
-  add.addEventListener('click', (ev) => { ev.stopPropagation(); openLabelDialog([file], field); });
+  add.className = 'chip chip-add';
+  add.textContent = (file.tags || []).length ? '+' : '+ tag';
+  add.title = 'Edit tags';
+  add.addEventListener('click', (ev) => { ev.stopPropagation(); openTagDialog([file]); });
   chips.appendChild(add);
 
   return chips;
@@ -992,20 +960,15 @@ function buildRecordRow(file) {
 
   row.appendChild(buildStars(file.rating || 0, (rating) => editRecords([file.path], { rating }), { compact: true }));
 
-  row.appendChild(buildLabelChips(file, 'models'));
-  row.appendChild(buildLabelChips(file, 'tags'));
+  row.appendChild(buildTagChips(file));
   return row;
-}
-
-function vocabFor(field) {
-  return field === 'models' ? state.modelVocab : state.tagVocab;
 }
 
 function syncTagVocab() {
   const list = $('#tagVocab');
   if (!list) return;
   list.innerHTML = '';
-  for (const entry of vocabFor(state.labelField)) {
+  for (const entry of state.tagVocab) {
     const option = document.createElement('option');
     option.value = entry.tag;
     option.label = `${entry.count}`;
@@ -1017,25 +980,19 @@ function parseTags(text) {
   return text.split(',').map((t) => t.trim()).filter(Boolean);
 }
 
-/** One dialog for both fields — only the wording and the vocabulary differ. */
-function openLabelDialog(files, field = 'tags') {
+function openTagDialog(files) {
   if (!files.length) return;
   state.tagTargets = files;
-  state.labelField = field;
   const single = files.length === 1;
-  const noun = field === 'models' ? 'model' : 'tag';
 
-  $('#tagTitle').textContent = single
-    ? `${field === 'models' ? 'Models' : 'Tags'} · ${files[0].name}`
-    : `${field === 'models' ? 'Models' : 'Tags'} · ${files.length} videos`;
+  $('#tagTitle').textContent = single ? `Tags · ${files[0].name}` : `Tags · ${files.length} videos`;
   // Pre-filling with one file's values makes Replace a sensible edit. Across
   // many files there is no shared starting point, so the box starts empty and
   // Add is the safe verb.
-  $('#tagInput').value = single ? (files[0][field] || []).join(', ') : '';
-  $('#tagInput').placeholder = field === 'models' ? 'performer names, comma separated' : 'comma separated';
+  $('#tagInput').value = single ? (files[0].tags || []).join(', ') : '';
   $('#tagHint').textContent = single
-    ? `Add appends, Replace overwrites. Right-click a chip on the card to remove one ${noun}.`
-    : `Add appends to each video's existing ${noun}s. Replace overwrites all ${files.length}.`;
+    ? 'Add appends, Replace overwrites. Right-click a chip on the card to remove one tag.'
+    : `Add appends to each video's existing tags. Replace overwrites all ${files.length}.`;
   $('#tagReplace').textContent = single ? 'Replace' : `Replace on ${files.length}`;
   $('#tagAdd').textContent = single ? 'Add' : `Add to ${files.length}`;
 
@@ -1052,7 +1009,7 @@ function renderTagSuggestions() {
   const box = $('#tagSuggest');
   box.innerHTML = '';
   const used = new Set(parseTags($('#tagInput').value).map((t) => t.toLowerCase()));
-  for (const entry of vocabFor(state.labelField).slice(0, 60)) {
+  for (const entry of state.tagVocab.slice(0, 60)) {
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'chip suggest' + (used.has(entry.tag.toLowerCase()) ? ' on' : '');
@@ -1072,15 +1029,12 @@ function renderTagSuggestions() {
 async function commitTags(mode) {
   const values = parseTags($('#tagInput').value);
   const paths = state.tagTargets.map((f) => f.path);
-  const field = state.labelField;
-  const Field = field[0].toUpperCase() + field.slice(1);
-  const noun = field === 'models' ? 'model' : 'tag';
 
   $('#tagModal').hidden = true;
-  await editRecords(paths, mode === 'add' ? { ['add' + Field]: values } : { [field]: values });
+  await editRecords(paths, mode === 'add' ? { addTags: values } : { tags: values });
   toast(mode === 'add'
-    ? `Added ${values.length} ${noun}${values.length === 1 ? '' : 's'} to ${paths.length} video${paths.length === 1 ? '' : 's'}`
-    : `${Field} set on ${paths.length} video${paths.length === 1 ? '' : 's'}`, 'ok');
+    ? `Added ${values.length} tag${values.length === 1 ? '' : 's'} to ${paths.length} video${paths.length === 1 ? '' : 's'}`
+    : `Tags set on ${paths.length} video${paths.length === 1 ? '' : 's'}`, 'ok');
 }
 
 /**
@@ -2150,18 +2104,13 @@ function actionsFor(file, { card = null, inPlayer = false } = {}) {
       title: `Fetch preview — downloads ${fmtBytes(file.size)} from OneDrive`,
       run: () => optInCloud(file, cardFor()),
     }] : []),
-    // Card-only: the player footer carries the rating and label row itself, so
-    // these would be a second way to reach what is already sitting next to them.
+    // Card-only: the player footer carries the rating and tag row itself, so
+    // this would be a second way to reach what is already sitting next to it.
     ...(inPlayer ? [] : [
       {
         icon: '⌗',
         title: 'Tags',
-        run: () => openLabelDialog([state.files.find((f) => f.path === file.path) || file], 'tags'),
-      },
-      {
-        icon: '☺',
-        title: 'Models',
-        run: () => openLabelDialog([state.files.find((f) => f.path === file.path) || file], 'models'),
+        run: () => openTagDialog([state.files.find((f) => f.path === file.path) || file]),
       },
     ]),
     {
@@ -2525,8 +2474,7 @@ function wireEvents() {
       const paths = selectedPaths();
       if (!paths.length) return;
       const op = btn.dataset.batch;
-      if (op === 'tags') return openLabelDialog(state.files.filter((f) => state.selected.has(f.path)), 'tags');
-      if (op === 'models') return openLabelDialog(state.files.filter((f) => state.selected.has(f.path)), 'models');
+      if (op === 'tags') return openTagDialog(state.files.filter((f) => state.selected.has(f.path)));
       if (op === 'embed') return embedSelection();
       if (op === 'delete') return confirmDelete(paths);
       if (op === 'move') return pickFolder('Move to folder', (dest) => doAction('move', paths, { dest }));
@@ -2780,10 +2728,7 @@ function onKeyDown(ev) {
     editRecords(paths, { rating: Number(ev.key) });
   } else if (ev.key === 't' || ev.key === 'T') {
     ev.preventDefault();
-    openLabelDialog(state.files.filter((f) => state.selected.has(f.path)), 'tags');
-  } else if (ev.key === 'n' || ev.key === 'N') {
-    ev.preventDefault();
-    openLabelDialog(state.files.filter((f) => state.selected.has(f.path)), 'models');
+    openTagDialog(state.files.filter((f) => state.selected.has(f.path)));
   } else if (ev.key === 'Delete') {
     ev.preventDefault();
     confirmDelete(paths);

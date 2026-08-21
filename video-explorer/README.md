@@ -175,7 +175,6 @@ Hover any tile for a toolbar in the top-right corner:
 | ------ | ------ |
 | ☁ | Cloud-only files only: download and build a preview |
 | ⌗ | Edit tags |
-| ☺ | Edit models |
 | ✎ | Rename inline |
 | ➜ | Move to a folder |
 | 🗑 | Delete |
@@ -302,11 +301,11 @@ the full path.
 
 ### Advanced filters (the funnel)
 
-Rating, models, tags, availability and folders, counted live against the whole
+Rating, tags, availability and folders, counted live against the whole
 tree rather than the loaded page — the match line at the top moves as you pick,
 and nothing is applied until **Apply**.
 
-Every rating, model, tag and folder is a **three-state** control: click once to
+Every rating, tag and folder is a **three-state** control: click once to
 **include** (green, `+`), again to **exclude** (red, `−`), a third time to clear
 it. Exclusion is the half that used to be missing — "everything tagged `hd`
 *except* what is also tagged `anal`", or a whole branch minus one corner of it —
@@ -341,7 +340,6 @@ slot it vacated — forward lands on whatever slid into that slot.
 | `Ctrl`+`A` | Select every video in the current listing |
 | `0`–`5` | Rate the selection |
 | `T` | Edit tags on the selection |
-| `N` | Edit models on the selection |
 | `Delete` | Recycle the selection |
 | `M` | Move the selection to a folder |
 | `Esc` | Unwind one layer: picker → player → settings → text field → selection |
