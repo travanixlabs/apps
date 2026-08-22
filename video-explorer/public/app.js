@@ -2221,8 +2221,29 @@ function buildFolderLine(file) {
 
   const where = document.createElement('span');
   where.className = 'folder-where';
-  where.textContent = `${fmtDate(file.mtimeMs)}  •  ${file.relFolder === '.' ? 'this folder' : file.relFolder}`;
   where.title = file.folder;
+  where.appendChild(document.createTextNode(`${fmtDate(file.mtimeMs)}  •  `));
+
+  // The folder is a way of getting there, not merely a note of where this came
+  // from — most useful with the subfolders flattened, where the listing is the
+  // only place that name appears. Clicking it scans that folder, exactly as
+  // clicking its tile would. Nothing to go to when the file is already here.
+  if (file.relFolder === '.') {
+    where.appendChild(document.createTextNode('this folder'));
+  } else {
+    const jump = document.createElement('a');
+    jump.className = 'folder-jump';
+    jump.href = '#';
+    jump.textContent = file.relFolder;
+    jump.title = `Open ${file.folder}`;
+    jump.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();   // a card click plays the video; this one must not
+      navigateTo(file.folder);
+    });
+    where.appendChild(jump);
+  }
+
   line.appendChild(where);
 
   if (file.url) {
