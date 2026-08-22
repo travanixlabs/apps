@@ -2961,9 +2961,12 @@ async function init() {
   $('#dwellMs').value = state.config.dwellMs || 1000;
   $('#dwellLabel').textContent = ((state.config.dwellMs || 1000) / 1000).toFixed(1) + 's';
 
-  // The tag vocabulary is library-wide, so it loads once rather than per scan.
+  // The vocabularies are library-wide, so they load once rather than per scan.
   api('/api/library').then((data) => {
     state.tagVocab = data.tags || [];
+    // Both vocabularies, or the dialog's Models section sits empty until an edit
+    // happens to bring the second one back with its response.
+    state.modelVocab = data.models || [];
     syncTagVocab();
   }).catch(() => {});
 
