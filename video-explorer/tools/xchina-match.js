@@ -16,6 +16,20 @@ const path = require('path');
 const { catalogue } = require('./xchina-parse');
 
 const VIDEO_EXT = new Set(['.mp4', '.m4v', '.mov']);
+
+/**
+ * Every root, including the western and Japanese libraries.
+ *
+ * Tempting to narrow this to the Chinese folders, on the grounds that a Chinese
+ * catalogue cannot describe anything in `JAV HD` or `Evil Angel`. It can: the
+ * matches there turned out to be Chinese releases filed in the wrong place —
+ * `Goddess Sports Festival EP11 (MTVSQ2-EP11)` sitting under Evil Angel, and
+ * `AV001` under JAV HD, `AV` being a real studio prefix here with 66 entries.
+ * Narrowing would have dropped genuine matches to avoid a suspicion that did
+ * not survive being checked.
+ *
+ * Override with XCHINA_ROOTS (semicolon separated) to scope it.
+ */
 const ROOTS = (process.env.XCHINA_ROOTS || [0, 1, 2, 3, 4, 5]
   .map((n) => `C:\\Users\\User\\OneDrive\\Folder ${n}`).join(';')).split(';');
 
