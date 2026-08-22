@@ -106,8 +106,11 @@ async function main() {
       renames.push({ from: item.file, to });
       claimed.set(slot, item.file);
     }
-    if (item.entry.models.length || item.entry.url) {
-      labels.push({ file: item.file, to, models: item.entry.models, url: item.entry.url });
+    if (item.entry.models.length || item.entry.url || item.entry.studio) {
+      labels.push({
+        file: item.file, to, models: item.entry.models,
+        url: item.entry.url, studio: item.entry.studio || '',
+      });
     }
   }
 
@@ -116,6 +119,7 @@ async function main() {
   console.log(`  name clashes   : ${clashes.length} (left alone — see below)`);
   console.log(`to label         : ${labels.length}`);
   console.log(`  with models    : ${labels.filter((l) => l.models.length).length}`);
+  console.log(`  with a studio  : ${labels.filter((l) => l.studio).length}`);
   console.log(`  with a url     : ${labels.filter((l) => l.url).length}`);
 
   if (clashes.length) {
@@ -145,6 +149,9 @@ async function main() {
       const stat = fs.statSync(item.file);
       const patch = { url: item.url };
       if (item.models.length) patch.addModels = item.models;
+      // One value, so it is set rather than merged. Only when the catalogue has
+      // one: a blank would clear a studio someone entered by hand.
+      if (item.studio) patch.studio = item.studio;
       library.apply(stat, path.basename(item.to), patch);
       labelled += 1;
     } catch (err) {

@@ -25,7 +25,10 @@ const os = require('os');
 // Models are kept separate from tags rather than being a tag convention: they
 // are a different kind of fact, they want their own filter facet, and a
 // performer named "anal" would otherwise be indistinguishable from the tag.
-const EMPTY = { rating: 0, tags: [], models: [], url: '' };
+// The studio is a single value, not a list: a video comes from one production
+// house. Kept out of tags for the same reason models are — one allowed answer is
+// a different shape of fact from "any number of these apply".
+const EMPTY = { rating: 0, tags: [], models: [], studio: '', url: '' };
 
 const LIST_FIELDS = ['tags', 'models'];
 
@@ -72,6 +75,8 @@ function decorate(stat) {
     rating: record.rating || 0,
     tags: record.tags || [],
     models: record.models || [],
+    // The production house, one per video.
+    studio: record.studio || '',
     // Where this video came from, when that is known: a page about it rather
     // than a copy of it.
     url: record.url || '',
@@ -125,6 +130,11 @@ function apply(stat, name, patch) {
     next.rating = Math.max(0, Math.min(5, Math.round(Number(patch.rating) || 0)));
   }
 
+  if (patch.studio !== undefined) {
+    // One value, and blanking it is how you clear it.
+    next.studio = String(patch.studio || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+  }
+
   if (patch.url !== undefined) {
     const url = String(patch.url || '').trim();
     // Only http(s), and nothing with a scheme the shell would act on: this ends
@@ -147,7 +157,8 @@ function apply(stat, name, patch) {
   }
 
   // An empty record is noise in a file that syncs; drop it instead.
-  if (!next.rating && !(next.tags || []).length && !(next.models || []).length && !next.url) {
+  if (!next.rating && !(next.tags || []).length && !(next.models || []).length
+    && !next.studio && !next.url) {
     delete data.records[key];
     save();
     return { ...EMPTY };
@@ -159,6 +170,7 @@ function apply(stat, name, patch) {
     rating: next.rating || 0,
     tags: next.tags || [],
     models: next.models || [],
+    studio: next.studio || '',
     url: next.url || '',
   };
 }
@@ -195,6 +207,20 @@ function counts(field = 'tags') {
 const tagCounts = () => counts('tags');
 const modelCounts = () => counts('models');
 
+/** The studio vocabulary. A single value per record, so it counts itself. */
+function studioCounts() {
+  const found = new Map();
+  for (const record of Object.values(data.records)) {
+    const studio = (record.studio || '').trim();
+    if (!studio) continue;
+    const lower = studio.toLowerCase();
+    const hit = found.get(lower);
+    if (hit) hit.count += 1;
+    else found.set(lower, { tag: studio, count: 1 });
+  }
+  return [...found.values()].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+}
+
 function stats() {
   const records = Object.values(data.records);
   return {
@@ -203,11 +229,12 @@ function stats() {
     rated: records.filter((r) => r.rating).length,
     tagged: records.filter((r) => (r.tags || []).length).length,
     linked: records.filter((r) => r.url).length,
+    studios: records.filter((r) => r.studio).length,
     named: records.filter((r) => (r.models || []).length).length,
   };
 }
 
 module.exports = {
   init, keyFor, get, decorate, apply, rekey, flush,
-  counts, tagCounts, modelCounts, stats, normaliseTags,
+  counts, tagCounts, modelCounts, studioCounts, stats, normaliseTags,
 };

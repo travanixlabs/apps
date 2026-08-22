@@ -101,7 +101,16 @@ function parsePage(html) {
       .find(Boolean) || '';
     const duration = (cells.find((c) => /fa-clock/.test(c.html)) || {}).text || '';
 
-    items.push({ url, ref, models, title, duration });
+    // The studio is that first bare cell, read from the card rather than from
+    // the page's filename: one saved page is one studio in practice, but the
+    // cell is what the site actually says, and a card carries its own answer
+    // even in a mixed listing. A code sharing the cell — `亚洲热 AH003` — is
+    // trimmed off, since the studio is the part before it.
+    const studio = bare.length
+      ? bare[0].text.replace(/\s*[A-Za-z]{2,10}[-_ ]?\d{2,6}(?:[-_]\d{1,2})?\s*$/, '').trim()
+      : '';
+
+    items.push({ url, ref, models, title, duration, studio });
   }
   return items;
 }
@@ -115,7 +124,8 @@ function fromPages() {
       // Later pages repeat nothing, but a page saved twice would; keep the
       // richer record either way.
       const prior = byUrl.get(item.url);
-      if (!prior || (item.models.length > prior.models.length) || (!prior.ref && item.ref)) {
+      if (!prior || (item.models.length > prior.models.length)
+        || (!prior.ref && item.ref) || (!prior.studio && item.studio)) {
         byUrl.set(item.url, item);
       }
     }

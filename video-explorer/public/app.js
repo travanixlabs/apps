@@ -33,6 +33,7 @@ const state = {
   picker: null,        // { dir, onConfirm, title }
   tagVocab: [],        // [{ tag, count }] across the whole library
   modelVocab: [],      // the same, for performer names
+  studioVocab: [],     // and for production houses, of which a video has one
   tagTargets: [],      // files the open label dialog will edit
   adv: newAdvFilter(), // the advanced filter currently applied
 };
@@ -415,6 +416,9 @@ function parseQuery(query) {
     } else if (raw.startsWith('@') || raw.startsWith('model:')) {
       field = 'models';
       value = raw.replace(/^(@|model:)/, '');
+    } else if (raw.startsWith('studio:')) {
+      field = 'studio';
+      value = raw.replace(/^studio:/, '');
     }
     return value ? { value, field } : null;
   }).filter(Boolean);
@@ -472,13 +476,19 @@ function matchesAdvanced(file, adv) {
 
 function matchesQuery(file, terms) {
   const haystack = (file.name + ' ' + file.relFolder).toLowerCase();
-  const values = (field) => (file[field] || []).map((t) => t.toLowerCase());
+  // The studio is one value rather than a list, so it is wrapped instead of
+  // being iterated -- a string would otherwise be walked character by character.
+  const values = (field) => {
+    const held = file[field];
+    return (Array.isArray(held) ? held : (held ? [held] : [])).map((t) => t.toLowerCase());
+  };
   return terms.every((term) => {
     if (term.field) return values(term.field).some((t) => t.includes(term.value));
-    // A bare term searches everything: name, subfolder, tags and models.
+    // A bare term searches everything: name, subfolder, tags, models, studio.
     return haystack.includes(term.value)
       || values('tags').some((t) => t.includes(term.value))
-      || values('models').some((t) => t.includes(term.value));
+      || values('models').some((t) => t.includes(term.value))
+      || values('studio').some((t) => t.includes(term.value));
   });
 }
 
@@ -924,6 +934,7 @@ async function editRecords(paths, patch) {
     });
     state.tagVocab = data.tags || state.tagVocab;
     state.modelVocab = data.models || state.modelVocab;
+    state.studioVocab = data.studios || state.studioVocab;
     for (const [filePath, record] of Object.entries(data.records || {})) {
       if (record.error) { toast(record.error, 'err'); continue; }
       const file = state.files.find((f) => f.path === filePath);
@@ -931,6 +942,7 @@ async function editRecords(paths, patch) {
       file.rating = record.rating;
       file.tags = record.tags;
       file.models = record.models;
+      file.studio = record.studio;
       file.url = record.url;
       refreshCardRecord(file);
     }
@@ -1040,8 +1052,17 @@ function buildStars(current, onPick, { compact = false } = {}) {
  * colliding with a tag would make both ambiguous, and one dialog edits the pair.
  */
 const LABEL_FIELDS = {
-  tags: { prefix: '#', empty: '+ tag', chip: 'chip' },
-  models: { prefix: '@', empty: '+ model', chip: 'chip chip-model' },
+  tags: { prefix: '#', empty: '+ tag', chip: 'chip', values: (f) => f.tags || [] },
+  models: { prefix: '@', empty: '+ model', chip: 'chip chip-model', values: (f) => f.models || [] },
+  // One allowed answer, so it reads a single value rather than a list, and
+  // removing it means clearing the field instead of dropping one entry.
+  studio: {
+    prefix: 'studio:',
+    empty: '+ studio',
+    chip: 'chip chip-studio',
+    values: (f) => (f.studio ? [f.studio] : []),
+    single: true,
+  },
 };
 
 /**
@@ -1055,7 +1076,7 @@ function buildLabelChips(file, field, { add: withAdd = true } = {}) {
   const chips = document.createElement('span');
   chips.className = 'chips';
 
-  for (const value of file[field] || []) {
+  for (const value of spec.values(file)) {
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = spec.chip;
@@ -1071,7 +1092,7 @@ function buildLabelChips(file, field, { add: withAdd = true } = {}) {
     chip.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      editRecords([file.path], { ['remove' + Field]: [value] });
+      editRecords([file.path], spec.single ? { [field]: '' } : { ['remove' + Field]: [value] });
     });
     chips.appendChild(chip);
   }
@@ -1080,7 +1101,7 @@ function buildLabelChips(file, field, { add: withAdd = true } = {}) {
     const add = document.createElement('button');
     add.type = 'button';
     add.className = spec.chip + ' chip-add';
-    add.textContent = (file[field] || []).length ? '+' : spec.empty;
+    add.textContent = spec.values(file).length ? '+' : spec.empty;
     add.title = 'Edit tags and models';
     add.addEventListener('click', (ev) => { ev.stopPropagation(); openTagDialog([file]); });
     chips.appendChild(add);
@@ -1095,6 +1116,10 @@ function buildRecordRow(file) {
 
   row.appendChild(buildStars(file.rating || 0, (rating) => editRecords([file.path], { rating }), { compact: true }));
 
+  // The studio leads: it is the one fact there can only be one of, so it reads
+  // as a heading for the names rather than another entry among them.
+  if (file.studio) row.appendChild(buildLabelChips(file, 'studio', { add: false }));
+
   // Names show when there are names; nothing sits there inviting you to add one.
   if ((file.models || []).length) row.appendChild(buildLabelChips(file, 'models', { add: false }));
   row.appendChild(buildLabelChips(file, 'tags'));
@@ -1108,13 +1133,13 @@ function buildRecordRow(file) {
  * for it. The count stays on each chip, so nothing is lost by reordering.
  */
 function vocabByName(field) {
-  const vocab = field === 'models' ? state.modelVocab : state.tagVocab;
+  const vocab = { models: state.modelVocab, studio: state.studioVocab }[field] || state.tagVocab;
   return vocab.slice().sort((a, b) =>
     a.tag.localeCompare(b.tag, undefined, { numeric: true, sensitivity: 'base' }));
 }
 
 function syncTagVocab() {
-  for (const [field, id] of [['tags', '#tagVocab'], ['models', '#modelVocab']]) {
+  for (const [field, id] of [['tags', '#tagVocab'], ['models', '#modelVocab'], ['studio', '#studioVocab']]) {
     const list = $(id);
     if (!list) continue;
     list.innerHTML = '';
@@ -1131,6 +1156,7 @@ function syncTagVocab() {
 const LABEL_INPUTS = {
   tags: { input: '#tagInput', suggest: '#tagSuggest' },
   models: { input: '#modelInput', suggest: '#modelSuggest' },
+  studio: { input: '#studioInput', suggest: '#studioSuggest' },
 };
 
 function parseTags(text) {
@@ -1156,6 +1182,10 @@ function openTagDialog(files) {
   for (const field of ['tags', 'models']) {
     $(LABEL_INPUTS[field].input).value = single ? (files[0][field] || []).join(', ') : '';
   }
+  // Across several videos a shared studio is a sensible starting point; a mixed
+  // selection starts blank, so Add leaves each one's own studio alone.
+  const studios = new Set(files.map((f) => f.studio || ''));
+  $('#studioInput').value = studios.size === 1 ? [...studios][0] : '';
   $('#tagHint').textContent = single
     ? 'Add appends, Replace overwrites — both sections at once. Right-click a chip on the card to remove one.'
     : `Add appends to each video's existing tags and models. Replace overwrites all ${files.length}.`;
@@ -1172,18 +1202,27 @@ function openTagDialog(files) {
 /** The existing vocabulary as one-click chips — faster than typing, and it
  *  keeps names from splintering into near-duplicates. */
 function renderTagSuggestions() {
-  for (const field of ['tags', 'models']) {
+  for (const field of ['tags', 'models', 'studio']) {
     const { input, suggest } = LABEL_INPUTS[field];
     const box = $(suggest);
     box.innerHTML = '';
+    const single = LABEL_FIELDS[field].single;
     const used = new Set(parseTags($(input).value).map((t) => t.toLowerCase()));
+    const extra = { models: ' chip-model', studio: ' chip-studio' }[field] || '';
     for (const entry of vocabByName(field).slice(0, 60)) {
       const chip = document.createElement('button');
       chip.type = 'button';
-      chip.className = 'chip suggest' + (field === 'models' ? ' chip-model' : '')
-        + (used.has(entry.tag.toLowerCase()) ? ' on' : '');
+      chip.className = 'chip suggest' + extra + (used.has(entry.tag.toLowerCase()) ? ' on' : '');
       chip.textContent = `${entry.tag} · ${entry.count}`;
       chip.addEventListener('click', () => {
+        // A one-value field swaps rather than accumulates: picking a second
+        // studio replaces the first, and picking the current one clears it.
+        if (single) {
+          const now = $(input).value.trim().toLowerCase();
+          $(input).value = now === entry.tag.toLowerCase() ? '' : entry.tag;
+          renderTagSuggestions();
+          return;
+        }
         const current = parseTags($(input).value);
         const at = current.findIndex((t) => t.toLowerCase() === entry.tag.toLowerCase());
         if (at >= 0) current.splice(at, 1);
@@ -1199,14 +1238,18 @@ function renderTagSuggestions() {
 async function commitTags(mode) {
   const tags = parseTags($('#tagInput').value);
   const models = parseTags($('#modelInput').value);
+  const studio = $('#studioInput').value.trim();
   const paths = state.tagTargets.map((f) => f.path);
 
   $('#tagModal').hidden = true;
-  // One request for both fields: two would mean two saves, two vocabulary
-  // refreshes, and a window where a card shows half the edit.
+  // One request for every field: separate ones would mean separate saves,
+  // separate vocabulary refreshes, and a window where a card shows half the
+  // edit. Add leaves a blank studio box alone, since there is nothing to append
+  // to a field that holds one value; Replace sends it either way, so clearing
+  // the box is how you clear the studio.
   await editRecords(paths, mode === 'add'
-    ? { addTags: tags, addModels: models }
-    : { tags, models });
+    ? { addTags: tags, addModels: models, ...(studio ? { studio } : {}) }
+    : { tags, models, studio });
 
   const say = (n, noun) => `${n} ${noun}${n === 1 ? '' : 's'}`;
   const videos = say(paths.length, 'video');
@@ -3070,6 +3113,7 @@ async function init() {
     // Both vocabularies, or the dialog's Models section sits empty until an edit
     // happens to bring the second one back with its response.
     state.modelVocab = data.models || [];
+    state.studioVocab = data.studios || [];
     syncTagVocab();
   }).catch(() => {});
 
