@@ -3,3 +3,7 @@
 en.xchina.co/
 # Undo manifests from tools/xchina-apply.js — local records of a local rename.
 tools/manifests/
+# Local settings: the folder you last opened, your card size, your volume.
+config.json
+# The mobile web app is its own repository with its own remote.
+mobile/
