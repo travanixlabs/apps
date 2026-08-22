@@ -26,10 +26,19 @@ const ROOTS = (process.env.XCHINA_ROOTS || [0, 1, 2, 3, 4, 5]
 function refKey(raw) {
   if (!raw) return null;
   const text = String(raw).trim();
+
+  // A code in trailing parentheses is where this tool puts one, so it wins over
+  // anything the title happens to contain. Without this, `My 18th birthday
+  // (MCY0093)` keys as `my|18` on a second pass and can match a different
+  // catalogue entry entirely — 23 files were one run away from being renamed to
+  // somebody else's title.
+  const parens = text.match(/\(([^()]{2,30})\)\s*$/);
+  const source = parens ? parens[1] : text;
+
   // Letters, then digits, then an optional part number. Anything else about the
   // name is ignored, so a title wrapped around the code still matches.
-  const m = text.match(/([A-Za-z]{2,10})\s*[-_ ]?\s*(\d{2,6})(?:\s*[-_ ]\s*(\d{1,2}))?/);
-  if (!m) return null;
+  const m = source.match(/([A-Za-z]{2,10})\s*[-_ ]?\s*(\d{2,6})(?:\s*[-_ ]\s*(\d{1,2}))?/);
+  if (!m) return parens ? refKey(text.slice(0, parens.index)) : null;
   const letters = m[1].toLowerCase();
   const number = String(Number(m[2])); // 0352 -> 352
   return m[3] ? `${letters}|${number}|${Number(m[3])}` : `${letters}|${number}`;
