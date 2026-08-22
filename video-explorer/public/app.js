@@ -628,11 +628,11 @@ function toggleSortMenu(open) {
 /**
  * Sound is opted into, once, for the run of the app.
  *
- * Every video opens on a silent preview, which is right the first time and
- * tiresome by the tenth: pressing play is then a thing you do to each video in
- * turn just to hear it. So the first press is taken as the answer for the whole
- * session -- from then on a video that opens plays, with sound, and the arrows
- * carry that along instead of dropping back to a muted preview.
+ * Only ever by hand: the toolbar switch, the volume slider, or unmuting the
+ * video's own controls. Pressing play is not that -- it says which video you
+ * want to watch, and taking it as consent to sound meant a session could go
+ * loud without anyone having asked. Once on it stays on, for every video the
+ * session opens after it.
  *
  * Deliberately not saved to the config file. Launching the app, or reloading
  * it, is quiet again: opening something loud by surprise is the thing the
@@ -695,13 +695,11 @@ function syncVolumeUI() {
   // Reporting only the level is what made a silent app read "100%".
   const audible = soundOn && percent > 0;
   $('#volLabel').textContent = soundOn ? `${percent}%` : 'muted';
-  $('#volBtn').title = audible
-    ? `Volume: ${percent}%`
-    : 'Muted — press play on a video, or turn sound on here';
+  $('#volBtn').title = audible ? `Volume: ${percent}%` : 'Muted — turn sound on here';
   $('#volMute').textContent = soundOn ? 'Mute this session' : 'Turn sound on';
   $('#volHint').textContent = soundOn
     ? 'Every video opens at this level.'
-    : 'Videos open silent. Sound lasts until you close the app.';
+    : 'Videos play muted until you turn sound on. It lasts until you close the app.';
 
   // The icon says it without opening the menu: crossed out while muted, one wave
   // up to half, both above it. Toggled through style.display, since an SVG
@@ -1957,16 +1955,19 @@ function stopPlayerPreview() {
   preview.timer = null;
 }
 
-/** ▶ turns the preview into a real playthrough: sound on, controls back, from the top. */
+/**
+ * ▶ turns the preview into a real playthrough: controls back, from the top,
+ * and audible only if the session has sound. A muted playthrough is still the
+ * whole video rather than ten sampled seconds, and the native controls are
+ * there to unmute if that is what you meant.
+ */
 function beginPlayback() {
   stopPlayerPreview();
-  soundOn = true; // for the rest of the session, not the next launch
-  syncVolumeUI();
   const player = $('#player');
   $('#playerPlay').hidden = true;
   $('#playerBadge').hidden = true;
   player.controls = true;
-  player.muted = false;
+  player.muted = !soundOn;
   player.volume = masterVolume();
   try { player.currentTime = 0; } catch { /* not seekable yet; it will start at 0 anyway */ }
   const played = player.play();
@@ -2699,13 +2700,21 @@ function wireEvents() {
     ev.stopPropagation();
     toggleVolumeMenu();
   });
-  $('#volRange').addEventListener('input', (ev) => setMasterVolume(Number(ev.target.value) / 100));
+  $('#volRange').addEventListener('input', (ev) => {
+    const level = Number(ev.target.value) / 100;
+    setMasterVolume(level);
+    // Moving the slider up is a request for sound in itself, so it need not be
+    // two gestures -- turn it on, then set the level.
+    if (level > 0 && !soundOn) setSoundOn(true);
+  });
   $('#volMute').addEventListener('click', () => setSoundOn(!soundOn));
   // The player's own slider is the same setting seen from inside a video, so it
   // writes back rather than being a second, private volume.
   $('#player').addEventListener('volumechange', () => {
     const player = $('#player');
-    if (player.muted) return; // the preview mutes deliberately; that is not a choice
+    if (!player.controls) return; // a preview mutes itself; that is not a choice
+    if (player.muted !== !soundOn) { setSoundOn(!player.muted); return; }
+    if (player.muted) return;
     if (Math.abs(player.volume - masterVolume()) < 0.005) return;
     setMasterVolume(player.volume);
   });
