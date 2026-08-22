@@ -50,6 +50,20 @@ function textOf(html) {
   return decode(html.replace(/<[^>]*>/g, ' '));
 }
 
+/** A cell that is a reference and nothing else. */
+function codeLike(text) {
+  return /^[A-Za-z0-9][A-Za-z0-9\-_. ]{1,24}$/.test(String(text).trim());
+}
+
+/**
+ * The reference inside a tag cell: letters, digits, and an optional part number.
+ * Returned as written, since that is what ends up in the filename.
+ */
+function codeIn(text) {
+  const m = String(text).match(/\b([A-Za-z]{2,10}[-_ ]?\d{2,6}(?:[-_]\d{1,2})?(?:-[A-Za-z]{1,3})?)\b/);
+  return m ? m[1].trim() : '';
+}
+
 function parsePage(html) {
   const items = [];
   // Cards are siblings, so split on the opening div rather than trying to match
@@ -77,8 +91,14 @@ function parsePage(html) {
       .map((m) => ({ attrs: m[1], html: m[2], text: textOf(m[2]) }));
 
     const bare = cells.filter((c) => !/<i /.test(c.html) && !/class="empty"/.test(c.attrs) && c.text);
-    // The first bare cell is the studio name; a reference is the next one along.
-    const ref = (bare.slice(1).find((c) => /^[A-Za-z0-9][A-Za-z0-9\-_. ]{1,24}$/.test(c.text)) || {}).text || '';
+    // The first bare cell is the studio; a reference is one of the ones after it.
+    // Taken whole where the cell is nothing but a code — `MTVQ1-15`, `SM-baby`,
+    // `MOFY` have no shape in common beyond that — and otherwise pulled out of
+    // the cell, since the studio often shares it: `亚洲热 AH003`. Demanding the
+    // whole cell match was losing every reference written that way.
+    const ref = bare.slice(1)
+      .map((c) => (codeLike(c.text) ? c.text : codeIn(c.text)))
+      .find(Boolean) || '';
     const duration = (cells.find((c) => /fa-clock/.test(c.html)) || {}).text || '';
 
     items.push({ url, ref, models, title, duration });
