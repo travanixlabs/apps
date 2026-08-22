@@ -641,6 +641,21 @@ function toggleSortMenu(open) {
 let soundOn = false;
 
 /**
+ * The session switch. Turning it off mid-session mutes what is playing too --
+ * the icon would otherwise claim silence over an audible video. A preview is
+ * left alone either way, since it is silent by its own rules.
+ */
+function setSoundOn(next) {
+  soundOn = Boolean(next);
+  const player = $('#player');
+  if (player && player.controls) {
+    player.muted = !soundOn;
+    if (soundOn) player.volume = masterVolume();
+  }
+  syncVolumeUI();
+}
+
+/**
  * One volume for the whole app, set from the toolbar and used by every video
  * that opens. The player's own slider writes back to it, so there is one number
  * rather than a toolbar setting and a per-video one drifting apart.
@@ -671,18 +686,30 @@ function saveVolumeSoon(value) {
 function syncVolumeUI() {
   const value = masterVolume();
   const percent = Math.round(value * 100);
+  // The slider is the level sound will play at, which is worth knowing while
+  // muted -- so it keeps showing the number even when nothing can be heard.
   $('#volRange').value = String(percent);
-  $('#volLabel').textContent = percent + '%';
-  $('#volBtn').title = `Volume: ${percent}%`;
   $('#volBtn').classList.toggle('on', !$('#volMenu').hidden);
 
-  // The icon says the level without opening the menu: crossed out at zero, one
-  // wave up to half, both above it. Toggled through style.display, since an SVG
+  // Two things, not one: the level, and whether this session has sound at all.
+  // Reporting only the level is what made a silent app read "100%".
+  const audible = soundOn && percent > 0;
+  $('#volLabel').textContent = soundOn ? `${percent}%` : 'muted';
+  $('#volBtn').title = audible
+    ? `Volume: ${percent}%`
+    : 'Muted — press play on a video, or turn sound on here';
+  $('#volMute').textContent = soundOn ? 'Mute this session' : 'Turn sound on';
+  $('#volHint').textContent = soundOn
+    ? 'Every video opens at this level.'
+    : 'Videos open silent. Sound lasts until you close the app.';
+
+  // The icon says it without opening the menu: crossed out while muted, one wave
+  // up to half, both above it. Toggled through style.display, since an SVG
   // element ignores the HTML hidden attribute -- which is why the first cut drew
   // the cross over the waves at every level.
-  $('#volCross').style.display = percent > 0 ? 'none' : '';
-  $('#volWaves').style.display = percent > 0 ? '' : 'none';
-  $('#volWave2').style.display = percent > 50 ? '' : 'none';
+  $('#volCross').style.display = audible ? 'none' : '';
+  $('#volWaves').style.display = audible ? '' : 'none';
+  $('#volWave2').style.display = audible && percent > 50 ? '' : 'none';
 }
 
 function toggleVolumeMenu(open) {
@@ -1934,6 +1961,7 @@ function stopPlayerPreview() {
 function beginPlayback() {
   stopPlayerPreview();
   soundOn = true; // for the rest of the session, not the next launch
+  syncVolumeUI();
   const player = $('#player');
   $('#playerPlay').hidden = true;
   $('#playerBadge').hidden = true;
@@ -2672,6 +2700,7 @@ function wireEvents() {
     toggleVolumeMenu();
   });
   $('#volRange').addEventListener('input', (ev) => setMasterVolume(Number(ev.target.value) / 100));
+  $('#volMute').addEventListener('click', () => setSoundOn(!soundOn));
   // The player's own slider is the same setting seen from inside a video, so it
   // writes back rather than being a second, private volume.
   $('#player').addEventListener('volumechange', () => {
