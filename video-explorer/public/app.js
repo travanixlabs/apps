@@ -990,7 +990,12 @@ const LABEL_FIELDS = {
   models: { prefix: '@', empty: '+ model', chip: 'chip chip-model' },
 };
 
-function buildLabelChips(file, field) {
+/**
+ * `add` puts an editing affordance on the row. Only tags carry one: two on a card
+ * meant two buttons opening the same dialog, and the model names are reachable
+ * from it either way.
+ */
+function buildLabelChips(file, field, { add: withAdd = true } = {}) {
   const spec = LABEL_FIELDS[field];
   const Field = field[0].toUpperCase() + field.slice(1);
   const chips = document.createElement('span');
@@ -1017,13 +1022,15 @@ function buildLabelChips(file, field) {
     chips.appendChild(chip);
   }
 
-  const add = document.createElement('button');
-  add.type = 'button';
-  add.className = spec.chip + ' chip-add';
-  add.textContent = (file[field] || []).length ? '+' : spec.empty;
-  add.title = 'Edit tags and models';
-  add.addEventListener('click', (ev) => { ev.stopPropagation(); openTagDialog([file], field); });
-  chips.appendChild(add);
+  if (withAdd) {
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = spec.chip + ' chip-add';
+    add.textContent = (file[field] || []).length ? '+' : spec.empty;
+    add.title = 'Edit tags and models';
+    add.addEventListener('click', (ev) => { ev.stopPropagation(); openTagDialog([file]); });
+    chips.appendChild(add);
+  }
 
   return chips;
 }
@@ -1034,7 +1041,8 @@ function buildRecordRow(file) {
 
   row.appendChild(buildStars(file.rating || 0, (rating) => editRecords([file.path], { rating }), { compact: true }));
 
-  row.appendChild(buildLabelChips(file, 'models'));
+  // Names show when there are names; nothing sits there inviting you to add one.
+  if ((file.models || []).length) row.appendChild(buildLabelChips(file, 'models', { add: false }));
   row.appendChild(buildLabelChips(file, 'tags'));
   return row;
 }
@@ -1080,7 +1088,7 @@ function parseTags(text) {
  * buttons, which meant naming a performer and tagging the same video was two
  * trips — and the two fields are almost always edited together.
  */
-function openTagDialog(files, focus = 'tags') {
+function openTagDialog(files) {
   if (!files.length) return;
   state.tagTargets = files;
   const single = files.length === 1;
@@ -1103,11 +1111,8 @@ function openTagDialog(files, focus = 'tags') {
   syncTagVocab();
   renderTagSuggestions();
   $('#tagModal').hidden = false;
-  // Opened from the "+ model" chip, the cursor belongs in Models -- landing in
-  // Tags would make the caller's choice of chip meaningless.
-  const target = $(LABEL_INPUTS[focus] ? LABEL_INPUTS[focus].input : '#tagInput');
-  target.focus();
-  target.select();
+  $('#tagInput').focus();
+  $('#tagInput').select();
 }
 
 /** The existing vocabulary as one-click chips — faster than typing, and it

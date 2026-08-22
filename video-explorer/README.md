@@ -237,10 +237,12 @@ exists.
 
 ## Ratings and tags
 
-Every card carries five stars, a row of **model** chips, and a row of **tag**
-chips. Click a star to rate, click it again to clear. Click **+ tag** / **+
-model**, or the **⌗** button in the hover toolbar, to edit either; click a chip
-to filter by it, right-click one to remove it from that video. With a selection
+Every card carries five stars, its **model** names when it has any, and a row of
+**tag** chips. Click a star to rate, click it again to clear. Click **+ tag** or
+the **⌗** button in the hover toolbar to edit both fields; click a chip to filter
+by it, right-click one to remove it from that video. Only tags carry an add chip
+— two of them meant two buttons opening the same dialog, and a card with no
+models says nothing rather than inviting you to name one. With a selection
 active, the bar gains its own stars and a **Tags…** button, so a hundred videos
 can be rated or labelled at once — and `0` through `5` rate the selection
 straight from the keyboard, `T` opens the editor.
