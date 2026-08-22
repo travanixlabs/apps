@@ -223,6 +223,29 @@
 
       <div class="adv-block">
         <div class="adv-label">
+          Studio
+          <!-- No all/any here: a video has exactly one studio, so "all of these
+               two" could only ever match nothing. Several picks mean any. -->
+          <span class="adv-mode adv-mode-fixed" title="A video has one studio, so several picks mean any of them">any</span>
+          <button class="linkish" data-clear="studio">clear</button>
+        </div>
+        <div id="advStudio" class="chip-row scroller"></div>
+      </div>
+
+      <div class="adv-block">
+        <div class="adv-label">
+          Models
+          <span class="adv-mode">
+            <label><input type="radio" name="modelMode" value="all" checked> all</label>
+            <label><input type="radio" name="modelMode" value="any"> any</label>
+          </span>
+          <button class="linkish" data-clear="models">clear</button>
+        </div>
+        <div id="advModels" class="chip-row scroller"></div>
+      </div>
+
+      <div class="adv-block">
+        <div class="adv-label">
           Tags
           <span class="adv-mode">
             <label><input type="radio" name="tagMode" value="all" checked> all</label>
@@ -231,14 +254,6 @@
           <button class="linkish" data-clear="tags">clear</button>
         </div>
         <div id="advTags" class="chip-row scroller"></div>
-      </div>
-
-      <div class="adv-block">
-        <div class="adv-label">
-          Models
-          <button class="linkish" data-clear="models">clear</button>
-        </div>
-        <div id="advModels" class="chip-row scroller"></div>
       </div>
 
       <div class="adv-block">

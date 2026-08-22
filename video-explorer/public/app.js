@@ -49,14 +49,25 @@ function newAdvFilter() {
     text: '',
     tags: new Map(),
     models: new Map(),
-    tagMode: 'all',       // governs the included tags; exclusions are always all-of
+    studio: new Map(),
+    // Per facet, because "all of these tags" and "any of these performers" is a
+    // reasonable thing to ask for and one shared switch could not express it.
+    // Exclusions are always all-of: "not this" means not this either way.
+    // Studio is absent on purpose — one studio per video makes all-of empty.
+    mode: { tags: 'all', models: 'all' },
     ratings: new Map(),   // 0 means unrated
     link: 'all',          // 'all' | 'yes' | 'no' — whether a source url is stored
     cloud: 'all',         // 'all' | 'downloaded' | 'cloud'
   };
 }
 
-const FACETS = ['tags', 'models', 'ratings'];
+const FACETS = ['tags', 'models', 'studio', 'ratings'];
+
+/** The label facets, in the order they appear on a card and in the dialog. */
+const LABEL_FACETS = ['studio', 'models', 'tags'];
+
+/** Which radio group drives which facet's all/any. Studio has none. */
+const MODE_INPUTS = [['tags', 'tagMode'], ['models', 'modelMode']];
 
 /**
  * The "no tags" / "no models" chip lives in the same map as the values, under a
@@ -438,9 +449,12 @@ function matchesAdvanced(file, adv) {
   // models and one tag means "those models AND that tag", not one merged pool.
   // The all/any switch governs the included tags; exclusions are always all-of,
   // since "not this" means not this whichever way that switch is set.
-  for (const field of ['tags', 'models']) {
+  for (const field of LABEL_FACETS) {
     if (!adv[field].size) continue;
-    const have = new Set((file[field] || []).map((t) => t.toLowerCase()));
+    // The studio is one value rather than a list, so it is wrapped.
+    const held = file[field];
+    const have = new Set((Array.isArray(held) ? held : (held ? [held] : []))
+      .map((t) => t.toLowerCase()));
 
     // "Has none at all" is its own question, asked before any value is compared:
     // include it to see only the unlabelled, exclude it to drop them.
@@ -450,9 +464,9 @@ function matchesAdvanced(file, adv) {
 
     const wanted = picked(adv[field], 'in').map((t) => t.toLowerCase());
     if (wanted.length) {
-      const hit = adv.tagMode === 'any'
-        ? wanted.some((t) => have.has(t))
-        : wanted.every((t) => have.has(t));
+      // A video holds one studio, so several of them can only mean "any".
+      const any = field === 'studio' || (adv.mode || {})[field] === 'any';
+      const hit = any ? wanted.some((t) => have.has(t)) : wanted.every((t) => have.has(t));
       if (!hit) return false;
     }
     if (picked(adv[field], 'out').map((t) => t.toLowerCase()).some((t) => have.has(t))) return false;
@@ -739,11 +753,15 @@ function openAdvanced() {
     ...state.adv,
     tags: new Map(state.adv.tags),
     models: new Map(state.adv.models),
+    studio: new Map(state.adv.studio),
     ratings: new Map(state.adv.ratings),
+    mode: { ...state.adv.mode },
   };
   $('#advText').value = advDraft.text;
-  for (const radio of document.querySelectorAll('input[name="tagMode"]')) {
-    radio.checked = radio.value === advDraft.tagMode;
+  for (const [field, name] of MODE_INPUTS) {
+    for (const radio of document.querySelectorAll(`input[name="${name}"]`)) {
+      radio.checked = radio.value === advDraft.mode[field];
+    }
   }
   $('#advModal').hidden = false;
   renderAdvanced();
@@ -784,8 +802,9 @@ function renderAdvanced() {
 
 
   for (const [field, el, empty, none] of [
-    ['tags', '#advTags', 'No tags yet — add some from a card first.', 'no tags'],
+    ['studio', '#advStudio', 'No studios yet — the import writes them.', 'no studio'],
     ['models', '#advModels', 'No models yet — name someone from a card first.', 'no models'],
+    ['tags', '#advTags', 'No tags yet — add some from a card first.', 'no tags'],
   ]) {
     const box = $(el);
     // Alphabetical, like the editor: a facet is picked by looking a word up.
@@ -833,8 +852,9 @@ function updateAdvMatch() {
     if (nothing === 'in') bits.push(`no ${many} at all`);
     if (nothing === 'out') bits.push(`some ${many}`);
   };
-  say('tags', 'tag', 'tags', ` (${advDraft.tagMode})`);
-  say('models', 'model');
+  say('studio', 'studio', 'studios');
+  say('models', 'model', 'models', ` (${advDraft.mode.models})`);
+  say('tags', 'tag', 'tags', ` (${advDraft.mode.tags})`);
   say('ratings', 'rating');
   if (advDraft.link === 'yes') bits.push('linked');
   if (advDraft.link === 'no') bits.push('unlinked');
@@ -882,8 +902,10 @@ function cycleIn(map, value) {
 
 async function applyAdvanced() {
   advDraft.text = $('#advText').value.trim();
-  const mode = document.querySelector('input[name="tagMode"]:checked');
-  advDraft.tagMode = mode ? mode.value : 'all';
+  for (const [field, name] of MODE_INPUTS) {
+    const picked = document.querySelector(`input[name="${name}"]:checked`);
+    advDraft.mode[field] = picked ? picked.value : 'all';
+  }
 
   state.adv = advDraft;
   $('#advModal').hidden = true;
@@ -1209,7 +1231,11 @@ function renderTagSuggestions() {
     const single = LABEL_FIELDS[field].single;
     const used = new Set(parseTags($(input).value).map((t) => t.toLowerCase()));
     const extra = { models: ' chip-model', studio: ' chip-studio' }[field] || '';
-    for (const entry of vocabByName(field).slice(0, 60)) {
+    // Every value, not the first 60. The cap was invisible: with 778 performers
+    // the box looked complete and simply had no more to scroll to, which is the
+    // one thing a truncated list must never look like. `.tag-suggest` already
+    // scrolls, so the length costs nothing but the height it is clamped to.
+    for (const entry of vocabByName(field)) {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'chip suggest' + extra + (used.has(entry.tag.toLowerCase()) ? ' on' : '');

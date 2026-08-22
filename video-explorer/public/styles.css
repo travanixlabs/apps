@@ -823,6 +823,10 @@ main { padding: 16px; }
 
 .chip-row { display: flex; flex-wrap: wrap; gap: 5px; }
 .chip-row.scroller { max-height: 132px; overflow-y: auto; }
+
+/* Where a facet has no choice to offer, the word still sits in the same slot so
+   the block headings stay aligned down the dialog. */
+.adv-mode-fixed { color: var(--text-faint); }
 .chip.on {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 22%, transparent);
