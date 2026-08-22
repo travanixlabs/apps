@@ -266,10 +266,22 @@
       <button class="btn btn-icon modal-close">✕</button>
     </header>
     <div class="tag-body">
-      <input id="tagInput" type="text" class="tag-input" spellcheck="false"
-             placeholder="comma separated" list="tagVocab" autocomplete="off">
-      <datalist id="tagVocab"></datalist>
-      <div id="tagSuggest" class="tag-suggest"></div>
+      <section class="label-section">
+        <h3 class="label-head">Tags</h3>
+        <input id="tagInput" type="text" class="tag-input" spellcheck="false"
+               placeholder="comma separated" list="tagVocab" autocomplete="off">
+        <datalist id="tagVocab"></datalist>
+        <div id="tagSuggest" class="tag-suggest"></div>
+      </section>
+
+      <section class="label-section">
+        <h3 class="label-head">Models</h3>
+        <input id="modelInput" type="text" class="tag-input" spellcheck="false"
+               placeholder="performer names, comma separated" list="modelVocab" autocomplete="off">
+        <datalist id="modelVocab"></datalist>
+        <div id="modelSuggest" class="tag-suggest"></div>
+      </section>
+
       <p class="hint" id="tagHint"></p>
     </div>
     <footer class="modal-foot">

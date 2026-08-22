@@ -22,9 +22,12 @@ const fsp = fs.promises;
 const path = require('path');
 const os = require('os');
 
-const EMPTY = { rating: 0, tags: [] };
+// Models are kept separate from tags rather than being a tag convention: they
+// are a different kind of fact, they want their own filter facet, and a
+// performer named "anal" would otherwise be indistinguishable from the tag.
+const EMPTY = { rating: 0, tags: [], models: [] };
 
-const LIST_FIELDS = ['tags'];
+const LIST_FIELDS = ['tags', 'models'];
 
 let FILE = '';
 let data = { version: 1, records: {} };
@@ -68,6 +71,7 @@ function decorate(stat) {
   return {
     rating: record.rating || 0,
     tags: record.tags || [],
+    models: record.models || [],
   };
 }
 
@@ -100,14 +104,15 @@ function normaliseTags(tags) {
  */
 function apply(stat, name, patch) {
   const key = keyFor(stat);
-  const current = data.records[key] || { rating: 0, tags: [], name };
+  const current = data.records[key] || { rating: 0, tags: [], models: [], name };
   const next = { ...current, name: name || current.name, updated: Date.now() };
 
   if (patch.rating !== undefined) {
     next.rating = Math.max(0, Math.min(5, Math.round(Number(patch.rating) || 0)));
   }
 
-  // One field now, but the add/remove/replace shapes still share the loop.
+  // tags/addTags/removeTags and models/addModels/removeModels behave
+  // identically, so they share one implementation rather than two that drift.
   for (const field of LIST_FIELDS) {
     const Field = field[0].toUpperCase() + field.slice(1);
     if (Array.isArray(patch[field])) next[field] = normaliseTags(patch[field]);
@@ -121,7 +126,7 @@ function apply(stat, name, patch) {
   }
 
   // An empty record is noise in a file that syncs; drop it instead.
-  if (!next.rating && !(next.tags || []).length) {
+  if (!next.rating && !(next.tags || []).length && !(next.models || []).length) {
     delete data.records[key];
     save();
     return { ...EMPTY };
@@ -129,7 +134,7 @@ function apply(stat, name, patch) {
 
   data.records[key] = next;
   save();
-  return { rating: next.rating || 0, tags: next.tags || [] };
+  return { rating: next.rating || 0, tags: next.tags || [], models: next.models || [] };
 }
 
 /**
@@ -162,6 +167,7 @@ function counts(field = 'tags') {
 }
 
 const tagCounts = () => counts('tags');
+const modelCounts = () => counts('models');
 
 function stats() {
   const records = Object.values(data.records);
@@ -170,10 +176,11 @@ function stats() {
     videos: records.length,
     rated: records.filter((r) => r.rating).length,
     tagged: records.filter((r) => (r.tags || []).length).length,
+    named: records.filter((r) => (r.models || []).length).length,
   };
 }
 
 module.exports = {
   init, keyFor, get, decorate, apply, rekey,
-  counts, tagCounts, stats, normaliseTags,
+  counts, tagCounts, modelCounts, stats, normaliseTags,
 };

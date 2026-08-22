@@ -32,6 +32,7 @@ const state = {
   failed: new Set(),
   picker: null,        // { dir, onConfirm, title }
   tagVocab: [],        // [{ tag, count }] across the whole library
+  modelVocab: [],      // the same, for performer names
   tagTargets: [],      // files the open label dialog will edit
   adv: newAdvFilter(), // the advanced filter currently applied
   advTree: null,       // { folders, total } for the folder picker, loaded on open
@@ -399,6 +400,9 @@ function parseQuery(query) {
     if (raw.startsWith('#') || raw.startsWith('tag:')) {
       field = 'tags';
       value = raw.replace(/^(#|tag:)/, '');
+    } else if (raw.startsWith('@') || raw.startsWith('model:')) {
+      field = 'models';
+      value = raw.replace(/^(@|model:)/, '');
     }
     return value ? { value, field } : null;
   }).filter(Boolean);
@@ -460,9 +464,10 @@ function matchesQuery(file, terms) {
   const values = (field) => (file[field] || []).map((t) => t.toLowerCase());
   return terms.every((term) => {
     if (term.field) return values(term.field).some((t) => t.includes(term.value));
-    // A bare term searches everything: name, subfolder and tags.
+    // A bare term searches everything: name, subfolder, tags and models.
     return haystack.includes(term.value)
-      || values('tags').some((t) => t.includes(term.value));
+      || values('tags').some((t) => t.includes(term.value))
+      || values('models').some((t) => t.includes(term.value));
   });
 }
 
@@ -869,12 +874,14 @@ async function editRecords(paths, patch) {
       body: JSON.stringify({ paths, ...patch }),
     });
     state.tagVocab = data.tags || state.tagVocab;
+    state.modelVocab = data.models || state.modelVocab;
     for (const [filePath, record] of Object.entries(data.records || {})) {
       if (record.error) { toast(record.error, 'err'); continue; }
       const file = state.files.find((f) => f.path === filePath);
       if (!file) continue;
       file.rating = record.rating;
       file.tags = record.tags;
+      file.models = record.models;
       refreshCardRecord(file);
     }
     pruneFiltered(Object.keys(data.records || {}));
@@ -973,37 +980,49 @@ function buildStars(current, onPick, { compact = false } = {}) {
   return wrap;
 }
 
-function buildTagChips(file) {
+/**
+ * Tags and models are the same shape on a card, so one builder covers both. They
+ * are separate fields rather than a tag naming convention: a performer's name
+ * colliding with a tag would make both ambiguous, and one dialog edits the pair.
+ */
+const LABEL_FIELDS = {
+  tags: { prefix: '#', empty: '+ tag', chip: 'chip' },
+  models: { prefix: '@', empty: '+ model', chip: 'chip chip-model' },
+};
+
+function buildLabelChips(file, field) {
+  const spec = LABEL_FIELDS[field];
+  const Field = field[0].toUpperCase() + field.slice(1);
   const chips = document.createElement('span');
   chips.className = 'chips';
 
-  for (const value of file.tags || []) {
+  for (const value of file[field] || []) {
     const chip = document.createElement('button');
     chip.type = 'button';
-    chip.className = 'chip';
+    chip.className = spec.chip;
     chip.textContent = value;
     chip.title = `Filter by "${value}" — right-click to remove it from this video`;
     chip.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      // The # scopes the search to tags, so clicking "hd" does not also drag in
-      // every file merely named that way.
-      $('#searchInput').value = '#' + value;
+      // The prefix scopes the search to this field, so clicking "hd" does not
+      // also drag in every file merely named that way.
+      $('#searchInput').value = spec.prefix + value;
       render();
     });
     chip.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      editRecords([file.path], { removeTags: [value] });
+      editRecords([file.path], { ['remove' + Field]: [value] });
     });
     chips.appendChild(chip);
   }
 
   const add = document.createElement('button');
   add.type = 'button';
-  add.className = 'chip chip-add';
-  add.textContent = (file.tags || []).length ? '+' : '+ tag';
-  add.title = 'Edit tags';
-  add.addEventListener('click', (ev) => { ev.stopPropagation(); openTagDialog([file]); });
+  add.className = spec.chip + ' chip-add';
+  add.textContent = (file[field] || []).length ? '+' : spec.empty;
+  add.title = 'Edit tags and models';
+  add.addEventListener('click', (ev) => { ev.stopPropagation(); openTagDialog([file], field); });
   chips.appendChild(add);
 
   return chips;
@@ -1015,7 +1034,8 @@ function buildRecordRow(file) {
 
   row.appendChild(buildStars(file.rating || 0, (rating) => editRecords([file.path], { rating }), { compact: true }));
 
-  row.appendChild(buildTagChips(file));
+  row.appendChild(buildLabelChips(file, 'models'));
+  row.appendChild(buildLabelChips(file, 'tags'));
   return row;
 }
 
@@ -1025,82 +1045,115 @@ function buildRecordRow(file) {
  * `nurse` already in here", and for that you look the word up rather than scan
  * for it. The count stays on each chip, so nothing is lost by reordering.
  */
-function tagsByName() {
-  return state.tagVocab.slice().sort((a, b) =>
+function vocabByName(field) {
+  const vocab = field === 'models' ? state.modelVocab : state.tagVocab;
+  return vocab.slice().sort((a, b) =>
     a.tag.localeCompare(b.tag, undefined, { numeric: true, sensitivity: 'base' }));
 }
 
 function syncTagVocab() {
-  const list = $('#tagVocab');
-  if (!list) return;
-  list.innerHTML = '';
-  for (const entry of tagsByName()) {
-    const option = document.createElement('option');
-    option.value = entry.tag;
-    option.label = `${entry.count}`;
-    list.appendChild(option);
+  for (const [field, id] of [['tags', '#tagVocab'], ['models', '#modelVocab']]) {
+    const list = $(id);
+    if (!list) continue;
+    list.innerHTML = '';
+    for (const entry of vocabByName(field)) {
+      const option = document.createElement('option');
+      option.value = entry.tag;
+      option.label = `${entry.count}`;
+      list.appendChild(option);
+    }
   }
 }
+
+/** Which input holds which field, so the two sections stay symmetrical. */
+const LABEL_INPUTS = {
+  tags: { input: '#tagInput', suggest: '#tagSuggest' },
+  models: { input: '#modelInput', suggest: '#modelSuggest' },
+};
 
 function parseTags(text) {
   return text.split(',').map((t) => t.trim()).filter(Boolean);
 }
 
-function openTagDialog(files) {
+/**
+ * One dialog, two sections. They were separate dialogs reached from separate
+ * buttons, which meant naming a performer and tagging the same video was two
+ * trips — and the two fields are almost always edited together.
+ */
+function openTagDialog(files, focus = 'tags') {
   if (!files.length) return;
   state.tagTargets = files;
   const single = files.length === 1;
 
-  $('#tagTitle').textContent = single ? `Tags · ${files[0].name}` : `Tags · ${files.length} videos`;
+  $('#tagTitle').textContent = single
+    ? `Tags and models · ${files[0].name}`
+    : `Tags and models · ${files.length} videos`;
   // Pre-filling with one file's values makes Replace a sensible edit. Across
-  // many files there is no shared starting point, so the box starts empty and
+  // many files there is no shared starting point, so the boxes start empty and
   // Add is the safe verb.
-  $('#tagInput').value = single ? (files[0].tags || []).join(', ') : '';
+  for (const field of ['tags', 'models']) {
+    $(LABEL_INPUTS[field].input).value = single ? (files[0][field] || []).join(', ') : '';
+  }
   $('#tagHint').textContent = single
-    ? 'Add appends, Replace overwrites. Right-click a chip on the card to remove one tag.'
-    : `Add appends to each video's existing tags. Replace overwrites all ${files.length}.`;
+    ? 'Add appends, Replace overwrites — both sections at once. Right-click a chip on the card to remove one.'
+    : `Add appends to each video's existing tags and models. Replace overwrites all ${files.length}.`;
   $('#tagReplace').textContent = single ? 'Replace' : `Replace on ${files.length}`;
   $('#tagAdd').textContent = single ? 'Add' : `Add to ${files.length}`;
 
   syncTagVocab();
   renderTagSuggestions();
   $('#tagModal').hidden = false;
-  $('#tagInput').focus();
-  $('#tagInput').select();
+  // Opened from the "+ model" chip, the cursor belongs in Models -- landing in
+  // Tags would make the caller's choice of chip meaningless.
+  const target = $(LABEL_INPUTS[focus] ? LABEL_INPUTS[focus].input : '#tagInput');
+  target.focus();
+  target.select();
 }
 
 /** The existing vocabulary as one-click chips — faster than typing, and it
  *  keeps names from splintering into near-duplicates. */
 function renderTagSuggestions() {
-  const box = $('#tagSuggest');
-  box.innerHTML = '';
-  const used = new Set(parseTags($('#tagInput').value).map((t) => t.toLowerCase()));
-  for (const entry of tagsByName().slice(0, 60)) {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'chip suggest' + (used.has(entry.tag.toLowerCase()) ? ' on' : '');
-    chip.textContent = `${entry.tag} · ${entry.count}`;
-    chip.addEventListener('click', () => {
-      const current = parseTags($('#tagInput').value);
-      const at = current.findIndex((t) => t.toLowerCase() === entry.tag.toLowerCase());
-      if (at >= 0) current.splice(at, 1);
-      else current.push(entry.tag);
-      $('#tagInput').value = current.join(', ');
-      renderTagSuggestions();
-    });
-    box.appendChild(chip);
+  for (const field of ['tags', 'models']) {
+    const { input, suggest } = LABEL_INPUTS[field];
+    const box = $(suggest);
+    box.innerHTML = '';
+    const used = new Set(parseTags($(input).value).map((t) => t.toLowerCase()));
+    for (const entry of vocabByName(field).slice(0, 60)) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip suggest' + (field === 'models' ? ' chip-model' : '')
+        + (used.has(entry.tag.toLowerCase()) ? ' on' : '');
+      chip.textContent = `${entry.tag} · ${entry.count}`;
+      chip.addEventListener('click', () => {
+        const current = parseTags($(input).value);
+        const at = current.findIndex((t) => t.toLowerCase() === entry.tag.toLowerCase());
+        if (at >= 0) current.splice(at, 1);
+        else current.push(entry.tag);
+        $(input).value = current.join(', ');
+        renderTagSuggestions();
+      });
+      box.appendChild(chip);
+    }
   }
 }
 
 async function commitTags(mode) {
-  const values = parseTags($('#tagInput').value);
+  const tags = parseTags($('#tagInput').value);
+  const models = parseTags($('#modelInput').value);
   const paths = state.tagTargets.map((f) => f.path);
 
   $('#tagModal').hidden = true;
-  await editRecords(paths, mode === 'add' ? { addTags: values } : { tags: values });
+  // One request for both fields: two would mean two saves, two vocabulary
+  // refreshes, and a window where a card shows half the edit.
+  await editRecords(paths, mode === 'add'
+    ? { addTags: tags, addModels: models }
+    : { tags, models });
+
+  const say = (n, noun) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+  const videos = say(paths.length, 'video');
   toast(mode === 'add'
-    ? `Added ${values.length} tag${values.length === 1 ? '' : 's'} to ${paths.length} video${paths.length === 1 ? '' : 's'}`
-    : `Tags set on ${paths.length} video${paths.length === 1 ? '' : 's'}`, 'ok');
+    ? `Added ${say(tags.length, 'tag')} and ${say(models.length, 'model')} to ${videos}`
+    : `Tags and models set on ${videos}`, 'ok');
 }
 
 /**
@@ -2577,13 +2630,18 @@ function wireEvents() {
   // tag editor
   $('#tagAdd').addEventListener('click', () => commitTags('add'));
   $('#tagReplace').addEventListener('click', () => commitTags('replace'));
-  $('#tagInput').addEventListener('input', renderTagSuggestions);
-  $('#tagInput').addEventListener('keydown', (ev) => {
-    if (ev.key !== 'Enter') return;
-    // Enter does the safe thing for the context: replacing one video's tags is
-    // what the pre-filled box implies, but across a selection it must append.
-    commitTags(state.tagTargets.length === 1 ? 'replace' : 'add');
-  });
+  // Both sections behave the same way, including Enter -- which commits the
+  // dialog rather than just its own field, since the two are saved together.
+  for (const field of ['tags', 'models']) {
+    const input = $(LABEL_INPUTS[field].input);
+    input.addEventListener('input', renderTagSuggestions);
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter') return;
+      // Enter does the safe thing for the context: replacing one video's labels
+      // is what the pre-filled boxes imply, but across a selection it appends.
+      commitTags(state.tagTargets.length === 1 ? 'replace' : 'add');
+    });
+  }
 
   // picker
   $('#pickerUp').addEventListener('click', async () => {

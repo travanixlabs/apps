@@ -174,7 +174,7 @@ Hover any tile for a toolbar in the top-right corner:
 | Button | Action |
 | ------ | ------ |
 | ☁ | Cloud-only files only: download and build a preview |
-| ⌗ | Edit tags |
+| ⌗ | Edit tags and models |
 | ✎ | Rename inline |
 | ➜ | Move to a folder |
 | 🗑 | Delete |
@@ -237,22 +237,33 @@ exists.
 
 ## Ratings and tags
 
-Every card carries five stars and a row of tag chips. Click a star to rate,
-click it again to clear. Click **+ tag** or the **⌗** button in the hover
-toolbar to edit tags; click a chip to filter by it, right-click one to remove it
-from that video. With a selection active, the bar gains its own stars and a
-**Tags…** button, so a hundred videos can be rated or tagged at once — and `0`
-through `5` rate the selection straight from the keyboard, `T` opens the tag
-editor.
+Every card carries five stars, a row of **model** chips, and a row of **tag**
+chips. Click a star to rate, click it again to clear. Click **+ tag** / **+
+model**, or the **⌗** button in the hover toolbar, to edit either; click a chip
+to filter by it, right-click one to remove it from that video. With a selection
+active, the bar gains its own stars and a **Tags…** button, so a hundred videos
+can be rated or labelled at once — and `0` through `5` rate the selection
+straight from the keyboard, `T` opens the editor.
 
-The tag editor lists the whole vocabulary as one-click chips, **alphabetically**,
+**One dialog, two sections** — Tags, then Models. They were separate dialogs
+behind separate buttons, which made labelling a video two trips for two facts
+that are almost always entered together. Both sections save in one request, so
+there is no window where a card shows half the edit, and the cursor lands in
+whichever section you opened. Models stay a separate field rather than a tag
+naming convention: a performer's name colliding with a tag would make both
+ambiguous, and they get their own colour on the card because a name is the thing
+you scan for.
+
+Each section lists its whole vocabulary as one-click chips, **alphabetically**,
 each with its use count. Adding a tag is a lookup — "is `nurse` already in
 here?" — and a word is found by name, not by rank; the count is still on the
 chip for whatever it tells you. The advanced filter lists the same tags
 most-used first, since narrowing a listing is the other question.
 
-Tags feed the existing filter box, so `blonde outdoor` matches a video tagged
-with both even when neither word appears in its filename. **Sort → Rating** is
+Both feed the filter box: `blonde outdoor` matches a video tagged with both even
+when neither word appears in its filename, `#hd` restricts a term to tags, and
+`@yuki` to models. The advanced filter has a Tags facet but no Models one — `@`
+is how you narrow by performer. **Sort → Rating** is
 available too, with name as the tiebreak so the unrated bulk stays browsable.
 
 ### Where they live
@@ -346,7 +357,7 @@ slot it vacated — forward lands on whatever slid into that slot.
 | `/` | Focus the filter box |
 | `Ctrl`+`A` | Select every video in the current listing |
 | `0`–`5` | Rate the selection |
-| `T` | Edit tags on the selection |
+| `T` | Edit tags and models on the selection |
 | `Delete` | Recycle the selection |
 | `M` | Move the selection to a folder |
 | `Esc` | Unwind one layer: picker → player → settings → text field → selection |

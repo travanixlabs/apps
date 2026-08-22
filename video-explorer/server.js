@@ -1160,6 +1160,7 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'GET') {
         return sendJson(res, 200, {
           tags: library.tagCounts(),
+          models: library.modelCounts(),
           stats: library.stats(),
         });
       }
@@ -1179,6 +1180,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, {
           records,
           tags: library.tagCounts(),
+          models: library.modelCounts(),
         });
       }
     }
