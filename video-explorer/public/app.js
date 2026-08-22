@@ -471,6 +471,37 @@ function matchesQuery(file, terms) {
   });
 }
 
+/**
+ * A search means the whole subtree, not the folder you happen to be standing in.
+ *
+ * Filtering could only ever see what had been scanned, and a scan is one level
+ * deep -- so searching from a folder whose videos all live in subfolders found
+ * nothing at all. That reads as "search is broken for cloud items", because a
+ * cloud library is exactly the one that sits in subfolders rather than here.
+ *
+ * So the first search below an unflattened folder switches the scan to
+ * recursive, the same move the advanced filter already makes when you pick a
+ * folder. The Flatten box ticks itself, so the mode is visible rather than
+ * silently different, and clearing the search leaves it on: switching back would
+ * cost another scan to return you to where you could not find anything.
+ */
+let searchScan = null;
+
+async function searchNow() {
+  const query = $('#searchInput').value.trim();
+  const missing = state.totalBelow - state.files.length;
+
+  if (query && !$('#recursiveToggle').checked && missing > 0 && !searchScan) {
+    $('#recursiveToggle').checked = true;
+    setStatus(`Searching ${state.totalBelow.toLocaleString()} videos below…`);
+    searchScan = scan(state.dir, { record: false }).finally(() => { searchScan = null; });
+    await searchScan;
+    toast(`Searching everything below ${baseName(state.dir) || state.dir}`, 'ok');
+    return; // the scan renders
+  }
+  render();
+}
+
 function applyFilterSort() {
   const query = $('#searchInput').value.trim().toLowerCase();
   const key = $('#sortSelect').value;
@@ -2569,7 +2600,7 @@ function wireEvents() {
   let searchTimer = null;
   $('#searchInput').addEventListener('input', () => {
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(render, 140);
+    searchTimer = setTimeout(searchNow, 140);
   });
 
   $('#sortBtn').addEventListener('click', (ev) => {
