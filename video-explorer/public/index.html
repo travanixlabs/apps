@@ -315,6 +315,12 @@
         <input id="setHomeFollow" type="checkbox"> Follow the signed-in OneDrive account
       </label>
       <p class="hint" id="homeHint">Where the app opens on launch, and where the 🏠 button in the breadcrumb goes.</p>
+      <label class="field-row">Folders shown there
+        <input id="setHomeFolders" type="text" spellcheck="false" placeholder="Folder 0, Folder 1 — blank for all">
+      </label>
+      <p class="hint">Names, comma separated, applied at the default folder only. The sync root keeps
+        Documents, Music and the rest beside your libraries; this hides them without hiding anything
+        deeper in. Leave it blank to list everything.</p>
       <label class="field-row">Hover engine
         <select id="setPreviewMode">
           <option value="live">Live video — instant, plays each segment</option>

@@ -50,6 +50,13 @@ that, since the folder is the sole difference.
 flatten. Card size, hover engine, page size and the default folder are
 preferences, and no refresh touches them.
 
+**Folders shown there** (⚙) narrows the default folder to a named list — `Folder 0,
+Folder 1, …` — and applies nowhere else. The sync root is the one place where its
+own furniture sits beside the libraries: Documents, Music, an apps folder. Names
+rather than paths, so the list survives the sync folder moving, and blank lists
+everything. The server applies it, so the folder count describes what is on
+screen rather than what was filtered out of it.
+
 Uncheck **Follow the signed-in OneDrive account** under ⚙ to pin a fixed folder
 instead. Re-checking it re-resolves, and the path box goes read-only while it's
 on, since the value is derived rather than chosen.

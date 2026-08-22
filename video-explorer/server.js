@@ -52,6 +52,9 @@ const DEFAULT_CONFIG = {
   roots: [],          // folders the user has pointed at (authorises reads)
   homeFollowsAccount: true, // resolve home from the signed-in OneDrive account
   homeDir: '',        // opened on launch, and by the 🏠 button
+  // Folder names to show at the default folder, by name rather than path so the
+  // list survives the sync folder moving. Empty means show whatever is there.
+  homeFolders: [],
   lastDir: '',
   recentDests: [],    // recent move/copy destinations
   previewMode: 'live', // 'live' = seek+play the real file; 'sprite' = pre-rendered stills
@@ -1060,11 +1063,23 @@ const server = http.createServer(async (req, res) => {
       const recursive = url.searchParams.get('recursive') === '1';
       rememberRoot(resolved);
       const started = Date.now();
+      const atHome = config.homeDir
+        && path.resolve(config.homeDir).toLowerCase() === resolved.toLowerCase();
       // Absent means yes: a listing tells you what is in the folder, and
       // narrowing to what is downloaded is the availability filter's job. Only
       // an explicit cloud=0 holds cloud items back.
       const includeCloud = url.searchParams.get('cloud') !== '0';
       const scanned = await scanDirectory(resolved, recursive, includeCloud);
+
+      // The default folder is a home page rather than a directory listing: it is
+      // the one place where the sync root's own furniture — Documents, Music,
+      // an apps folder — sits beside the libraries. Filtered here rather than in
+      // the client so the folder count describes what is on screen.
+      const shown = (config.homeFolders || []).map((n) => String(n).trim().toLowerCase()).filter(Boolean);
+      if (atHome && shown.length) {
+        scanned.folders = scanned.folders.filter((f) => shown.includes(f.name.toLowerCase()));
+      }
+
       const parent = path.dirname(resolved);
       log(`scanned ${resolved} -> ${scanned.files.length} listed, ${scanned.cloudHidden} cloud hidden, `
         + `${scanned.totalBelow} below (${scanned.cloudBelow} cloud), ${scanned.folders.length} folders `

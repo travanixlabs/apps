@@ -2738,6 +2738,7 @@ function wireEvents() {
     $('#setTileWidth').value = state.config.tileWidth;
     $('#setScrub').checked = !!state.config.scrubWithMouse;
     $('#setHomeDir').value = state.config.homeDir || '';
+    $('#setHomeFolders').value = (state.config.homeFolders || []).join(', ');
     $('#setHomeFollow').checked = state.config.homeFollowsAccount !== false;
     syncHomeFields();
     $('#settingsModal').hidden = false;
@@ -2762,16 +2763,22 @@ function wireEvents() {
       || pageSize !== state.config.pageSize;
 
     const homeDir = $('#setHomeDir').value.trim();
+    const homeFolders = $('#setHomeFolders').value.split(',').map((n) => n.trim()).filter(Boolean);
     const homeFollowsAccount = $('#setHomeFollow').checked;
     const wasFollowing = state.config.homeFollowsAccount !== false;
     const homeChanged = homeFollowsAccount !== wasFollowing
       || (!homeFollowsAccount && !samePath(homeDir, state.config.homeDir));
 
+    // A changed folder list only shows once the listing is fetched again, since
+    // the server is the one applying it.
+    const foldersChanged = (state.config.homeFolders || []).join('|') !== homeFolders.join('|');
+
     await saveConfig({
-      frames, tileWidth, previewMode, pageSize, homeDir, homeFollowsAccount,
+      frames, tileWidth, previewMode, pageSize, homeDir, homeFollowsAccount, homeFolders,
       scrubWithMouse: $('#setScrub').checked,
     });
     $('#settingsModal').hidden = true;
+    if (foldersChanged && samePath(state.dir, state.config.homeDir)) scan(state.dir, { record: false });
     if (homeChanged) {
       renderBreadcrumb();
       // Following the account re-resolves server-side, so report what was
