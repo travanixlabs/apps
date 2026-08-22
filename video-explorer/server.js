@@ -60,6 +60,7 @@ const DEFAULT_CONFIG = {
   tileWidth: 640,     // poster/sprite tile width; matches the largest card size
   cardWidth: 520,     // largest tile: biggest preview per video
   pageSize: 24,       // videos rendered per page
+  volume: 1,          // master playback volume, 0..1 — a preference, not a view
   foldersCollapsed: false,
   recursive: false,   // explorer-style by default: one folder level at a time
   scrubWithMouse: false,

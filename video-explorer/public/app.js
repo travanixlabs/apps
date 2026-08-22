@@ -571,9 +571,64 @@ function syncSortButton() {
 function toggleSortMenu(open) {
   const menu = $('#sortMenu');
   const show = open === undefined ? menu.hidden : open;
-  if (show) renderSortMenu();
+  if (show) { toggleVolumeMenu(false); renderSortMenu(); }
   menu.hidden = !show;
   $('#sortBtn').classList.toggle('on', show);
+}
+
+// -------------------------------------------------------------------- volume
+
+/**
+ * One volume for the whole app, set from the toolbar and used by every video
+ * that opens. The player's own slider writes back to it, so there is one number
+ * rather than a toolbar setting and a per-video one drifting apart.
+ */
+function masterVolume() {
+  const raw = Number(state.config.volume);
+  return Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 1;
+}
+
+function setMasterVolume(value, { save = true } = {}) {
+  const next = Math.max(0, Math.min(1, value));
+  state.config.volume = next;
+  if (save) saveVolumeSoon(next);
+  const player = $('#player');
+  // Never unmute the hover-style preview: it is silent by design, and the
+  // volume is what playback will use once you press play.
+  if (player && !player.muted) player.volume = next;
+  syncVolumeUI();
+}
+
+// The slider fires per pixel of travel; the config file does not need that.
+let volumeSaveTimer = null;
+function saveVolumeSoon(value) {
+  clearTimeout(volumeSaveTimer);
+  volumeSaveTimer = setTimeout(() => saveConfig({ volume: value }), 250);
+}
+
+function syncVolumeUI() {
+  const value = masterVolume();
+  const percent = Math.round(value * 100);
+  $('#volRange').value = String(percent);
+  $('#volLabel').textContent = percent + '%';
+  $('#volBtn').title = `Volume: ${percent}%`;
+  $('#volBtn').classList.toggle('on', !$('#volMenu').hidden);
+
+  // The icon says the level without opening the menu: crossed out at zero, one
+  // wave up to half, both above it. Toggled through style.display, since an SVG
+  // element ignores the HTML hidden attribute -- which is why the first cut drew
+  // the cross over the waves at every level.
+  $('#volCross').style.display = percent > 0 ? 'none' : '';
+  $('#volWaves').style.display = percent > 0 ? '' : 'none';
+  $('#volWave2').style.display = percent > 50 ? '' : 'none';
+}
+
+function toggleVolumeMenu(open) {
+  const menu = $('#volMenu');
+  const show = open === undefined ? menu.hidden : open;
+  if (show) toggleSortMenu(false);
+  menu.hidden = !show;
+  syncVolumeUI();
 }
 
 // -------------------------------------------------------- advanced filters
@@ -1679,6 +1734,7 @@ function playFile(file) {
     ].filter(Boolean).join('  ·  ');
   };
   player.src = `/api/video?path=${encodeURIComponent(file.path)}`;
+  player.volume = masterVolume();
   $('#playerModal').hidden = false;
   syncPlayerNav();
   startPlayerPreview();
@@ -1782,6 +1838,7 @@ function beginPlayback() {
   $('#playerBadge').hidden = true;
   player.controls = true;
   player.muted = false;
+  player.volume = masterVolume();
   try { player.currentTime = 0; } catch { /* not seekable yet; it will start at 0 anyway */ }
   const played = player.play();
   if (played && played.catch) played.catch(() => {});
@@ -2451,8 +2508,28 @@ function wireEvents() {
     toggleSortMenu();
   });
   // Any click elsewhere dismisses it, which is what a menu is expected to do.
+  $('#volBtn').addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    toggleVolumeMenu();
+  });
+  $('#volRange').addEventListener('input', (ev) => setMasterVolume(Number(ev.target.value) / 100));
+  // The player's own slider is the same setting seen from inside a video, so it
+  // writes back rather than being a second, private volume.
+  $('#player').addEventListener('volumechange', () => {
+    const player = $('#player');
+    if (player.muted) return; // the preview mutes deliberately; that is not a choice
+    if (Math.abs(player.volume - masterVolume()) < 0.005) return;
+    setMasterVolume(player.volume);
+  });
+
+  // Each menu closes on a click anywhere outside its own host -- testing for any
+  // .menu-host would leave the sort menu open behind the volume popover.
   document.addEventListener('click', (ev) => {
-    if (!$('#sortMenu').hidden && !ev.target.closest('.menu-host')) toggleSortMenu(false);
+    const host = ev.target.closest('.menu-host');
+    for (const [menu, close] of [['#volMenu', toggleVolumeMenu], ['#sortMenu', toggleSortMenu]]) {
+      const el = $(menu);
+      if (!el.hidden && (!host || !host.contains(el))) close(false);
+    }
   });
 
   $('#cardWidth').addEventListener('input', (ev) => {
@@ -2649,6 +2726,7 @@ function modalOpen() {
 function onKeyDown(ev) {
   // Escape always unwinds one layer: topmost modal first, then the selection.
   if (ev.key === 'Escape') {
+    if (!$('#volMenu').hidden) { toggleVolumeMenu(false); return; }
     if (!$('#pickerModal').hidden) return closePicker();
     if (!$('#tagModal').hidden) { $('#tagModal').hidden = true; return; }
     if (!$('#advModal').hidden) { $('#advModal').hidden = true; return; }
@@ -2774,6 +2852,7 @@ async function init() {
   syncSortButton();
   $('#cardWidth').value = state.config.cardWidth || 520;
   document.documentElement.style.setProperty('--card-width', (state.config.cardWidth || 520) + 'px');
+  syncVolumeUI();
   $('#dwellMs').value = state.config.dwellMs || 1000;
   $('#dwellLabel').textContent = ((state.config.dwellMs || 1000) / 1000).toFixed(1) + 's';
 
