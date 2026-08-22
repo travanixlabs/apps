@@ -4,9 +4,10 @@
  * Reads the saved xChina listing pages into one table of
  * { url, ref, models, title, duration }.
  *
- * The pages are the source of truth here — the spreadsheet was a partial pass
- * over the same HTML — so this parses the HTML and uses the sheet only to fill
- * gaps and to cross-check.
+ * The pages are the whole source. A spreadsheet built from them by hand used to
+ * fill gaps here, and dropping it is what exposed the real gap: a model is an
+ * anchor on most cards and a plain div on the rest, and matching only the div
+ * left 233 videos looking unnamed. The pages now yield more than the sheet did.
  *
  * Each card looks like:
  *   <div class="item video">
@@ -19,7 +20,6 @@
 
 const fs = require('fs');
 const path = require('path');
-const { readSheet } = require('./xlsx');
 
 const HERE = path.join(__dirname, '..', 'en.xchina.co');
 
@@ -63,7 +63,10 @@ function parsePage(html) {
     const title = decode((chunk.match(/title="([^"]*)"/) || [])[1] || '')
       || textOf((chunk.match(/<div class="title">([\s\S]*?)<\/div>/) || [])[1] || '');
 
-    const models = [...chunk.matchAll(/<div class="model-item">([\s\S]*?)<\/div>/g)]
+    // A model is a plain div on some cards and a link to the performer's page on
+    // others — the second shape is most of them, and missing it looked like 233
+    // videos with no models until the spreadsheet disagreed.
+    const models = [...chunk.matchAll(/<(?:div|a)[^>]*class="model-item"[^>]*>([\s\S]*?)<\/(?:div|a)>/g)]
       .map((m) => decode(m[1]))
       .filter(Boolean);
 
@@ -100,48 +103,16 @@ function fromPages() {
   return byUrl;
 }
 
-function fromSheet() {
-  const file = path.join(HERE, 'xChina_video_table.xlsx');
-  if (!fs.existsSync(file)) return new Map();
-  const rows = readSheet(file);
-  const out = new Map();
-  for (const row of rows.slice(1)) {
-    const [url, ref, models, title] = row.map((c) => (c || '').trim());
-    if (!url) continue;
-    out.set(url, {
-      url,
-      ref,
-      models: models ? models.split(/[,、]/).map((m) => m.trim()).filter(Boolean) : [],
-      title,
-      duration: '',
-    });
-  }
-  return out;
-}
-
-/** Pages first, sheet filling anything the pages did not carry. */
 function catalogue() {
-  const pages = fromPages();
-  const sheet = fromSheet();
-  for (const [url, entry] of sheet) {
-    const have = pages.get(url);
-    if (!have) { pages.set(url, entry); continue; }
-    if (!have.ref && entry.ref) have.ref = entry.ref;
-    if (!have.models.length && entry.models.length) have.models = entry.models;
-    if (!have.title && entry.title) have.title = entry.title;
-  }
-  return [...pages.values()];
+  return [...fromPages().values()];
 }
 
-module.exports = { catalogue, fromPages, fromSheet, parsePage };
+module.exports = { catalogue, fromPages, parsePage };
 
 if (require.main === module) {
-  const pages = fromPages();
-  const sheet = fromSheet();
   const all = catalogue();
-  console.log(`pages     : ${pages.size} entries`);
-  console.log(`sheet     : ${sheet.size} entries`);
-  console.log(`combined  : ${all.length} entries`);
+  console.log(`pages     : ${fs.readdirSync(HERE).filter((f) => f.endsWith('.html')).length}`);
+  console.log(`entries   : ${all.length}`);
   console.log(`with ref  : ${all.filter((e) => e.ref).length}`);
   console.log(`with model: ${all.filter((e) => e.models.length).length}`);
   console.log(`with title: ${all.filter((e) => e.title).length}`);
