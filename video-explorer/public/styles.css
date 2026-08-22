@@ -773,14 +773,6 @@ main { padding: 16px; }
   font-weight: 500;
 }
 .adv-mode label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
-.adv-find {
-  margin-left: auto;
-  width: 160px;
-  font-size: 12px;
-  padding: 4px 8px;
-  text-transform: none;
-  letter-spacing: 0;
-}
 .linkish {
   border: 0;
   background: none;
@@ -821,58 +813,6 @@ main { padding: 16px; }
 }
 .chip.tri.out .tri-mark { color: var(--danger); text-decoration: none; }
 
-.folder-checks {
-  flex: 1 1 auto;
-  min-height: 120px;
-  max-height: 34vh;
-  overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 4px;
-}
-/* A button rather than a label with a checkbox, because the choice has three
-   states: in, out, and neither. */
-.folder-check {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 5px 7px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-size: 12.5px;
-  text-align: left;
-  cursor: pointer;
-}
-.folder-check:hover { background: var(--bg-elev-2); }
-.folder-check.in {
-  border-color: color-mix(in srgb, var(--ok) 55%, transparent);
-  background: color-mix(in srgb, var(--ok) 15%, transparent);
-}
-.folder-check.out {
-  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
-}
-.folder-check.out .fc-name { text-decoration: line-through; opacity: .75; }
-
-.tri-box {
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
-  display: grid;
-  place-content: center;
-  border: 1px solid var(--border-strong);
-  border-radius: 4px;
-  font-size: 10px;
-  line-height: 1;
-}
-.folder-check.in .tri-box { border-color: var(--ok); color: var(--ok); }
-.folder-check.out .tri-box { border-color: var(--danger); color: var(--danger); }
-.fc-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fc-meta { color: var(--text-faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 
 /* -------------------------------------------------------- ratings and tags */
 

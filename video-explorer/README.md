@@ -321,21 +321,28 @@ the full path.
 
 ### Advanced filters (the funnel)
 
-Rating, tags, availability and folders, counted live against the whole
-tree rather than the loaded page — the match line at the top moves as you pick,
-and nothing is applied until **Apply**.
+Rating, **tags**, **models** and availability, counted live against the whole
+listing rather than the loaded page — the match line at the top moves as you
+pick, and nothing is applied until **Apply**. Both vocabularies are listed
+alphabetically with their counts, as in the editor: a facet is chosen by looking
+a word up.
 
-Every rating, tag and folder is a **three-state** control: click once to
+Every rating, tag and model is a **three-state** control: click once to
 **include** (green, `+`), again to **exclude** (red, `−`), a third time to clear
 it. Exclusion is the half that used to be missing — "everything tagged `hd`
-*except* what is also tagged `anal`", or a whole branch minus one corner of it —
-and it needed no second column of controls, because a value is only ever in one
-of the three states.
+*except* what is also tagged `anal`" — and it needed no second column of
+controls, because a value is only ever in one of the three states.
 
-Includes and excludes are read separately: the **all / any** switch governs the
-included tags, while exclusions are always all-of, since "not this" means not
-this either way. Picking a folder covers everything beneath it, so excluding a
-child of an included parent is how you carve out a subtree.
+Tags and models are matched the same way but each facet on its own: two models
+and one tag means "those models AND that tag", not one merged pool. The **all /
+any** switch governs the included tags, while exclusions are always all-of, since
+"not this" means not this either way.
+
+Applying a filter below a folder whose videos live in subfolders **flattens the
+listing first**, for the same reason a search does: a filter can only narrow what
+has been scanned. There used to be a Folders facet doing that job as a side
+effect of picking a branch; the breadcrumb is how you choose a branch, so it went
+and the flatten stayed.
 
 **An edit that breaks the filter removes the card.** Listing four stars only and
 rating something 3 — from the grid or from the player — drops it from the

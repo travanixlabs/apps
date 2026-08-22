@@ -1078,34 +1078,6 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // Every folder below `dir` that actually contains videos, for the advanced
-    // filter's folder picker. Derived from the same walk the recursive scan
-    // does, so it costs a directory traversal and no ffprobe.
-    if (req.method === 'GET' && route === '/api/folders') {
-      const dir = url.searchParams.get('dir') || config.lastDir;
-      if (!dir) return sendJson(res, 400, { error: 'No folder specified' });
-      const resolved = authoriseOrThrow(dir);
-      const started = Date.now();
-      const videos = await collectVideos(resolved);
-
-      const map = new Map();
-      for (const video of videos) {
-        const rel = path.relative(resolved, path.dirname(video.path)) || '.';
-        const entry = map.get(rel) || { rel, count: 0, cloudCount: 0, totalSize: 0 };
-        entry.count += 1;
-        if (video.cloudOnly) entry.cloudCount += 1;
-        entry.totalSize += video.size;
-        map.set(rel, entry);
-      }
-
-      const folders = [...map.values()]
-        .sort((a, b) => a.rel.localeCompare(b.rel, undefined, { numeric: true }));
-      log(`folder tree for ${resolved}: ${folders.length} folders, ${videos.length} videos `
-        + `in ${Date.now() - started}ms`);
-      return sendJson(res, 200, { dir: resolved, folders, total: videos.length });
-    }
-
-
     if (req.method === 'GET' && route === '/api/sprite') {
       const target = authoriseOrThrow(url.searchParams.get('path') || '');
       const { stat, cloudOnly } = await statWithCloud(target);

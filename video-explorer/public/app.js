@@ -35,7 +35,6 @@ const state = {
   modelVocab: [],      // the same, for performer names
   tagTargets: [],      // files the open label dialog will edit
   adv: newAdvFilter(), // the advanced filter currently applied
-  advTree: null,       // { folders, total } for the folder picker, loaded on open
 };
 
 /**
@@ -47,15 +46,15 @@ const state = {
 function newAdvFilter() {
   return {
     text: '',
-    folders: new Map(),   // relative folder paths, '.' being the scanned folder
     tags: new Map(),
-    tagMode: 'all',
+    models: new Map(),
+    tagMode: 'all',       // governs the included tags; exclusions are always all-of
     ratings: new Map(),   // 0 means unrated
     cloud: 'all',         // 'all' | 'downloaded' | 'cloud'
   };
 }
 
-const FACETS = ['folders', 'tags', 'ratings'];
+const FACETS = ['tags', 'models', 'ratings'];
 
 /** The values a facet includes, or excludes — the two are always read apart. */
 function picked(facet, want) {
@@ -80,7 +79,6 @@ function resetView() {
   // than assumed empty.
   $('#searchInput').value = '';
   $('#advText').value = '';
-  $('#advFolderFind').value = '';
   syncAdvBadge();
 }
 
@@ -418,32 +416,21 @@ function matchesAdvanced(file, adv) {
     if (!adv.text.toLowerCase().split(/\s+/).filter(Boolean).every((t) => hay.includes(t))) return false;
   }
 
-  if (adv.folders.size) {
-    // A chosen folder covers everything beneath it, so picking a parent is not
-    // silently narrower than picking its children — and excluding a child of an
-    // included parent is the way to say "this branch, but not that corner".
-    const rel = file.relFolder === '.' ? '' : file.relFolder.toLowerCase();
-    const under = (sel) => {
-      const s = sel === '.' ? '' : sel.toLowerCase();
-      return s === '' || rel === s || rel.startsWith(s + '\\') || rel.startsWith(s + '/');
-    };
-    const include = picked(adv.folders, 'in');
-    if (include.length && !include.some(under)) return false;
-    if (picked(adv.folders, 'out').some(under)) return false;
-  }
-
-  // Exclusions are always all-of: "not this" means not this, whichever way the
-  // all/any switch is set for the included tags.
-  if (adv.tags.size) {
-    const have = new Set((file.tags || []).map((t) => t.toLowerCase()));
-    const wanted = picked(adv.tags, 'in').map((t) => t.toLowerCase());
+  // Tags and models are matched the same way, but each facet on its own: two
+  // models and one tag means "those models AND that tag", not one merged pool.
+  // The all/any switch governs the included tags; exclusions are always all-of,
+  // since "not this" means not this whichever way that switch is set.
+  for (const field of ['tags', 'models']) {
+    if (!adv[field].size) continue;
+    const have = new Set((file[field] || []).map((t) => t.toLowerCase()));
+    const wanted = picked(adv[field], 'in').map((t) => t.toLowerCase());
     if (wanted.length) {
       const hit = adv.tagMode === 'any'
         ? wanted.some((t) => have.has(t))
         : wanted.every((t) => have.has(t));
       if (!hit) return false;
     }
-    if (picked(adv.tags, 'out').map((t) => t.toLowerCase()).some((t) => have.has(t))) return false;
+    if (picked(adv[field], 'out').map((t) => t.toLowerCase()).some((t) => have.has(t))) return false;
   }
 
   if (adv.ratings.size) {
@@ -673,11 +660,11 @@ function toggleVolumeMenu(open) {
 // without applying changes nothing.
 let advDraft = newAdvFilter();
 
-async function openAdvanced() {
+function openAdvanced() {
   advDraft = {
     ...state.adv,
-    folders: new Map(state.adv.folders),
     tags: new Map(state.adv.tags),
+    models: new Map(state.adv.models),
     ratings: new Map(state.adv.ratings),
   };
   $('#advText').value = advDraft.text;
@@ -685,17 +672,6 @@ async function openAdvanced() {
     radio.checked = radio.value === advDraft.tagMode;
   }
   $('#advModal').hidden = false;
-  renderAdvanced();
-
-  // The folder tree is a full walk of everything below here, so it is fetched
-  // when the dialog opens rather than kept current on every scan.
-  $('#advFolderCount').textContent = 'loading…';
-  try {
-    state.advTree = await api(`/api/folders?dir=${encodeURIComponent(state.dir)}`);
-  } catch (err) {
-    state.advTree = { folders: [], total: 0 };
-    toast(err.message, 'err');
-  }
   renderAdvanced();
 }
 
@@ -722,73 +698,23 @@ function renderAdvanced() {
   }
 
 
-  const box = $('#advTags');
-  box.innerHTML = state.tagVocab.length ? '' : '<span class="dim">No tags yet — add some from a card first.</span>';
-  for (const entry of state.tagVocab) {
-    box.appendChild(chipCycle(`${entry.tag} · ${entry.count}`, advDraft.tags.get(entry.tag), () => {
-      cycleIn(advDraft.tags, entry.tag);
-      renderAdvanced();
-    }));
+  for (const [field, el, empty] of [
+    ['tags', '#advTags', 'No tags yet — add some from a card first.'],
+    ['models', '#advModels', 'No models yet — name someone from a card first.'],
+  ]) {
+    const box = $(el);
+    // Alphabetical, like the editor: a facet is picked by looking a word up.
+    const vocab = vocabByName(field);
+    box.innerHTML = vocab.length ? '' : `<span class="dim">${empty}</span>`;
+    for (const entry of vocab) {
+      box.appendChild(chipCycle(`${entry.tag} · ${entry.count}`, advDraft[field].get(entry.tag), () => {
+        cycleIn(advDraft[field], entry.tag);
+        renderAdvanced();
+      }));
+    }
   }
 
-  renderAdvFolders();
   updateAdvMatch();
-}
-
-function renderAdvFolders() {
-  const wrap = $('#advFolders');
-  wrap.innerHTML = '';
-  const tree = state.advTree;
-  if (!tree) { $('#advFolderCount').textContent = 'loading…'; return; }
-
-  const find = $('#advFolderFind').value.trim().toLowerCase();
-  const list = find
-    ? tree.folders.filter((f) => f.rel.toLowerCase().includes(find))
-    : tree.folders;
-
-  $('#advFolderCount').textContent = list.length === tree.folders.length
-    ? `(${tree.folders.length})`
-    : `(${list.length} of ${tree.folders.length})`;
-
-  if (!list.length) {
-    wrap.innerHTML = '<span class="dim">No folders with videos below here.</span>';
-    return;
-  }
-
-  for (const folder of list) {
-    const mode = advDraft.folders.get(folder.rel);
-    // A button, not a checkbox: a checkbox has two states and this has three.
-    const row = document.createElement('button');
-    row.type = 'button';
-    row.className = 'folder-check' + (mode ? ' ' + mode : '');
-    row.addEventListener('click', () => {
-      cycleIn(advDraft.folders, folder.rel);
-      renderAdvFolders();
-      updateAdvMatch();
-    });
-
-    const box = document.createElement('span');
-    box.className = 'tri-box';
-    box.textContent = mode === 'in' ? '✓' : mode === 'out' ? '✕' : '';
-    row.appendChild(box);
-
-    const name = document.createElement('span');
-    name.className = 'fc-name';
-    name.textContent = folder.rel === '.' ? 'this folder' : folder.rel;
-    name.title = folder.rel;
-    row.appendChild(name);
-
-    const meta = document.createElement('span');
-    meta.className = 'fc-meta';
-    const downloaded = folder.count - folder.cloudCount;
-    meta.textContent = folder.cloudCount
-      ? `${downloaded} of ${folder.count}`
-      : `${folder.count}`;
-    meta.title = `${folder.count} videos · ${fmtBytes(folder.totalSize)}`;
-    row.appendChild(meta);
-
-    wrap.appendChild(row);
-  }
 }
 
 /**
@@ -807,8 +733,8 @@ function updateAdvMatch() {
     if (inn) bits.push(`${inn} ${inn === 1 ? one : many}${extra}`);
     if (out) bits.push(`without ${out} ${out === 1 ? one : many}`);
   };
-  say('folders', 'folder');
   say('tags', 'tag', 'tags', ` (${advDraft.tagMode})`);
+  say('models', 'model');
   say('ratings', 'rating');
   if (advDraft.cloud !== 'all') bits.push(advDraft.cloud);
   if (advDraft.text) bits.push(`"${advDraft.text}"`);
@@ -861,10 +787,11 @@ async function applyAdvanced() {
   $('#advModal').hidden = true;
   syncAdvBadge();
 
-  // Filtering by folder is meaningless against a single-level listing, so
-  // selecting one switches the scan to recursive. Clearing the filter does not
-  // switch back — that would silently undo a flatten the user asked for.
-  const needsRecursive = state.adv.folders.size > 0;
+  // A filter can only narrow what has been scanned, and a scan is one level
+  // deep -- so filtering below a folder whose videos live in subfolders would
+  // find nothing, exactly as a search there used to. Clearing the filter does
+  // not switch back: that would silently undo a flatten the user can see.
+  const needsRecursive = advActive() && state.totalBelow > state.files.length;
   if (needsRecursive && !$('#recursiveToggle').checked) {
     $('#recursiveToggle').checked = true;
     await scan(state.dir, { record: false });
@@ -879,7 +806,6 @@ async function applyAdvanced() {
 function resetAdvanced() {
   advDraft = newAdvFilter();
   $('#advText').value = '';
-  $('#advFolderFind').value = '';
   renderAdvanced();
 }
 
@@ -2700,7 +2626,6 @@ function wireEvents() {
   $('#advBtn').addEventListener('click', openAdvanced);
   $('#advApply').addEventListener('click', applyAdvanced);
   $('#advReset').addEventListener('click', resetAdvanced);
-  $('#advFolderFind').addEventListener('input', renderAdvFolders);
   $('#advText').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') applyAdvanced(); });
   for (const btn of document.querySelectorAll('[data-clear]')) {
     btn.addEventListener('click', () => {
