@@ -37,7 +37,9 @@ function refKey(raw) {
 
   // Letters, then digits, then an optional part number. Anything else about the
   // name is ignored, so a title wrapped around the code still matches.
-  const m = source.match(/([A-Za-z]{2,10})\s*[-_ ]?\s*(\d{2,6})(?:\s*[-_ ]\s*(\d{1,2}))?/);
+  // The part separator is a hyphen or an underscore, never a space: `MD0316 4p
+  // gangbang…` is MD0316 with a title that starts with a number, not part 4.
+  const m = source.match(/([A-Za-z]{2,10})\s*[-_ ]?\s*(\d{2,6})(?:[-_](\d{1,2})\b)?/);
   if (!m) return parens ? refKey(text.slice(0, parens.index)) : null;
   const letters = m[1].toLowerCase();
   const number = String(Number(m[2])); // 0352 -> 352
@@ -97,27 +99,66 @@ function build() {
   }
 
   const files = ROOTS.flatMap((root) => walk(root));
+  const keys = files.map((file) => refKey(path.basename(file, path.extname(file))));
+  const onDisk = new Set(keys.filter(Boolean));
+
   const matched = [];
   const unmatched = [];
-  for (const file of files) {
+  for (const [index, file] of files.entries()) {
     const base = path.basename(file, path.extname(file));
-    const key = refKey(base);
-    const entry = key && byKey.get(key);
-    if (entry && episodesAgree(base, entry.ref)) matched.push({ file, base, key, entry });
-    else unmatched.push({ file, base, key });
+    const key = keys[index];
+    if (!key) { unmatched.push({ file, base, key }); continue; }
+
+    const exact = byKey.get(key);
+    if (exact) {
+      if (episodesAgree(base, exact.ref)) matched.push({ file, base, key, entry: exact });
+      else unmatched.push({ file, base, key });
+      continue;
+    }
+
+    const bits = key.split('|');
+
+    // A file with no part where the site split the shoot into parts: `MD-0155.mp4`
+    // against MD0155-1 and MD0155-2. The unsuffixed file is part 1 by the usual
+    // convention — but only when no other file has claimed part 1, since then
+    // this one is something else and a guess would be wrong.
+    if (bits.length === 2 && byKey.has(`${key}|1`) && !onDisk.has(`${key}|1`)) {
+      matched.push({ file, base, key, entry: byKey.get(`${key}|1`), via: 'part 1 by convention' });
+      continue;
+    }
+
+    // The mirror: a file split into parts where the site lists the shoot once.
+    // The page describes all of it, so the url and the cast are right for every
+    // part — the part number stays in the name rather than being thrown away.
+    if (bits.length === 3) {
+      const bare = byKey.get(`${bits[0]}|${bits[1]}`);
+      if (bare) {
+        matched.push({ file, base, key, entry: bare, part: Number(bits[2]), via: 'part of a single listing' });
+        continue;
+      }
+    }
+
+    unmatched.push({ file, base, key });
   }
   return { entries, byKey, collisions, files, matched, unmatched };
 }
 
-/** `The bride's wedding (MD0352).mp4`, kept legal for Windows. */
-function targetName(entry, ext) {
+/**
+ * `The bride's wedding (MD0352).mp4`, kept legal for Windows.
+ *
+ * `part` is the file's own part number, passed when the site lists the shoot as
+ * one video and this file is a piece of it — `(MD0080-2)` rather than `(MD0080)`,
+ * so the pieces keep their order and do not all want one name.
+ */
+function targetName(entry, ext, part = null) {
   const clean = (entry.title || '')
     .replace(/[\\/:*?"<>|]/g, ' ')       // characters Windows will not take
     .replace(/[\u0000-\u001f]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/[. ]+$/, '');              // a trailing dot or space is invalid
-  const ref = (entry.ref || '').trim();
+  let ref = (entry.ref || '').trim();
+  if (part && !new RegExp(`[-_]${part}$`).test(ref)) ref = `${ref}-${part}`;
   const stem = clean ? `${clean} (${ref})` : ref;
   // Windows tops out at 255 for a filename; leave room for the extension.
   return stem.slice(0, 250 - ext.length).trim() + ext;
@@ -139,7 +180,7 @@ if (require.main === module) {
   for (const m of matched.slice(0, 12)) {
     const ext = path.extname(m.file);
     console.log(`  ${m.base}${ext}`);
-    console.log(`    -> ${targetName(m.entry, ext)}`);
+    console.log(`    -> ${targetName(m.entry, ext, m.part)}`);
     console.log(`       models: ${m.entry.models.join(', ') || '—'}`);
     console.log(`       url   : ${m.entry.url}`);
   }

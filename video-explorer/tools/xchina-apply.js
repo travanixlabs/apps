@@ -91,7 +91,7 @@ async function main() {
 
   for (const item of work) {
     const ext = path.extname(item.file);
-    const want = targetName(item.entry, ext);
+    const want = targetName(item.entry, ext, item.part);
     const to = path.join(path.dirname(item.file), want);
     const slot = to.toLowerCase();
 
