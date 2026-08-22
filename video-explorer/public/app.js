@@ -1019,11 +1019,22 @@ function buildRecordRow(file) {
   return row;
 }
 
+/**
+ * The vocabulary by name, for the dialog. It arrives most-used first, which
+ * answers "what do I tag with" -- but adding a tag is the other question, "is
+ * `nurse` already in here", and for that you look the word up rather than scan
+ * for it. The count stays on each chip, so nothing is lost by reordering.
+ */
+function tagsByName() {
+  return state.tagVocab.slice().sort((a, b) =>
+    a.tag.localeCompare(b.tag, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
 function syncTagVocab() {
   const list = $('#tagVocab');
   if (!list) return;
   list.innerHTML = '';
-  for (const entry of state.tagVocab) {
+  for (const entry of tagsByName()) {
     const option = document.createElement('option');
     option.value = entry.tag;
     option.label = `${entry.count}`;
@@ -1064,7 +1075,7 @@ function renderTagSuggestions() {
   const box = $('#tagSuggest');
   box.innerHTML = '';
   const used = new Set(parseTags($('#tagInput').value).map((t) => t.toLowerCase()));
-  for (const entry of state.tagVocab.slice(0, 60)) {
+  for (const entry of tagsByName().slice(0, 60)) {
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'chip suggest' + (used.has(entry.tag.toLowerCase()) ? ' on' : '');

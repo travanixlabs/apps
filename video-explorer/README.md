@@ -245,6 +245,12 @@ from that video. With a selection active, the bar gains its own stars and a
 through `5` rate the selection straight from the keyboard, `T` opens the tag
 editor.
 
+The tag editor lists the whole vocabulary as one-click chips, **alphabetically**,
+each with its use count. Adding a tag is a lookup — "is `nurse` already in
+here?" — and a word is found by name, not by rank; the count is still on the
+chip for whatever it tells you. The advanced filter lists the same tags
+most-used first, since narrowing a listing is the other question.
+
 Tags feed the existing filter box, so `blonde outdoor` matches a video tagged
 with both even when neither word appears in its filename. **Sort → Rating** is
 available too, with name as the tiebreak so the unrated bulk stays browsable.
