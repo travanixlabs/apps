@@ -626,6 +626,21 @@ function toggleSortMenu(open) {
 // -------------------------------------------------------------------- volume
 
 /**
+ * Sound is opted into, once, for the run of the app.
+ *
+ * Every video opens on a silent preview, which is right the first time and
+ * tiresome by the tenth: pressing play is then a thing you do to each video in
+ * turn just to hear it. So the first press is taken as the answer for the whole
+ * session -- from then on a video that opens plays, with sound, and the arrows
+ * carry that along instead of dropping back to a muted preview.
+ *
+ * Deliberately not saved to the config file. Launching the app, or reloading
+ * it, is quiet again: opening something loud by surprise is the thing the
+ * preview was mute for in the first place.
+ */
+let soundOn = false;
+
+/**
  * One volume for the whole app, set from the toolbar and used by every video
  * that opens. The player's own slider writes back to it, so there is one number
  * rather than a toolbar setting and a per-video one drifting apart.
@@ -1820,7 +1835,9 @@ function playFile(file) {
   player.volume = masterVolume();
   $('#playerModal').hidden = false;
   syncPlayerNav();
-  startPlayerPreview();
+  // Once you have asked for sound, opening a video means watching it.
+  if (soundOn) beginPlayback();
+  else startPlayerPreview();
 }
 
 /**
@@ -1916,6 +1933,7 @@ function stopPlayerPreview() {
 /** ▶ turns the preview into a real playthrough: sound on, controls back, from the top. */
 function beginPlayback() {
   stopPlayerPreview();
+  soundOn = true; // for the rest of the session, not the next launch
   const player = $('#player');
   $('#playerPlay').hidden = true;
   $('#playerBadge').hidden = true;
