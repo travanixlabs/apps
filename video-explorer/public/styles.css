@@ -206,15 +206,6 @@ kbd {
   color: var(--text-faint);
 }
 
-/* Models read as people, not attributes, so they get their own colour and sit
-   first on the card — a name is the thing you scan for. */
-.chip-model {
-  border-color: color-mix(in srgb, #f5b52b 45%, var(--border-strong));
-  color: #f0c060;
-}
-.chip-model:hover { border-color: #f5b52b; color: #ffd479; }
-.record-row .chips + .chips { margin-left: 2px; }
-
 /* -------------------------------------------------------------- breadcrumb */
 
 .breadcrumb {
@@ -1196,6 +1187,18 @@ body.dragging .card { cursor: grabbing; }
   white-space: nowrap;
 }
 .chip:hover { border-color: var(--accent); color: #cfe2ff; }
+
+/* Models read as people, not attributes, so they get their own colour and sit
+   first on the card — a name is the thing you scan for.
+   Written as `.chip.chip-model`, and placed after every plain `.chip` block, so
+   the gold survives: at equal specificity the later rule wins, and sitting
+   earlier in the file is exactly why this was rendering grey. */
+.chip.chip-model {
+  border-color: color-mix(in srgb, #f5b52b 45%, var(--border-strong));
+  color: #f0c060;
+}
+.chip.chip-model:hover { border-color: #f5b52b; color: #ffd479; }
+.record-row .chips + .chips { margin-left: 2px; }
 
 .picker-list {
   list-style: none;
