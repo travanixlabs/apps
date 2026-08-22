@@ -1,13 +1,5 @@
-# Runtime state, not source: the folders you have opened, the last one you were
-# in, recent move destinations. Per-machine by definition, and it names your
-# actual library paths.
-config.json
-
-# Has its own repository (travanixlabs/video-explorer-mobile), which is what
-# GitHub Pages serves. Tracking it here would capture it as a submodule pointer
-# rather than files.
-mobile/
-
-# onnxruntime-node is 258 MB of prebuilt binaries for three platforms. It is a
-# declared dependency; the build script trims it to win32-x64 CPU on the way in.
-node_modules/
+# Saved listing pages and the spreadsheet built from them: 9 MB of scraped HTML
+# that the tools read and can re-read, not source. Kept on disk, out of history.
+en.xchina.co/
+# Undo manifests from tools/xchina-apply.js — local records of a local rename.
+tools/manifests/
