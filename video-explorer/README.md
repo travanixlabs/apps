@@ -321,7 +321,7 @@ the full path.
 
 ### Advanced filters (the funnel)
 
-Rating, **tags**, **models** and availability, counted live against the whole
+Rating, **tags**, **models**, source link and availability, counted live against the whole
 listing rather than the loaded page — the match line at the top moves as you
 pick, and nothing is applied until **Apply**. Both vocabularies are listed
 alphabetically with their counts, as in the editor: a facet is chosen by looking
@@ -337,6 +337,13 @@ Tags and models are matched the same way but each facet on its own: two models
 and one tag means "those models AND that tag", not one merged pool. The **all /
 any** switch governs the included tags, while exclusions are always all-of, since
 "not this" means not this either way.
+
+Each of those two rows opens with **no tags** / **no models** — the same
+three-state control, asking about absence rather than a value. Include it to see
+only the unlabelled, exclude it to drop them; it is evaluated before any value is
+compared, so "no tags" plus a tag selection matches nothing, which is what it
+should. **Source link** and **Availability** are single choices rather than
+cycles, since "has one" and "has none" already cover the listing between them.
 
 Applying a filter below a folder whose videos live in subfolders **flattens the
 listing first**, for the same reason a search does: a filter can only narrow what

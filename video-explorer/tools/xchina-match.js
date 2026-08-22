@@ -44,6 +44,22 @@ function refKey(raw) {
   return m[3] ? `${letters}|${number}|${Number(m[3])}` : `${letters}|${number}`;
 }
 
+/**
+ * An episode number in the filename must not contradict one in the reference.
+ *
+ * `TZ-070-EP1` and `TZ-070-EP3` reduce to the same key, since the letters after
+ * the number are not a part suffix — so EP1 matched the EP3 entry and would have
+ * taken its title, url and cast. Where the reference names no episode there is
+ * nothing to contradict: the site puts the episode in the title and distinguishes
+ * the files with a part suffix, which the key already carries.
+ */
+function episodesAgree(base, ref) {
+  const mine = (base.match(/\bEP[-_ ]?(\d{1,3})\b/i) || [])[1];
+  const theirs = (String(ref).match(/EP[-_ ]?(\d{1,3})/i) || [])[1];
+  if (!mine || !theirs) return true;
+  return Number(mine) === Number(theirs);
+}
+
 function walk(dir, out = []) {
   let entries;
   try {
@@ -87,7 +103,7 @@ function build() {
     const base = path.basename(file, path.extname(file));
     const key = refKey(base);
     const entry = key && byKey.get(key);
-    if (entry) matched.push({ file, base, key, entry });
+    if (entry && episodesAgree(base, entry.ref)) matched.push({ file, base, key, entry });
     else unmatched.push({ file, base, key });
   }
   return { entries, byKey, collisions, files, matched, unmatched };
@@ -107,7 +123,7 @@ function targetName(entry, ext) {
   return stem.slice(0, 250 - ext.length).trim() + ext;
 }
 
-module.exports = { build, refKey, targetName, walk };
+module.exports = { build, refKey, targetName, walk, episodesAgree };
 
 if (require.main === module) {
   const { entries, byKey, collisions, files, matched, unmatched } = build();

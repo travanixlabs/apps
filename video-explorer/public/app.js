@@ -50,15 +50,29 @@ function newAdvFilter() {
     models: new Map(),
     tagMode: 'all',       // governs the included tags; exclusions are always all-of
     ratings: new Map(),   // 0 means unrated
+    link: 'all',          // 'all' | 'yes' | 'no' — whether a source url is stored
     cloud: 'all',         // 'all' | 'downloaded' | 'cloud'
   };
 }
 
 const FACETS = ['tags', 'models', 'ratings'];
 
-/** The values a facet includes, or excludes — the two are always read apart. */
+/**
+ * The "no tags" / "no models" chip lives in the same map as the values, under a
+ * key no tag can have. A separate field would need its own copying, clearing,
+ * counting and emptiness test; a NUL key gets all of that for free, and
+ * `picked()` filters it out of the value lists.
+ */
+const NOTHING = '\u0000';
+
+/**
+ * The values a facet includes, or excludes — the two are always read apart, and
+ * the emptiness chip is not a value, so it never appears here.
+ */
 function picked(facet, want) {
-  return [...facet].filter(([, mode]) => mode === want).map(([value]) => value);
+  return [...facet]
+    .filter(([value, mode]) => mode === want && value !== NOTHING)
+    .map(([value]) => value);
 }
 
 /**
@@ -83,7 +97,7 @@ function resetView() {
 }
 
 function advActive(adv = state.adv) {
-  return Boolean(adv.text) || adv.cloud !== 'all'
+  return Boolean(adv.text) || adv.cloud !== 'all' || adv.link !== 'all'
     || FACETS.some((f) => adv[f].size > 0);
 }
 
@@ -423,6 +437,13 @@ function matchesAdvanced(file, adv) {
   for (const field of ['tags', 'models']) {
     if (!adv[field].size) continue;
     const have = new Set((file[field] || []).map((t) => t.toLowerCase()));
+
+    // "Has none at all" is its own question, asked before any value is compared:
+    // include it to see only the unlabelled, exclude it to drop them.
+    const nothing = adv[field].get(NOTHING);
+    if (nothing === 'in' && have.size) return false;
+    if (nothing === 'out' && !have.size) return false;
+
     const wanted = picked(adv[field], 'in').map((t) => t.toLowerCase());
     if (wanted.length) {
       const hit = adv.tagMode === 'any'
@@ -439,6 +460,9 @@ function matchesAdvanced(file, adv) {
     if (wanted.length && !wanted.includes(rating)) return false;
     if (picked(adv.ratings, 'out').includes(rating)) return false;
   }
+
+  if (adv.link === 'yes' && !file.url) return false;
+  if (adv.link === 'no' && file.url) return false;
 
   if (adv.cloud === 'downloaded' && file.cloudOnly) return false;
   if (adv.cloud === 'cloud' && !file.cloudOnly) return false;
@@ -688,6 +712,17 @@ function renderAdvanced() {
     ));
   }
 
+  // Same shape as Availability directly below it: one of three, not a cycle,
+  // because "has a link" and "has none" already cover the whole listing.
+  const link = $('#advLink');
+  link.innerHTML = '';
+  for (const [value, label] of [['all', 'everything'], ['yes', 'has a link'], ['no', 'no link']]) {
+    link.appendChild(chipToggle(label, advDraft.link === value, () => {
+      advDraft.link = value;
+      renderAdvanced();
+    }));
+  }
+
   const cloud = $('#advCloud');
   cloud.innerHTML = '';
   for (const [value, label] of [['all', 'everything'], ['downloaded', 'downloaded only'], ['cloud', 'cloud only ☁']]) {
@@ -698,14 +733,25 @@ function renderAdvanced() {
   }
 
 
-  for (const [field, el, empty] of [
-    ['tags', '#advTags', 'No tags yet — add some from a card first.'],
-    ['models', '#advModels', 'No models yet — name someone from a card first.'],
+  for (const [field, el, empty, none] of [
+    ['tags', '#advTags', 'No tags yet — add some from a card first.', 'no tags'],
+    ['models', '#advModels', 'No models yet — name someone from a card first.', 'no models'],
   ]) {
     const box = $(el);
     // Alphabetical, like the editor: a facet is picked by looking a word up.
     const vocab = vocabByName(field);
-    box.innerHTML = vocab.length ? '' : `<span class="dim">${empty}</span>`;
+    box.innerHTML = '';
+
+    // First, because "which of these have nothing" is a question about the whole
+    // listing rather than one more value in it.
+    const gap = chipCycle(none, advDraft[field].get(NOTHING), () => {
+      cycleIn(advDraft[field], NOTHING);
+      renderAdvanced();
+    });
+    gap.classList.add('chip-none');
+    box.appendChild(gap);
+
+    if (!vocab.length) box.insertAdjacentHTML('beforeend', `<span class="dim">${empty}</span>`);
     for (const entry of vocab) {
       box.appendChild(chipCycle(`${entry.tag} · ${entry.count}`, advDraft[field].get(entry.tag), () => {
         cycleIn(advDraft[field], entry.tag);
@@ -732,10 +778,16 @@ function updateAdvMatch() {
     const out = picked(advDraft[facet], 'out').length;
     if (inn) bits.push(`${inn} ${inn === 1 ? one : many}${extra}`);
     if (out) bits.push(`without ${out} ${out === 1 ? one : many}`);
+    // The emptiness chip reads as a phrase, not a count.
+    const nothing = advDraft[facet].get(NOTHING);
+    if (nothing === 'in') bits.push(`no ${many} at all`);
+    if (nothing === 'out') bits.push(`some ${many}`);
   };
   say('tags', 'tag', 'tags', ` (${advDraft.tagMode})`);
   say('models', 'model');
   say('ratings', 'rating');
+  if (advDraft.link === 'yes') bits.push('linked');
+  if (advDraft.link === 'no') bits.push('unlinked');
   if (advDraft.cloud !== 'all') bits.push(advDraft.cloud);
   if (advDraft.text) bits.push(`"${advDraft.text}"`);
   el.textContent = bits.join(' · ');
@@ -2672,7 +2724,7 @@ function wireEvents() {
   for (const btn of document.querySelectorAll('[data-clear]')) {
     btn.addEventListener('click', () => {
       const what = btn.dataset.clear;
-      if (what === 'cloud') advDraft.cloud = 'all';
+      if (what === 'cloud' || what === 'link') advDraft[what] = 'all';
       else advDraft[what === 'rating' ? 'ratings' : what].clear();
       renderAdvanced();
     });

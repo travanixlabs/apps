@@ -803,6 +803,11 @@ main { padding: 16px; }
   color: var(--text);
 }
 
+/* Not a value but a question about the absence of them, so it reads as a label
+   rather than one more entry in the vocabulary. */
+.chip.chip-none { font-style: italic; }
+.chip.chip-none::after { content: ''; }
+
 /* Three-state chips: green includes, red excludes, plain is no constraint. The
    sign carries the meaning as well as the colour, so the two states stay
    distinguishable without relying on hue alone. */
