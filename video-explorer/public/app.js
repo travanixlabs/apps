@@ -839,6 +839,7 @@ async function editRecords(paths, patch) {
       file.rating = record.rating;
       file.tags = record.tags;
       file.models = record.models;
+      file.url = record.url;
       refreshCardRecord(file);
     }
     pruneFiltered(Object.keys(data.records || {}));
@@ -900,6 +901,10 @@ function refreshCardRecord(file) {
   if (card) {
     const row = card.querySelector('.record-row');
     if (row) row.replaceWith(buildRecordRow(file));
+    // The source link lives on the folder line, so a url arriving by edit has
+    // nowhere to appear unless that line is rebuilt too.
+    const line = card.querySelector('.folder-line');
+    if (line) line.replaceWith(buildFolderLine(file));
   }
   // The player shows the same row, so an edit made in either place has to land
   // in both — otherwise the footer keeps showing the rating you just changed.
@@ -2145,15 +2150,52 @@ function buildCard(file, index) {
 
   details.appendChild(buildRecordRow(file));
 
-  const folderLine = document.createElement('div');
-  folderLine.className = 'folder-line';
-  folderLine.textContent = `${fmtDate(file.mtimeMs)}  •  ${file.relFolder === '.' ? 'this folder' : file.relFolder}`;
-  folderLine.title = file.folder;
-  details.appendChild(folderLine);
+  details.appendChild(buildFolderLine(file));
 
   card.appendChild(details);
   attachDrag(card, file, index);
   return card;
+}
+
+/**
+ * Date, subfolder, and — pushed to the right — a link to wherever this video is
+ * catalogued, when the record carries one. Opening it is the point of storing
+ * it, so it is an anchor rather than text: the native shell hands target=_blank
+ * to the system browser.
+ */
+function buildFolderLine(file) {
+  const line = document.createElement('div');
+  line.className = 'folder-line';
+
+  const where = document.createElement('span');
+  where.className = 'folder-where';
+  where.textContent = `${fmtDate(file.mtimeMs)}  •  ${file.relFolder === '.' ? 'this folder' : file.relFolder}`;
+  where.title = file.folder;
+  line.appendChild(where);
+
+  if (file.url) {
+    const link = document.createElement('a');
+    link.className = 'source-link';
+    link.href = file.url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = sourceLabel(file.url);
+    link.title = file.url;
+    // A card click plays the video; this one must not.
+    link.addEventListener('click', (ev) => ev.stopPropagation());
+    line.appendChild(link);
+  }
+
+  return line;
+}
+
+/** The host, without the www, which is all the room there is for it. */
+function sourceLabel(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '') + ' \u2197';
+  } catch {
+    return 'source \u2197';
+  }
 }
 
 /** Size and date come from the cheap scan; the rest waits on a probe. */

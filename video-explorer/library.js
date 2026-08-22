@@ -25,7 +25,7 @@ const os = require('os');
 // Models are kept separate from tags rather than being a tag convention: they
 // are a different kind of fact, they want their own filter facet, and a
 // performer named "anal" would otherwise be indistinguishable from the tag.
-const EMPTY = { rating: 0, tags: [], models: [] };
+const EMPTY = { rating: 0, tags: [], models: [], url: '' };
 
 const LIST_FIELDS = ['tags', 'models'];
 
@@ -72,6 +72,9 @@ function decorate(stat) {
     rating: record.rating || 0,
     tags: record.tags || [],
     models: record.models || [],
+    // Where this video came from, when that is known: a page about it rather
+    // than a copy of it.
+    url: record.url || '',
   };
 }
 
@@ -83,6 +86,17 @@ function save() {
       await fsp.writeFile(FILE, JSON.stringify(data, null, 1));
     } catch { /* a read-only or offline sync folder must not break editing */ }
   }, 400);
+}
+
+/**
+ * Writes now rather than in 400ms, for a batch job that is about to exit — the
+ * debounce is there to coalesce a burst of clicks, not to survive a process.
+ */
+async function flush() {
+  clearTimeout(timer);
+  await fsp.mkdir(path.dirname(FILE), { recursive: true });
+  await fsp.writeFile(FILE, JSON.stringify(data, null, 1));
+  return { file: FILE, records: Object.keys(data.records).length };
 }
 
 /** Case-insensitive dedupe, but the casing you typed is what gets stored. */
@@ -111,6 +125,13 @@ function apply(stat, name, patch) {
     next.rating = Math.max(0, Math.min(5, Math.round(Number(patch.rating) || 0)));
   }
 
+  if (patch.url !== undefined) {
+    const url = String(patch.url || '').trim();
+    // Only http(s), and nothing with a scheme the shell would act on: this ends
+    // up as an href in a page that can open a browser.
+    next.url = /^https?:\/\//i.test(url) ? url : '';
+  }
+
   // tags/addTags/removeTags and models/addModels/removeModels behave
   // identically, so they share one implementation rather than two that drift.
   for (const field of LIST_FIELDS) {
@@ -126,7 +147,7 @@ function apply(stat, name, patch) {
   }
 
   // An empty record is noise in a file that syncs; drop it instead.
-  if (!next.rating && !(next.tags || []).length && !(next.models || []).length) {
+  if (!next.rating && !(next.tags || []).length && !(next.models || []).length && !next.url) {
     delete data.records[key];
     save();
     return { ...EMPTY };
@@ -134,7 +155,12 @@ function apply(stat, name, patch) {
 
   data.records[key] = next;
   save();
-  return { rating: next.rating || 0, tags: next.tags || [], models: next.models || [] };
+  return {
+    rating: next.rating || 0,
+    tags: next.tags || [],
+    models: next.models || [],
+    url: next.url || '',
+  };
 }
 
 /**
@@ -176,11 +202,12 @@ function stats() {
     videos: records.length,
     rated: records.filter((r) => r.rating).length,
     tagged: records.filter((r) => (r.tags || []).length).length,
+    linked: records.filter((r) => r.url).length,
     named: records.filter((r) => (r.models || []).length).length,
   };
 }
 
 module.exports = {
-  init, keyFor, get, decorate, apply, rekey,
+  init, keyFor, get, decorate, apply, rekey, flush,
   counts, tagCounts, modelCounts, stats, normaliseTags,
 };
