@@ -1018,7 +1018,25 @@ function pruneFiltered(paths) {
   updateStatusLine();
   syncPlayerNav();
   renderEmptyState();
-  toast(`${gone.size} no longer match${gone.size === 1 ? 'es' : ''} the filter`, 'ok');
+
+  // The open video failing the filter means you have just finished with it —
+  // rating it while listing the unrated, tagging it while listing the untagged.
+  // Moving on is what you were about to do anyway, so the player follows the
+  // listing instead of sitting on something no longer in it. The slot it
+  // vacated is the one to take, which is where the next video slid to.
+  let moved = false;
+  if (state.playing && gone.has(state.playing.path) && !$('#playerModal').hidden) {
+    if (!state.view.length) closePlayer();
+    else {
+      const at = state.playingAnchor === null ? 0 : state.playingAnchor;
+      playFile(state.view[Math.min(at, state.view.length - 1)]);
+      moved = true;
+    }
+  }
+
+  const many = gone.size === 1 ? 'es' : '';
+  toast(`${gone.size} no longer match${many} the filter`
+    + (moved ? ' — on to the next' : ''), 'ok');
 }
 
 /** Repaints just the stars and chips, so an edit never disturbs a playing hover. */
@@ -1209,7 +1227,7 @@ function openTagDialog(files) {
   const studios = new Set(files.map((f) => f.studio || ''));
   $('#studioInput').value = studios.size === 1 ? [...studios][0] : '';
   $('#tagHint').textContent = single
-    ? 'Add appends, Replace overwrites — both sections at once. Right-click a chip on the card to remove one.'
+    ? 'Add appends, Replace overwrites — every section at once. Right-click a chip on the card to remove one.'
     : `Add appends to each video's existing tags and models. Replace overwrites all ${files.length}.`;
   $('#tagReplace').textContent = single ? 'Replace' : `Replace on ${files.length}`;
   $('#tagAdd').textContent = single ? 'Add' : `Add to ${files.length}`;
@@ -1224,7 +1242,7 @@ function openTagDialog(files) {
 /** The existing vocabulary as one-click chips — faster than typing, and it
  *  keeps names from splintering into near-duplicates. */
 function renderTagSuggestions() {
-  for (const field of ['tags', 'models', 'studio']) {
+  for (const field of LABEL_FACETS) {
     const { input, suggest } = LABEL_INPUTS[field];
     const box = $(suggest);
     box.innerHTML = '';
