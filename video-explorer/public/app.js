@@ -906,6 +906,52 @@ function updateAdvMatch() {
 }
 
 /**
+ * Which videos the ranking is allowed to count, by tag.
+ *
+ * A Map of tag → 'in' | 'out' with the NUL key for "has no tags at all" — the
+ * same shape as a facet of the advanced filter, so the chips, the cycling and
+ * the all/any switch are the ones already built. It lives out here so a filter
+ * survives closing the panel: it is a question about the library, not a piece of
+ * the panel's furniture.
+ */
+let favTags = new Map();
+let favTagMode = 'all';
+
+/** Chips can be pressed faster than the server can answer; only the last reply counts. */
+let favRun = 0;
+
+/** The ranking request for the tags currently picked. */
+function favQuery() {
+  const params = new URLSearchParams({ limit: '20', tagMode: favTagMode });
+  // Repeated params, not one joined list: a tag is free text and may hold a comma.
+  for (const tag of picked(favTags, 'in')) params.append('tag', tag);
+  for (const tag of picked(favTags, 'out')) params.append('notTag', tag);
+  const none = favTags.get(NOTHING);
+  if (none) params.set('noTags', none);
+  return `/api/top-models?${params}`;
+}
+
+const favFiltered = () => favTags.size > 0;
+
+/**
+ * What the filter is doing, in words — because a re-ranked list looks exactly
+ * like an unfiltered one, and "why is she not first any more" deserves an answer
+ * on the panel rather than in someone's memory.
+ */
+function favScope() {
+  if (!favFiltered()) return '';
+  const bits = [];
+  const none = favTags.get(NOTHING);
+  if (none === 'in') bits.push('with no tags at all');
+  if (none === 'out') bits.push('with at least one tag');
+  const wanted = picked(favTags, 'in');
+  if (wanted.length) bits.push(`tagged ${wanted.join(favTagMode === 'any' ? ' or ' : ' and ')}`);
+  const banned = picked(favTags, 'out');
+  if (banned.length) bits.push(`not tagged ${banned.join(' or ')}`);
+  return ` Counting only videos ${bits.join(', ')} — so this is the top twenty for that.`;
+}
+
+/**
  * The best-rated performers, and one click to go and watch them.
  *
  * The ranking comes from the server because it is a fact about the library
@@ -913,22 +959,67 @@ function updateAdvMatch() {
  * what the current folder and filter happen to show.
  */
 async function openFavourites() {
-  const list = $('#favList');
-  list.innerHTML = '<li class="fav-loading">Counting…</li>';
   $('#favModal').hidden = false;
+  renderFavTags();
+  await loadFavourites();
+}
+
+/** The tag chips above the ranking. Every press re-ranks, so there is no Apply. */
+function renderFavTags() {
+  for (const radio of document.querySelectorAll('input[name="favTagMode"]')) {
+    radio.checked = radio.value === favTagMode;
+  }
+  $('#favClear').hidden = !favFiltered();
+
+  const box = $('#favTags');
+  box.innerHTML = '';
+
+  // First, because "who has untagged work" is a question about the whole
+  // library rather than one more tag in it.
+  const gap = chipCycle('no tags', favTags.get(NOTHING), () => {
+    cycleIn(favTags, NOTHING);
+    renderFavTags();
+    loadFavourites();
+  });
+  gap.classList.add('chip-none');
+  box.appendChild(gap);
+
+  const vocab = vocabByName('tags');
+  if (!vocab.length) {
+    box.insertAdjacentHTML('beforeend', '<span class="dim">No tags yet — add some from a card first.</span>');
+  }
+  for (const entry of vocab) {
+    box.appendChild(chipCycle(`${entry.tag} · ${entry.count}`, favTags.get(entry.tag), () => {
+      cycleIn(favTags, entry.tag);
+      renderFavTags();
+      loadFavourites();
+    }));
+  }
+}
+
+async function loadFavourites() {
+  const list = $('#favList');
+  const run = ++favRun;
+  list.innerHTML = '<li class="fav-loading">Counting…</li>';
 
   let models = [];
   try {
-    models = (await api('/api/top-models?limit=20')).models || [];
+    models = (await api(favQuery())).models || [];
   } catch (err) {
+    if (run !== favRun) return;
     list.innerHTML = '';
     $('#favHint').textContent = err.message;
     return;
   }
+  if (run !== favRun) return; // a later press already asked a different question
 
+  const weights = 'A five-star video is worth a thousand points, a four-star a hundred,'
+    + ' a three-star ten, everything else nothing.';
   $('#favHint').textContent = models.length
-    ? 'A five-star video is worth a thousand points, a four-star a hundred, a three-star ten, everything else nothing. Pick a name to list their videos, or a still to play it.'
-    : 'Nothing to rank yet — rate a few videos three stars or better and name who is in them.';
+    ? `${weights}${favScope()} Pick a name to list their videos, or a still to play it.`
+    : favFiltered()
+      ? 'Nobody has a rated video matching those tags.'
+      : 'Nothing to rank yet — rate a few videos three stars or better and name who is in them.';
 
   list.innerHTML = '';
   for (const [index, entry] of models.entries()) {
@@ -1080,6 +1171,10 @@ async function showModel(name) {
 
   const adv = newAdvFilter();
   adv.models.set(name, 'in');
+  // Carried over: arriving from "the top twenty for this tag" and landing on
+  // everything they have ever done would contradict the ranking that sent you.
+  adv.tags = new Map(favTags);
+  adv.mode.tags = favTagMode;
   state.adv = adv;
   advDraft = newAdvFilter();
   syncAdvBadge();
@@ -1094,7 +1189,8 @@ async function showModel(name) {
   $('#recursiveToggle').checked = true;
   $('#dirInput').value = root;
   await scan(root);
-  toast(`${state.view.length.toLocaleString()} by ${name}, best first`, 'ok');
+  const scoped = favFiltered() ? ' matching those tags' : '';
+  toast(`${state.view.length.toLocaleString()} by ${name}${scoped}, best first`, 'ok');
 }
 
 /**
@@ -1448,6 +1544,11 @@ function vocabByName(field) {
 }
 
 function syncTagVocab() {
+  // The favourites panel draws its chips from the same vocabulary, so a panel
+  // opened before it arrived — or open while a tag is renamed — is redrawn here
+  // rather than being left showing "no tags yet".
+  if (!$('#favModal').hidden) renderFavTags();
+
   for (const [field, id] of [['tags', '#tagVocab'], ['models', '#modelVocab'], ['studio', '#studioVocab']]) {
     const list = $(id);
     if (!list) continue;
@@ -3187,6 +3288,22 @@ function wireEvents() {
 
   // settings
   $('#favBtn').addEventListener('click', openFavourites);
+
+  // The tag filter re-ranks on every change: there is nothing to apply, since
+  // the list underneath *is* the result.
+  for (const radio of document.querySelectorAll('input[name="favTagMode"]')) {
+    radio.addEventListener('change', () => {
+      favTagMode = radio.value;
+      renderFavTags();
+      loadFavourites();
+    });
+  }
+  $('#favClear').addEventListener('click', () => {
+    favTags = new Map();
+    favTagMode = 'all';
+    renderFavTags();
+    loadFavourites();
+  });
 
   $('#settingsBtn').addEventListener('click', () => {
     $('#setPreviewMode').value = state.config.previewMode === 'sprite' ? 'sprite' : 'live';

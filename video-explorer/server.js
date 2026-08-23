@@ -700,7 +700,7 @@ async function listSubfolders(dir, videos) {
  * videos takes about half a second, against fetching a thumbnail each, so it is
  * done per request rather than cached into something that can go stale.
  */
-async function attachTopVideos(models) {
+async function attachTopVideos(models, keep = null) {
   // Every video that scored: five, four and three star — uncapped, because "she
   // has thirty" is the point being made.
   const perModel = new Map();
@@ -718,6 +718,7 @@ async function attachTopVideos(models) {
   for (const video of videos) {
     const record = library.get(video);
     if (!record) continue;
+    if (keep && !keep(record)) continue;
     const rating = record.rating || 0;
     if (rating < 3) continue; // a two or a one earned no points, so no still
     for (const name of record.models || []) {
@@ -1201,8 +1202,18 @@ const server = http.createServer(async (req, res) => {
     // than from whatever is on screen.
     if (route === '/api/top-models' && req.method === 'GET') {
       const limit = Math.max(1, Math.min(50, Number(url.searchParams.get('limit')) || 20));
-      const models = library.topModels(limit);
-      if (url.searchParams.get('shots') !== '0') await attachTopVideos(models);
+      // Tags come as repeated params rather than one comma-joined list: a tag is
+      // free text and may well contain a comma.
+      const keep = library.tagFilter({
+        tags: url.searchParams.getAll('tag'),
+        notTags: url.searchParams.getAll('notTag'),
+        noTags: url.searchParams.get('noTags') || '',
+        mode: url.searchParams.get('tagMode') === 'any' ? 'any' : 'all',
+      });
+      const models = library.topModels(limit, keep);
+      // The same test for the stills, or a row would show work that did not
+      // count towards the score beside it.
+      if (url.searchParams.get('shots') !== '0') await attachTopVideos(models, keep);
       return sendJson(res, 200, { models });
     }
 

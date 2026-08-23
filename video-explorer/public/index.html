@@ -160,6 +160,20 @@
       <button class="btn btn-icon modal-close">✕</button>
     </header>
     <div class="fav-body" id="favBody">
+      <!-- Tags only: this asks which videos count towards the ranking, and a
+           studio or a performer would either narrow it to nothing or answer the
+           question the list itself is answering. -->
+      <div class="fav-filter">
+        <div class="adv-label">
+          Count only videos tagged
+          <span class="adv-mode">
+            <label><input type="radio" name="favTagMode" value="all" checked> all</label>
+            <label><input type="radio" name="favTagMode" value="any"> any</label>
+          </span>
+          <button class="linkish" id="favClear" hidden>clear</button>
+        </div>
+        <div id="favTags" class="chip-row scroller"></div>
+      </div>
       <p class="hint" id="favHint">Ranked by how many five-star videos each one has, then four, and so on.</p>
       <ol id="favList" class="fav-list"></ol>
     </div>

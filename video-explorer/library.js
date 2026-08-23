@@ -244,7 +244,40 @@ function studioCounts() {
 const STAR_POINTS = [0, 0, 0, 10, 100, 1000];
 
 /**
+ * Which videos a ranking is allowed to count, by tag.
+ *
+ * The same shape as a facet of the advanced filter — required tags, banned
+ * tags, all-of or any-of, and "has no tags at all" as its own question — because
+ * the panel reuses those chips and it would be strange for them to mean
+ * something different here. Returns null when nothing is asked, so the caller
+ * can skip the test rather than run a predicate that always says yes.
+ */
+function tagFilter(spec) {
+  const lower = (list) => (list || []).map((t) => String(t).trim().toLowerCase()).filter(Boolean);
+  const wanted = lower(spec && spec.tags);
+  const banned = lower(spec && spec.notTags);
+  const none = (spec && spec.noTags) || '';
+  const any = !!spec && spec.mode === 'any';
+  if (!wanted.length && !banned.length && !none) return null;
+
+  return (record) => {
+    const have = new Set((record.tags || []).map((t) => String(t).toLowerCase()));
+    if (none === 'in' && have.size) return false;
+    if (none === 'out' && !have.size) return false;
+    if (wanted.length) {
+      const hit = any ? wanted.some((t) => have.has(t)) : wanted.every((t) => have.has(t));
+      if (!hit) return false;
+    }
+    return !banned.some((t) => have.has(t));
+  };
+}
+
+/**
  * The twenty performers with the best-rated work, by points.
+ *
+ * `keep` narrows which videos count at all, which re-ranks rather than
+ * highlights: filter to one tag and the list becomes the top twenty *for that
+ * tag*, with the scores and counts to match.
  *
  * One list rather than a tier per rating: tiers meant someone with a single five
  * outranked someone with fourteen fours, and barred them from the tier where
@@ -254,9 +287,10 @@ const STAR_POINTS = [0, 0, 0, 10, 100, 1000];
  * Ties go to whoever has more well-rated videos (ten fours over one five, which
  * score alike), and then alphabetically.
  */
-function topModels(limit = 20) {
+function topModels(limit = 20, keep = null) {
   const tally = new Map();
   for (const record of Object.values(data.records)) {
+    if (keep && !keep(record)) continue;
     const rating = Math.max(0, Math.min(5, Math.round(Number(record.rating) || 0)));
     for (const raw of record.models || []) {
       const name = String(raw).trim();
@@ -295,5 +329,5 @@ function stats() {
 
 module.exports = {
   init, keyFor, get, decorate, apply, rekey, flush,
-  counts, tagCounts, modelCounts, studioCounts, topModels, stats, normaliseTags,
+  counts, tagCounts, modelCounts, studioCounts, tagFilter, topModels, stats, normaliseTags,
 };
