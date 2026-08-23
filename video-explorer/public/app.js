@@ -877,7 +877,7 @@ async function openFavourites() {
 
   let tiers = [];
   try {
-    tiers = (await api('/api/top-models?limit=10&shots=10')).tiers || [];
+    tiers = (await api('/api/top-models?limit=10&shots=5')).tiers || [];
   } catch (err) {
     list.innerHTML = '';
     $('#favHint').textContent = err.message;
@@ -935,7 +935,7 @@ async function openFavourites() {
       total.textContent = `${entry.videos} video${entry.videos === 1 ? '' : 's'}`;
       line.appendChild(total);
 
-      // Their best, up to ten, best first — however many that turns out to be.
+      // Their best five, best first — however many that turns out to be.
       const shots = entry.top || [];
       if (shots.length) {
         const strip = document.createElement('div');
