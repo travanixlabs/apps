@@ -1107,10 +1107,23 @@ async function applyAdvanced() {
   await commitFilter();
 }
 
-function resetAdvanced() {
+/**
+ * Clears every facet and means it. Both footer buttons commit — having to press
+ * Reset and then Apply to say "show me everything" was one click too many, and
+ * the dialog closing is what makes the emptied listing visible.
+ *
+ * The quick search box is left alone: it is not one of these filters, and this
+ * button belongs to this dialog.
+ */
+async function resetAdvanced() {
   advDraft = newAdvFilter();
   $('#advText').value = '';
   renderAdvanced();
+
+  state.adv = advDraft;
+  $('#advModal').hidden = true;
+  syncAdvBadge();
+  await commitFilter();
 }
 
 function syncAdvBadge() {
