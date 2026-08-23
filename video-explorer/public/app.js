@@ -877,7 +877,7 @@ async function openFavourites() {
 
   let tiers = [];
   try {
-    tiers = (await api('/api/top-models?limit=10')).tiers || [];
+    tiers = (await api('/api/top-models?limit=10&shots=10')).tiers || [];
   } catch (err) {
     list.innerHTML = '';
     $('#favHint').textContent = err.message;
@@ -906,10 +906,15 @@ async function openFavourites() {
       // Ranks restart inside each tier, so the counter does too.
       row.style.counterIncrement = 'fav';
 
+      // Two lines now: who they are, then what of theirs is worth watching.
+      const line = document.createElement('div');
+      line.className = 'fav-line';
+      row.appendChild(line);
+
       const name = document.createElement('span');
       name.className = 'fav-name';
       name.textContent = entry.name;
-      row.appendChild(name);
+      line.appendChild(name);
 
       // The whole distribution, not just the count that placed them: it shows
       // why this one outranks the next, and why they are in this tier at all.
@@ -923,12 +928,35 @@ async function openFavourites() {
         bit.textContent = `${n}×${'★'.repeat(star)}`;
         stars.appendChild(bit);
       }
-      row.appendChild(stars);
+      line.appendChild(stars);
 
       const total = document.createElement('span');
       total.className = 'fav-total';
       total.textContent = `${entry.videos} video${entry.videos === 1 ? '' : 's'}`;
-      row.appendChild(total);
+      line.appendChild(total);
+
+      // Their best, up to ten, best first — however many that turns out to be.
+      const shots = entry.top || [];
+      if (shots.length) {
+        const strip = document.createElement('div');
+        strip.className = 'fav-shots';
+        for (const video of shots) {
+          const shot = document.createElement('div');
+          shot.className = 'fav-shot';
+          shot.dataset.path = video.path;
+          shot.title = `${video.name}\n${video.rating ? '★'.repeat(video.rating) : 'unrated'}`
+            + ` · ${fmtBytes(video.size)}${video.cloudOnly ? ' · not downloaded' : ''}`;
+          if (video.rating) {
+            const badge = document.createElement('span');
+            badge.className = 'fav-shot-rating';
+            badge.textContent = video.rating;
+            shot.appendChild(badge);
+          }
+          favObserver.observe(shot);
+          strip.appendChild(shot);
+        }
+        row.appendChild(strip);
+      }
 
       row.addEventListener('click', () => showModel(entry.name));
       list.appendChild(row);
@@ -1465,6 +1493,28 @@ const spriteObserver = new IntersectionObserver((entries) => {
  * written for the 16:9 video tiles — letting it style a 62x36 cover box is what
  * made cover-bearing folder rows taller than plain ones.
  */
+/**
+ * The favourites overlay can ask for thirty performers' worth of thumbnails at
+ * once, which is three hundred requests for a panel showing two rows. They load
+ * as they come into view instead, the same way folder covers do.
+ */
+const favObserver = new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    const el = entry.target;
+    favObserver.unobserve(el);
+    // allowCloud stays off: a cloud file gets OneDrive's own thumbnail, which
+    // costs ~16KB and hydrates nothing, or it stays a plain tile.
+    loadThumb(el.dataset.path, null).then((url) => {
+      if (!url) return;
+      el.style.backgroundImage = `url("${url}")`;
+      el.style.backgroundSize = 'cover';
+      el.style.backgroundPosition = 'center';
+      el.classList.add('has-shot');
+    });
+  }
+}, { root: document.getElementById('favBody'), rootMargin: '200px 0px' });
+
 const folderObserver = new IntersectionObserver((entries) => {
   for (const entry of entries) {
     if (!entry.isIntersecting) continue;

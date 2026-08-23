@@ -691,6 +691,59 @@ async function listSubfolders(dir, videos) {
   return folders;
 }
 
+/**
+ * Each ranked performer's best videos, for the thumbnails under their name.
+ *
+ * The sidecar knows ratings but not paths — records are keyed by size and
+ * modified time so a rename cannot orphan them — so the paths have to come from
+ * a walk. That is cheaper than it sounds: enumerating and stat-ing all 28,000
+ * videos takes about half a second, against fetching a thumbnail each, so it is
+ * done per request rather than cached into something that can go stale.
+ */
+async function attachTopVideos(tiers, count) {
+  const root = config.homeDir || (config.roots || [])[0] || '';
+  const wanted = new Map();
+  for (const tier of tiers) {
+    for (const model of tier.models) wanted.set(model.name.toLowerCase(), []);
+  }
+  if (!root || !wanted.size) return;
+
+  let videos = [];
+  try {
+    videos = await collectVideos(root);
+  } catch {
+    return; // no thumbnails is a lesser failure than no ranking
+  }
+
+  for (const video of videos) {
+    const record = library.get(video);
+    if (!record) continue;
+    for (const name of record.models || []) {
+      const bucket = wanted.get(String(name).toLowerCase());
+      if (!bucket) continue;
+      bucket.push({
+        path: video.path,
+        name: path.basename(video.path),
+        rating: record.rating || 0,
+        size: video.size,
+        cloudOnly: video.cloudOnly,
+      });
+    }
+  }
+
+  for (const tier of tiers) {
+    for (const model of tier.models) {
+      const bucket = wanted.get(model.name.toLowerCase()) || [];
+      // Best first, and the bigger copy first where two are rated the same —
+      // which is usually the better rip of the same video.
+      bucket.sort((a, b) => b.rating - a.rating || b.size - a.size
+        || a.name.localeCompare(b.name));
+      // `top`, not `videos`: that one already holds how many they have in all.
+      model.top = bucket.slice(0, count);
+    }
+  }
+}
+
 async function scanDirectory(dir, recursive, includeCloud) {
   const videos = await collectVideos(dir);
   const folders = await listSubfolders(dir, videos);
@@ -1147,7 +1200,10 @@ const server = http.createServer(async (req, res) => {
     // than from whatever is on screen.
     if (route === '/api/top-models' && req.method === 'GET') {
       const limit = Math.max(1, Math.min(50, Number(url.searchParams.get('limit')) || 10));
-      return sendJson(res, 200, { tiers: library.topModelsByStar(limit) });
+      const shots = Math.max(0, Math.min(20, Number(url.searchParams.get('shots')) || 0));
+      const tiers = library.topModelsByStar(limit);
+      if (shots) await attachTopVideos(tiers, shots);
+      return sendJson(res, 200, { tiers });
     }
 
     if (route === '/api/library') {
