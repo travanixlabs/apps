@@ -993,6 +993,46 @@ async function showModel(name) {
   toast(`${state.view.length.toLocaleString()} by ${name}, best first`, 'ok');
 }
 
+/**
+ * Narrows the listing to whatever state.adv now says.
+ *
+ * A filter can only narrow what has been scanned, and a scan is one level deep
+ * -- so filtering below a folder whose videos live in subfolders would find
+ * nothing, exactly as a search there used to. Clearing the filter does not
+ * switch back: that would silently undo a flatten the user can see.
+ */
+async function commitFilter() {
+  const needsRecursive = advActive() && state.totalBelow > state.files.length;
+  if (needsRecursive && !$('#recursiveToggle').checked) {
+    $('#recursiveToggle').checked = true;
+    await scan(state.dir, { record: false });
+  } else {
+    render();
+  }
+
+  const shown = state.view.length;
+  toast(advActive() ? `${shown} match${shown === 1 ? '' : 'es'}` : 'Filters cleared', 'ok');
+}
+
+/**
+ * Clicking a pill is a filter, not a search.
+ *
+ * It used to type `@name` into the quick search box, which worked but left the
+ * advanced dialog describing filters that were not the ones in force -- and the
+ * two then stacked, so a pill clicked under an existing filter showed a
+ * narrower listing than the pill promised. Now the pill IS the filter: exactly
+ * that one value, in its own facet, and everything else cleared.
+ */
+async function filterByLabel(field, value) {
+  const adv = newAdvFilter();
+  adv[field].set(value, 'in');
+  state.adv = adv;
+  $('#searchInput').value = '';
+  $('#advText').value = '';
+  syncAdvBadge();
+  await commitFilter();
+}
+
 function chipToggle(label, on, onClick) {
   const chip = document.createElement('button');
   chip.type = 'button';
@@ -1040,21 +1080,7 @@ async function applyAdvanced() {
   state.adv = advDraft;
   $('#advModal').hidden = true;
   syncAdvBadge();
-
-  // A filter can only narrow what has been scanned, and a scan is one level
-  // deep -- so filtering below a folder whose videos live in subfolders would
-  // find nothing, exactly as a search there used to. Clearing the filter does
-  // not switch back: that would silently undo a flatten the user can see.
-  const needsRecursive = advActive() && state.totalBelow > state.files.length;
-  if (needsRecursive && !$('#recursiveToggle').checked) {
-    $('#recursiveToggle').checked = true;
-    await scan(state.dir, { record: false });
-  } else {
-    render();
-  }
-
-  const shown = state.view.length;
-  toast(advActive() ? `${shown} match${shown === 1 ? '' : 'es'}` : 'Filters cleared', 'ok');
+  await commitFilter();
 }
 
 function resetAdvanced() {
@@ -1222,12 +1248,11 @@ function buildStars(current, onPick, { compact = false } = {}) {
  * colliding with a tag would make both ambiguous, and one dialog edits the pair.
  */
 const LABEL_FIELDS = {
-  tags: { prefix: '#', empty: '+ tag', chip: 'chip', values: (f) => f.tags || [] },
-  models: { prefix: '@', empty: '+ model', chip: 'chip chip-model', values: (f) => f.models || [] },
+  tags: { empty: '+ tag', chip: 'chip', values: (f) => f.tags || [] },
+  models: { empty: '+ model', chip: 'chip chip-model', values: (f) => f.models || [] },
   // One allowed answer, so it reads a single value rather than a list, and
   // removing it means clearing the field instead of dropping one entry.
   studio: {
-    prefix: 'studio:',
     empty: '+ studio',
     chip: 'chip chip-studio',
     values: (f) => (f.studio ? [f.studio] : []),
@@ -1254,10 +1279,7 @@ function buildLabelChips(file, field, { add: withAdd = true } = {}) {
     chip.title = `Filter by "${value}" — right-click to remove it from this video`;
     chip.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      // The prefix scopes the search to this field, so clicking "hd" does not
-      // also drag in every file merely named that way.
-      $('#searchInput').value = spec.prefix + value;
-      render();
+      filterByLabel(field, value);
     });
     chip.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
