@@ -700,16 +700,12 @@ async function listSubfolders(dir, videos) {
  * videos takes about half a second, against fetching a thumbnail each, so it is
  * done per request rather than cached into something that can go stale.
  */
-async function attachTopVideos(tiers, count) {
-  // Each tier illustrates its own rating: the five-star row shows five-star
-  // videos, so a performer placed there on three of them shows those three
-  // rather than filling the gap with their fours.
-  const perStar = new Map();
+async function attachTopVideos(models) {
+  // Every five- and four-star video, since those are the ones that earned the
+  // place — uncapped, because "she has thirty" is the point being made.
+  const perModel = new Map();
   const root = config.homeDir || (config.roots || [])[0] || '';
-  const wanted = new Map();
-  for (const tier of tiers) {
-    for (const model of tier.models) wanted.set(model.name.toLowerCase(), []);
-  }
+  const wanted = new Set(models.map((model) => model.name.toLowerCase()));
   if (!root || !wanted.size) return;
 
   let videos = [];
@@ -723,13 +719,12 @@ async function attachTopVideos(tiers, count) {
     const record = library.get(video);
     if (!record) continue;
     const rating = record.rating || 0;
-    if (!rating) continue; // an unrated video belongs to no tier
+    if (rating !== 5 && rating !== 4) continue; // nothing else earned a place
     for (const name of record.models || []) {
       const key = String(name).toLowerCase();
       if (!wanted.has(key)) continue;
-      const slot = `${key}|${rating}`;
-      if (!perStar.has(slot)) perStar.set(slot, []);
-      perStar.get(slot).push({
+      if (!perModel.has(key)) perModel.set(key, []);
+      perModel.get(key).push({
         path: video.path,
         name: path.basename(video.path),
         rating,
@@ -739,14 +734,14 @@ async function attachTopVideos(tiers, count) {
     }
   }
 
-  for (const tier of tiers) {
-    for (const model of tier.models) {
-      const bucket = perStar.get(`${model.name.toLowerCase()}|${tier.star}`) || [];
-      // All the same rating, so the bigger copy leads — usually the better rip.
-      bucket.sort((a, b) => b.size - a.size || a.name.localeCompare(b.name));
-      // `top`, not `videos`: that one already holds how many they have in all.
-      model.top = bucket.slice(0, count);
-    }
+  for (const model of models) {
+    const bucket = perModel.get(model.name.toLowerCase()) || [];
+    // Fives before fours, and the bigger copy first within a rating — usually
+    // the better rip of the same video.
+    bucket.sort((a, b) => b.rating - a.rating || b.size - a.size
+      || a.name.localeCompare(b.name));
+    // `top`, not `videos`: that one already holds how many they have in all.
+    model.top = bucket;
   }
 }
 
@@ -1205,11 +1200,10 @@ const server = http.createServer(async (req, res) => {
     // The favourites overlay: whole-library, so it comes from the sidecar rather
     // than from whatever is on screen.
     if (route === '/api/top-models' && req.method === 'GET') {
-      const limit = Math.max(1, Math.min(50, Number(url.searchParams.get('limit')) || 10));
-      const shots = Math.max(0, Math.min(20, Number(url.searchParams.get('shots')) || 0));
-      const tiers = library.topModelsByStar(limit);
-      if (shots) await attachTopVideos(tiers, shots);
-      return sendJson(res, 200, { tiers });
+      const limit = Math.max(1, Math.min(50, Number(url.searchParams.get('limit')) || 20));
+      const models = library.topModels(limit);
+      if (url.searchParams.get('shots') !== '0') await attachTopVideos(models);
+      return sendJson(res, 200, { models });
     }
 
     if (route === '/api/library') {

@@ -917,98 +917,138 @@ async function openFavourites() {
   list.innerHTML = '<li class="fav-loading">Counting…</li>';
   $('#favModal').hidden = false;
 
-  let tiers = [];
+  let models = [];
   try {
-    tiers = (await api('/api/top-models?limit=10&shots=5')).tiers || [];
+    models = (await api('/api/top-models?limit=20')).models || [];
   } catch (err) {
     list.innerHTML = '';
     $('#favHint').textContent = err.message;
     return;
   }
 
-  const anyone = tiers.some((t) => t.models.length);
-  $('#favHint').textContent = anyone
-    ? 'A top ten for five, four and three stars, and nobody twice — once someone places in the fives they are out of the fours. Pick one to list their videos, best first.'
-    : 'Nothing to rank yet — rate a few videos that have a performer named on them.';
+  $('#favHint').textContent = models.length
+    ? 'A five-star video is worth a thousand points, a four-star a hundred, everything else nothing. Pick a name to list their videos, or a still to play it.'
+    : 'Nothing to rank yet — rate a few videos four or five stars and name who is in them.';
 
   list.innerHTML = '';
-  for (const tier of tiers) {
-    if (!tier.models.length) continue;
+  for (const [index, entry] of models.entries()) {
+    const row = document.createElement('li');
+    row.className = 'fav-row';
 
-    const head = document.createElement('li');
-    head.className = 'fav-head';
-    head.innerHTML = `<span class="fav-head-stars">${'★'.repeat(tier.star)}</span>`
-      + `<span class="fav-head-note">top ${tier.models.length}`
-      + `${tier.star < 5 ? ', of whoever is left' : ''}</span>`;
-    list.appendChild(head);
+    const line = document.createElement('div');
+    line.className = 'fav-line';
+    row.appendChild(line);
 
-    for (const entry of tier.models) {
-      const row = document.createElement('li');
-      row.className = 'fav-row';
-      // Ranks restart inside each tier, so the counter does too.
-      row.style.counterIncrement = 'fav';
+    const rank = document.createElement('span');
+    rank.className = 'fav-rank';
+    rank.textContent = String(index + 1);
+    line.appendChild(rank);
 
-      // Two lines now: who they are, then what of theirs is worth watching.
-      const line = document.createElement('div');
-      line.className = 'fav-line';
-      row.appendChild(line);
+    const name = document.createElement('span');
+    name.className = 'fav-name';
+    name.textContent = entry.name;
+    line.appendChild(name);
 
-      const name = document.createElement('span');
-      name.className = 'fav-name';
-      name.textContent = entry.name;
-      line.appendChild(name);
+    // The score, then what it is made of — so the order explains itself without
+    // anyone having to remember the weights.
+    const score = document.createElement('span');
+    score.className = 'fav-score';
+    score.textContent = entry.points.toLocaleString();
+    line.appendChild(score);
 
-      // Just this tier's count. The other ratings were shown here once, but a
-      // tier that ranks on one rating and then lists three reads as though all
-      // three counted.
-      const stars = document.createElement('span');
-      stars.className = 'fav-stars';
+    const stars = document.createElement('span');
+    stars.className = 'fav-stars';
+    for (const star of [5, 4]) {
+      const n = entry.counts[star];
+      if (!n) continue;
       const bit = document.createElement('span');
-      bit.className = 'fav-bucket fav-bucket-why';
-      bit.textContent = `${entry.counts[tier.star]}×${'★'.repeat(tier.star)}`;
+      bit.className = 'fav-bucket';
+      bit.textContent = `${n}×${'★'.repeat(star)}`;
       stars.appendChild(bit);
-      line.appendChild(stars);
-
-      const total = document.createElement('span');
-      total.className = 'fav-total';
-      total.textContent = `${entry.videos} video${entry.videos === 1 ? '' : 's'}`;
-      line.appendChild(total);
-
-      // Five of the videos that placed them, biggest first — or all of them,
-      // where they have fewer than five at this rating.
-      const shots = entry.top || [];
-      if (shots.length) {
-        const strip = document.createElement('div');
-        strip.className = 'fav-shots';
-        for (const video of shots) {
-          const shot = document.createElement('div');
-          shot.className = 'fav-shot';
-          shot.dataset.path = video.path;
-          shot.title = `${video.name}\n${video.rating ? '★'.repeat(video.rating) : 'unrated'}`
-            + ` · ${fmtBytes(video.size)}${video.cloudOnly ? ' · not downloaded' : ''}`
-            + '\nClick to play it';
-          if (video.rating) {
-            const badge = document.createElement('span');
-            badge.className = 'fav-shot-rating';
-            badge.textContent = video.rating;
-            shot.appendChild(badge);
-          }
-          // Its own handler, so a still opens that video while the rest of the
-          // row still means "everything by this performer".
-          shot.addEventListener('click', (ev) => {
-            ev.stopPropagation();
-            showModelVideo(entry.name, video.path);
-          });
-          favObserver.observe(shot);
-          strip.appendChild(shot);
-        }
-        row.appendChild(strip);
-      }
-
-      row.addEventListener('click', () => showModel(entry.name));
-      list.appendChild(row);
     }
+    line.appendChild(stars);
+
+    const total = document.createElement('span');
+    total.className = 'fav-total';
+    total.textContent = `${entry.videos} video${entry.videos === 1 ? '' : 's'}`;
+    line.appendChild(total);
+
+    // Every video that earned the score, not a sample of them.
+    const shots = entry.top || [];
+    if (shots.length) row.appendChild(buildStrip(shots, entry.name));
+
+    line.addEventListener('click', () => showModel(entry.name));
+    list.appendChild(row);
   }
+}
+
+/**
+ * A performer's stills, with arrows when there are more than fit.
+ *
+ * Someone with thirty four-star videos gets thirty stills, so the row has to
+ * scroll — and a bare scrollbar under each of twenty rows is both ugly and hard
+ * to hit. The arrows appear only when there is somewhere to go, and each press
+ * moves most of a screen, which keeps a frame or two of context.
+ */
+function buildStrip(videos, modelName) {
+  const wrap = document.createElement('div');
+  wrap.className = 'fav-strip';
+
+  const strip = document.createElement('div');
+  strip.className = 'fav-shots';
+
+  for (const video of videos) {
+    const shot = document.createElement('div');
+    shot.className = 'fav-shot';
+    shot.dataset.path = video.path;
+    shot.title = `${video.name}\n${'★'.repeat(video.rating)} · ${fmtBytes(video.size)}`
+      + `${video.cloudOnly ? ' · not downloaded' : ''}\nClick to play it`;
+
+    const badge = document.createElement('span');
+    badge.className = 'fav-shot-rating';
+    badge.textContent = video.rating;
+    shot.appendChild(badge);
+
+    shot.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      showModelVideo(modelName, video.path);
+    });
+    favObserver.observe(shot);
+    strip.appendChild(shot);
+  }
+  wrap.appendChild(strip);
+
+  const arrow = (where, glyph) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `fav-arrow ${where}`;
+    btn.textContent = glyph;
+    btn.tabIndex = -1;
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const step = Math.max(120, strip.clientWidth * 0.8);
+      strip.scrollBy({ left: where === 'next' ? step : -step, behavior: 'smooth' });
+    });
+    wrap.appendChild(btn);
+    return btn;
+  };
+  const back = arrow('prev', '‹');
+  const on = arrow('next', '›');
+
+  // An arrow with nowhere to go is worse than no arrow: it invites a press that
+  // does nothing. Both are hidden until the strip has actually overflowed, and
+  // rechecked as it scrolls, since either end can run out.
+  const sync = () => {
+    const room = strip.scrollWidth - strip.clientWidth;
+    back.hidden = strip.scrollLeft < 4;
+    on.hidden = room < 4 || strip.scrollLeft > room - 4;
+  };
+  strip.addEventListener('scroll', sync);
+  // After layout: scrollWidth is meaningless while the row is still being built.
+  requestAnimationFrame(sync);
+  wrap.__syncArrows = sync;
+
+  return wrap;
 }
 
 /**

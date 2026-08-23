@@ -232,68 +232,51 @@ function studioCounts() {
  * Read from the sidecar rather than a listing, so it describes the whole
  * library however the app is currently filtered.
  */
-function modelTally() {
-  const found = new Map();
+/**
+ * What a rating is worth to a performer's standing.
+ *
+ * A five is worth ten fours, and a three is worth nothing at all: this ranks who
+ * is worth watching, and a video you rated three is one you sat through, not one
+ * you would choose again. Two and one are a verdict against, so they score the
+ * same as never having rated it.
+ */
+const STAR_POINTS = [0, 0, 0, 0, 100, 1000];
+
+/**
+ * The twenty performers with the best-rated work, by points.
+ *
+ * One list rather than a tier per rating: tiers meant someone with a single five
+ * outranked someone with fourteen fours, and barred them from the tier where
+ * that would have shown. Points say the same thing without the cliff — ten fours
+ * are worth one five, and nothing else counts.
+ *
+ * Ties go to whoever has more well-rated videos (ten fours over one five, which
+ * score alike), and then alphabetically.
+ */
+function topModels(limit = 20) {
+  const tally = new Map();
   for (const record of Object.values(data.records)) {
+    const rating = Math.max(0, Math.min(5, Math.round(Number(record.rating) || 0)));
     for (const raw of record.models || []) {
       const name = String(raw).trim();
       if (!name) continue;
-      const lower = name.toLowerCase();
-      let entry = found.get(lower);
+      const key = name.toLowerCase();
+      let entry = tally.get(key);
       if (!entry) {
-        entry = { name, counts: [0, 0, 0, 0, 0, 0], videos: 0, rated: 0 };
-        found.set(lower, entry);
+        entry = { name, counts: [0, 0, 0, 0, 0, 0], videos: 0, points: 0 };
+        tally.set(key, entry);
       }
-      const rating = Math.max(0, Math.min(5, Math.round(Number(record.rating) || 0)));
       entry.counts[rating] += 1;
       entry.videos += 1;
-      if (rating) entry.rated += 1;
+      entry.points += STAR_POINTS[rating];
     }
   }
-  return [...found.values()];
-}
 
-/**
- * Which ratings count as a recommendation. Two and one stars are a verdict
- * against a video, so they say nothing about who is worth watching: they earn
- * nobody a place and they break no ties.
- */
-const GOOD_STARS = [5, 4, 3];
-
-/**
- * A top ten per star rating, five down to three, and nobody twice.
- *
- * A tier is about one rating and nothing else: the five-star tier ranks by how
- * many five-star videos someone has, and a four-star video of theirs neither
- * places them nor breaks their ties. Ties go to whoever has more of that rating
- * — which is the count itself — and then alphabetically, rather than to
- * whichever of them happens to have more of some other rating.
- *
- * Anyone already placed in a higher tier is left out of the lower ones:
- * appearing in the fives and again in the threes would say nothing, since
- * almost everyone with a five also has a three. So a tier reads as "best of
- * what is left", which is what makes the fours worth looking at at all.
- *
- * A consequence worth knowing: someone with one five and thirty fours lands in
- * the fives, on that single video, and is then absent from the fours where they
- * would have led.
- */
-function topModelsByStar(limit = 10) {
-  const all = modelTally();
-  const taken = new Set();
-  const tiers = [];
-
-  for (const star of GOOD_STARS) {
-    const ranked = all
-      .filter((e) => e.counts[star] > 0 && !taken.has(e.name.toLowerCase()))
-      .sort((a, b) => b.counts[star] - a.counts[star] || a.name.localeCompare(b.name))
-      .slice(0, limit);
-
-    for (const entry of ranked) taken.add(entry.name.toLowerCase());
-    tiers.push({ star, models: ranked });
-  }
-
-  return tiers;
+  const good = (entry) => entry.counts[5] + entry.counts[4];
+  return [...tally.values()]
+    .filter((entry) => entry.points > 0)
+    .sort((a, b) => b.points - a.points || good(b) - good(a) || a.name.localeCompare(b.name))
+    .slice(0, limit);
 }
 
 function stats() {
@@ -311,5 +294,5 @@ function stats() {
 
 module.exports = {
   init, keyFor, get, decorate, apply, rekey, flush,
-  counts, tagCounts, modelCounts, studioCounts, topModelsByStar, stats, normaliseTags,
+  counts, tagCounts, modelCounts, studioCounts, topModels, stats, normaliseTags,
 };
