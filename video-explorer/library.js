@@ -263,34 +263,30 @@ const GOOD_STARS = [5, 4, 3];
 /**
  * A top ten per star rating, five down to three, and nobody twice.
  *
- * Each tier ranks by how many videos of exactly that rating a performer has, so
- * the five-star tier is the ten people with the most five-star videos. Anyone
- * already placed in a higher tier is left out of the lower ones: appearing in
- * the fives and again in the threes would say nothing, since almost everyone
- * with a five also has a three. So a tier reads as "best of what is left",
- * which is what makes the fours worth looking at at all.
+ * A tier is about one rating and nothing else: the five-star tier ranks by how
+ * many five-star videos someone has, and a four-star video of theirs neither
+ * places them nor breaks their ties. Ties go to whoever has more of that rating
+ * — which is the count itself — and then alphabetically, rather than to
+ * whichever of them happens to have more of some other rating.
+ *
+ * Anyone already placed in a higher tier is left out of the lower ones:
+ * appearing in the fives and again in the threes would say nothing, since
+ * almost everyone with a five also has a three. So a tier reads as "best of
+ * what is left", which is what makes the fours worth looking at at all.
  *
  * A consequence worth knowing: someone with one five and thirty fours lands in
  * the fives, on that single video, and is then absent from the fours where they
- * would otherwise have led. The tie-break softens it — equal counts are ordered
- * by how much else of theirs is well rated — but the rule is deliberate.
+ * would have led.
  */
 function topModelsByStar(limit = 10) {
   const all = modelTally();
   const taken = new Set();
   const tiers = [];
 
-  // Only the ratings that recommend someone, so a pile of two-star videos
-  // neither places a performer nor lifts them past a tie.
-  const good = (entry) => GOOD_STARS.reduce((sum, star) => sum + entry.counts[star], 0);
-
   for (const star of GOOD_STARS) {
     const ranked = all
       .filter((e) => e.counts[star] > 0 && !taken.has(e.name.toLowerCase()))
-      .sort((a, b) => b.counts[star] - a.counts[star]
-        || good(b) - good(a)
-        || b.videos - a.videos
-        || a.name.localeCompare(b.name))
+      .sort((a, b) => b.counts[star] - a.counts[star] || a.name.localeCompare(b.name))
       .slice(0, limit);
 
     for (const entry of ranked) taken.add(entry.name.toLowerCase());

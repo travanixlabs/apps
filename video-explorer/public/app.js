@@ -916,18 +916,15 @@ async function openFavourites() {
       name.textContent = entry.name;
       line.appendChild(name);
 
-      // The whole distribution, not just the count that placed them: it shows
-      // why this one outranks the next, and why they are in this tier at all.
+      // Just this tier's count. The other ratings were shown here once, but a
+      // tier that ranks on one rating and then lists three reads as though all
+      // three counted.
       const stars = document.createElement('span');
       stars.className = 'fav-stars';
-      for (let star = 5; star >= 3; star -= 1) {
-        const n = entry.counts[star];
-        if (!n) continue;
-        const bit = document.createElement('span');
-        bit.className = 'fav-bucket' + (star === tier.star ? ' fav-bucket-why' : '');
-        bit.textContent = `${n}×${'★'.repeat(star)}`;
-        stars.appendChild(bit);
-      }
+      const bit = document.createElement('span');
+      bit.className = 'fav-bucket fav-bucket-why';
+      bit.textContent = `${entry.counts[tier.star]}×${'★'.repeat(tier.star)}`;
+      stars.appendChild(bit);
       line.appendChild(stars);
 
       const total = document.createElement('span');
@@ -935,7 +932,8 @@ async function openFavourites() {
       total.textContent = `${entry.videos} video${entry.videos === 1 ? '' : 's'}`;
       line.appendChild(total);
 
-      // Their best five, best first — however many that turns out to be.
+      // Five of the videos that placed them, biggest first — or all of them,
+      // where they have fewer than five at this rating.
       const shots = entry.top || [];
       if (shots.length) {
         const strip = document.createElement('div');

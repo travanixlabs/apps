@@ -701,6 +701,10 @@ async function listSubfolders(dir, videos) {
  * done per request rather than cached into something that can go stale.
  */
 async function attachTopVideos(tiers, count) {
+  // Each tier illustrates its own rating: the five-star row shows five-star
+  // videos, so a performer placed there on three of them shows those three
+  // rather than filling the gap with their fours.
+  const perStar = new Map();
   const root = config.homeDir || (config.roots || [])[0] || '';
   const wanted = new Map();
   for (const tier of tiers) {
@@ -718,13 +722,17 @@ async function attachTopVideos(tiers, count) {
   for (const video of videos) {
     const record = library.get(video);
     if (!record) continue;
+    const rating = record.rating || 0;
+    if (!rating) continue; // an unrated video belongs to no tier
     for (const name of record.models || []) {
-      const bucket = wanted.get(String(name).toLowerCase());
-      if (!bucket) continue;
-      bucket.push({
+      const key = String(name).toLowerCase();
+      if (!wanted.has(key)) continue;
+      const slot = `${key}|${rating}`;
+      if (!perStar.has(slot)) perStar.set(slot, []);
+      perStar.get(slot).push({
         path: video.path,
         name: path.basename(video.path),
-        rating: record.rating || 0,
+        rating,
         size: video.size,
         cloudOnly: video.cloudOnly,
       });
@@ -733,11 +741,9 @@ async function attachTopVideos(tiers, count) {
 
   for (const tier of tiers) {
     for (const model of tier.models) {
-      const bucket = wanted.get(model.name.toLowerCase()) || [];
-      // Best first, and the bigger copy first where two are rated the same —
-      // which is usually the better rip of the same video.
-      bucket.sort((a, b) => b.rating - a.rating || b.size - a.size
-        || a.name.localeCompare(b.name));
+      const bucket = perStar.get(`${model.name.toLowerCase()}|${tier.star}`) || [];
+      // All the same rating, so the bigger copy leads — usually the better rip.
+      bucket.sort((a, b) => b.size - a.size || a.name.localeCompare(b.name));
       // `top`, not `videos`: that one already holds how many they have in all.
       model.top = bucket.slice(0, count);
     }
