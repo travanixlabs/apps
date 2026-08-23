@@ -235,12 +235,13 @@ function studioCounts() {
 /**
  * What a rating is worth to a performer's standing.
  *
- * A five is worth ten fours, and a three is worth nothing at all: this ranks who
- * is worth watching, and a video you rated three is one you sat through, not one
- * you would choose again. Two and one are a verdict against, so they score the
- * same as never having rated it.
+ * A five is worth ten fours and a four ten threes, so each step up the scale is
+ * an order of magnitude: no pile of threes adds up to one good video, but a
+ * three still counts for something, which separates someone with a body of
+ * watchable work from someone with none. Two and one are a verdict against, so
+ * they score the same as never having rated it.
  */
-const STAR_POINTS = [0, 0, 0, 0, 100, 1000];
+const STAR_POINTS = [0, 0, 0, 10, 100, 1000];
 
 /**
  * The twenty performers with the best-rated work, by points.
@@ -248,7 +249,7 @@ const STAR_POINTS = [0, 0, 0, 0, 100, 1000];
  * One list rather than a tier per rating: tiers meant someone with a single five
  * outranked someone with fourteen fours, and barred them from the tier where
  * that would have shown. Points say the same thing without the cliff — ten fours
- * are worth one five, and nothing else counts.
+ * are worth one five, ten threes one four.
  *
  * Ties go to whoever has more well-rated videos (ten fours over one five, which
  * score alike), and then alphabetically.

@@ -927,8 +927,8 @@ async function openFavourites() {
   }
 
   $('#favHint').textContent = models.length
-    ? 'A five-star video is worth a thousand points, a four-star a hundred, everything else nothing. Pick a name to list their videos, or a still to play it.'
-    : 'Nothing to rank yet — rate a few videos four or five stars and name who is in them.';
+    ? 'A five-star video is worth a thousand points, a four-star a hundred, a three-star ten, everything else nothing. Pick a name to list their videos, or a still to play it.'
+    : 'Nothing to rank yet — rate a few videos three stars or better and name who is in them.';
 
   list.innerHTML = '';
   for (const [index, entry] of models.entries()) {
@@ -958,7 +958,7 @@ async function openFavourites() {
 
     const stars = document.createElement('span');
     stars.className = 'fav-stars';
-    for (const star of [5, 4]) {
+    for (const star of [5, 4, 3]) {
       const n = entry.counts[star];
       if (!n) continue;
       const bit = document.createElement('span');

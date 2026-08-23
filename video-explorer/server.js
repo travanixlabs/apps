@@ -701,8 +701,8 @@ async function listSubfolders(dir, videos) {
  * done per request rather than cached into something that can go stale.
  */
 async function attachTopVideos(models) {
-  // Every five- and four-star video, since those are the ones that earned the
-  // place — uncapped, because "she has thirty" is the point being made.
+  // Every video that scored: five, four and three star — uncapped, because "she
+  // has thirty" is the point being made.
   const perModel = new Map();
   const root = config.homeDir || (config.roots || [])[0] || '';
   const wanted = new Set(models.map((model) => model.name.toLowerCase()));
@@ -719,7 +719,7 @@ async function attachTopVideos(models) {
     const record = library.get(video);
     if (!record) continue;
     const rating = record.rating || 0;
-    if (rating !== 5 && rating !== 4) continue; // nothing else earned a place
+    if (rating < 3) continue; // a two or a one earned no points, so no still
     for (const name of record.models || []) {
       const key = String(name).toLowerCase();
       if (!wanted.has(key)) continue;
@@ -736,7 +736,7 @@ async function attachTopVideos(models) {
 
   for (const model of models) {
     const bucket = perModel.get(model.name.toLowerCase()) || [];
-    // Fives before fours, and the bigger copy first within a rating — usually
+    // Best rating first, and the bigger copy first within a rating — usually
     // the better rip of the same video.
     bucket.sort((a, b) => b.rating - a.rating || b.size - a.size
       || a.name.localeCompare(b.name));
