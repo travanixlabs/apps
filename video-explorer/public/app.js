@@ -945,13 +945,20 @@ async function openFavourites() {
           shot.className = 'fav-shot';
           shot.dataset.path = video.path;
           shot.title = `${video.name}\n${video.rating ? '★'.repeat(video.rating) : 'unrated'}`
-            + ` · ${fmtBytes(video.size)}${video.cloudOnly ? ' · not downloaded' : ''}`;
+            + ` · ${fmtBytes(video.size)}${video.cloudOnly ? ' · not downloaded' : ''}`
+            + '\nClick to play it';
           if (video.rating) {
             const badge = document.createElement('span');
             badge.className = 'fav-shot-rating';
             badge.textContent = video.rating;
             shot.appendChild(badge);
           }
+          // Its own handler, so a still opens that video while the rest of the
+          // row still means "everything by this performer".
+          shot.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            showModelVideo(entry.name, video.path);
+          });
           favObserver.observe(shot);
           strip.appendChild(shot);
         }
@@ -971,6 +978,23 @@ async function openFavourites() {
  * performer's videos are spread across studio folders, so the answer to "show
  * me theirs" is never inside the folder you happen to be standing in.
  */
+/**
+ * A still is a video, so clicking one opens it.
+ *
+ * The listing is narrowed to its performer first, and only then does the player
+ * open — so the arrows in it walk that performer's videos rather than whatever
+ * folder happened to be on screen when the overlay was opened.
+ */
+async function showModelVideo(name, videoPath) {
+  await showModel(name);
+  const file = state.files.find((f) => f.path === videoPath);
+  if (!file) {
+    toast('That video is not where the ranking said it was', 'err');
+    return;
+  }
+  playFile(file);
+}
+
 async function showModel(name) {
   $('#favModal').hidden = true;
 

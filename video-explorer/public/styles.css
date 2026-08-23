@@ -904,6 +904,9 @@ main { padding: 16px; }
   border: 1px solid var(--border);
 }
 .fav-shot.has-shot { border-color: transparent; }
+/* A still opens that one video, where the rest of the row opens the performer,
+   so it answers the pointer on its own. */
+.fav-shot:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
 .fav-shot-rating {
   position: absolute;
   right: 3px;
