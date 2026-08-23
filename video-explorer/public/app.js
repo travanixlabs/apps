@@ -875,50 +875,64 @@ async function openFavourites() {
   list.innerHTML = '<li class="fav-loading">Counting…</li>';
   $('#favModal').hidden = false;
 
-  let models = [];
+  let tiers = [];
   try {
-    models = (await api('/api/top-models?limit=10')).models || [];
+    tiers = (await api('/api/top-models?limit=10')).tiers || [];
   } catch (err) {
     list.innerHTML = '';
     $('#favHint').textContent = err.message;
     return;
   }
 
-  $('#favHint').textContent = models.length
-    ? 'Ranked by how many five-star videos each one has, then four, and so on. Pick one to list their videos, best first.'
+  const anyone = tiers.some((t) => t.models.length);
+  $('#favHint').textContent = anyone
+    ? 'A top ten per rating, and nobody twice — once someone places in the fives they are out of the fours. Pick one to list their videos, best first.'
     : 'Nothing to rank yet — rate a few videos that have a performer named on them.';
 
   list.innerHTML = '';
-  for (const entry of models) {
-    const row = document.createElement('li');
-    row.className = 'fav-row';
+  for (const tier of tiers) {
+    if (!tier.models.length) continue;
 
-    const name = document.createElement('span');
-    name.className = 'fav-name';
-    name.textContent = entry.name;
-    row.appendChild(name);
+    const head = document.createElement('li');
+    head.className = 'fav-head';
+    head.innerHTML = `<span class="fav-head-stars">${'★'.repeat(tier.star)}</span>`
+      + `<span class="fav-head-note">top ${tier.models.length}`
+      + `${tier.star < 5 ? ', of whoever is left' : ''}</span>`;
+    list.appendChild(head);
 
-    // The whole distribution, not just the headline count: it shows why this
-    // one outranks the next, which a single number cannot.
-    const stars = document.createElement('span');
-    stars.className = 'fav-stars';
-    for (let star = 5; star >= 1; star -= 1) {
-      const n = entry.counts[star];
-      if (!n) continue;
-      const bit = document.createElement('span');
-      bit.className = 'fav-bucket';
-      bit.textContent = `${n}×${'★'.repeat(star)}`;
-      stars.appendChild(bit);
+    for (const entry of tier.models) {
+      const row = document.createElement('li');
+      row.className = 'fav-row';
+      // Ranks restart inside each tier, so the counter does too.
+      row.style.counterIncrement = 'fav';
+
+      const name = document.createElement('span');
+      name.className = 'fav-name';
+      name.textContent = entry.name;
+      row.appendChild(name);
+
+      // The whole distribution, not just the count that placed them: it shows
+      // why this one outranks the next, and why they are in this tier at all.
+      const stars = document.createElement('span');
+      stars.className = 'fav-stars';
+      for (let star = 5; star >= 1; star -= 1) {
+        const n = entry.counts[star];
+        if (!n) continue;
+        const bit = document.createElement('span');
+        bit.className = 'fav-bucket' + (star === tier.star ? ' fav-bucket-why' : '');
+        bit.textContent = `${n}×${'★'.repeat(star)}`;
+        stars.appendChild(bit);
+      }
+      row.appendChild(stars);
+
+      const total = document.createElement('span');
+      total.className = 'fav-total';
+      total.textContent = `${entry.videos} video${entry.videos === 1 ? '' : 's'}`;
+      row.appendChild(total);
+
+      row.addEventListener('click', () => showModel(entry.name));
+      list.appendChild(row);
     }
-    row.appendChild(stars);
-
-    const total = document.createElement('span');
-    total.className = 'fav-total';
-    total.textContent = `${entry.videos} video${entry.videos === 1 ? '' : 's'}`;
-    row.appendChild(total);
-
-    row.addEventListener('click', () => showModel(entry.name));
-    list.appendChild(row);
   }
 }
 

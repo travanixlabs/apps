@@ -1147,7 +1147,7 @@ const server = http.createServer(async (req, res) => {
     // than from whatever is on screen.
     if (route === '/api/top-models' && req.method === 'GET') {
       const limit = Math.max(1, Math.min(50, Number(url.searchParams.get('limit')) || 10));
-      return sendJson(res, 200, { models: library.topModels(limit) });
+      return sendJson(res, 200, { tiers: library.topModelsByStar(limit) });
     }
 
     if (route === '/api/library') {

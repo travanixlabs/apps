@@ -232,7 +232,7 @@ function studioCounts() {
  * Read from the sidecar rather than a listing, so it describes the whole
  * library however the app is currently filtered.
  */
-function topModels(limit = 10) {
+function modelTally() {
   const found = new Map();
   for (const record of Object.values(data.records)) {
     for (const raw of record.models || []) {
@@ -250,16 +250,43 @@ function topModels(limit = 10) {
       if (rating) entry.rated += 1;
     }
   }
+  return [...found.values()];
+}
 
-  const ranked = [...found.values()].sort((a, b) => {
-    for (let star = 5; star >= 1; star -= 1) {
-      if (b.counts[star] !== a.counts[star]) return b.counts[star] - a.counts[star];
-    }
-    // Nothing rated on either side: whoever you have more of, then by name.
-    return b.videos - a.videos || a.name.localeCompare(b.name);
-  });
+/**
+ * A top ten per star rating, five down to one, and nobody twice.
+ *
+ * Each tier ranks by how many videos of exactly that rating a performer has, so
+ * the five-star tier is the ten people with the most five-star videos. Anyone
+ * already placed in a higher tier is left out of the lower ones: appearing in
+ * the fives and again in the threes would say nothing, since almost everyone
+ * with a five also has a three. So a tier reads as "best of what is left",
+ * which is what makes the fours worth looking at at all.
+ *
+ * A consequence worth knowing: someone with one five and thirty fours lands in
+ * the fives, on that single video, and is then absent from the fours where they
+ * would otherwise have led. The tie-break softens it — within a tier, equal
+ * counts are ordered by how much else is rated — but the rule is deliberate.
+ */
+function topModelsByStar(limit = 10) {
+  const all = modelTally();
+  const taken = new Set();
+  const tiers = [];
 
-  return ranked.filter((e) => e.rated > 0).slice(0, limit);
+  for (let star = 5; star >= 1; star -= 1) {
+    const ranked = all
+      .filter((e) => e.counts[star] > 0 && !taken.has(e.name.toLowerCase()))
+      .sort((a, b) => b.counts[star] - a.counts[star]
+        || b.rated - a.rated
+        || b.videos - a.videos
+        || a.name.localeCompare(b.name))
+      .slice(0, limit);
+
+    for (const entry of ranked) taken.add(entry.name.toLowerCase());
+    tiers.push({ star, models: ranked });
+  }
+
+  return tiers;
 }
 
 function stats() {
@@ -277,5 +304,5 @@ function stats() {
 
 module.exports = {
   init, keyFor, get, decorate, apply, rekey, flush,
-  counts, tagCounts, modelCounts, studioCounts, topModels, stats, normaliseTags,
+  counts, tagCounts, modelCounts, studioCounts, topModelsByStar, stats, normaliseTags,
 };
