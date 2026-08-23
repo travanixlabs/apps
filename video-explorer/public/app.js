@@ -886,7 +886,7 @@ async function openFavourites() {
 
   const anyone = tiers.some((t) => t.models.length);
   $('#favHint').textContent = anyone
-    ? 'A top ten per rating, and nobody twice — once someone places in the fives they are out of the fours. Pick one to list their videos, best first.'
+    ? 'A top ten for five, four and three stars, and nobody twice — once someone places in the fives they are out of the fours. Pick one to list their videos, best first.'
     : 'Nothing to rank yet — rate a few videos that have a performer named on them.';
 
   list.innerHTML = '';
@@ -915,7 +915,7 @@ async function openFavourites() {
       // why this one outranks the next, and why they are in this tier at all.
       const stars = document.createElement('span');
       stars.className = 'fav-stars';
-      for (let star = 5; star >= 1; star -= 1) {
+      for (let star = 5; star >= 3; star -= 1) {
         const n = entry.counts[star];
         if (!n) continue;
         const bit = document.createElement('span');

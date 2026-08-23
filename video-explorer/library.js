@@ -254,7 +254,14 @@ function modelTally() {
 }
 
 /**
- * A top ten per star rating, five down to one, and nobody twice.
+ * Which ratings count as a recommendation. Two and one stars are a verdict
+ * against a video, so they say nothing about who is worth watching: they earn
+ * nobody a place and they break no ties.
+ */
+const GOOD_STARS = [5, 4, 3];
+
+/**
+ * A top ten per star rating, five down to three, and nobody twice.
  *
  * Each tier ranks by how many videos of exactly that rating a performer has, so
  * the five-star tier is the ten people with the most five-star videos. Anyone
@@ -265,19 +272,23 @@ function modelTally() {
  *
  * A consequence worth knowing: someone with one five and thirty fours lands in
  * the fives, on that single video, and is then absent from the fours where they
- * would otherwise have led. The tie-break softens it — within a tier, equal
- * counts are ordered by how much else is rated — but the rule is deliberate.
+ * would otherwise have led. The tie-break softens it — equal counts are ordered
+ * by how much else of theirs is well rated — but the rule is deliberate.
  */
 function topModelsByStar(limit = 10) {
   const all = modelTally();
   const taken = new Set();
   const tiers = [];
 
-  for (let star = 5; star >= 1; star -= 1) {
+  // Only the ratings that recommend someone, so a pile of two-star videos
+  // neither places a performer nor lifts them past a tie.
+  const good = (entry) => GOOD_STARS.reduce((sum, star) => sum + entry.counts[star], 0);
+
+  for (const star of GOOD_STARS) {
     const ranked = all
       .filter((e) => e.counts[star] > 0 && !taken.has(e.name.toLowerCase()))
       .sort((a, b) => b.counts[star] - a.counts[star]
-        || b.rated - a.rated
+        || good(b) - good(a)
         || b.videos - a.videos
         || a.name.localeCompare(b.name))
       .slice(0, limit);
