@@ -221,6 +221,47 @@ function studioCounts() {
   return [...found.values()].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
 }
 
+/**
+ * The performers with the most well-rated videos, best first.
+ *
+ * Ranked by the count of five-star videos, then four, and so on down: a
+ * performer with twelve fives outranks one with forty threes, which is what
+ * "top" means here. A plain average would put someone with a single five above
+ * them both, and a plain total would rank by how much you happen to own.
+ *
+ * Read from the sidecar rather than a listing, so it describes the whole
+ * library however the app is currently filtered.
+ */
+function topModels(limit = 10) {
+  const found = new Map();
+  for (const record of Object.values(data.records)) {
+    for (const raw of record.models || []) {
+      const name = String(raw).trim();
+      if (!name) continue;
+      const lower = name.toLowerCase();
+      let entry = found.get(lower);
+      if (!entry) {
+        entry = { name, counts: [0, 0, 0, 0, 0, 0], videos: 0, rated: 0 };
+        found.set(lower, entry);
+      }
+      const rating = Math.max(0, Math.min(5, Math.round(Number(record.rating) || 0)));
+      entry.counts[rating] += 1;
+      entry.videos += 1;
+      if (rating) entry.rated += 1;
+    }
+  }
+
+  const ranked = [...found.values()].sort((a, b) => {
+    for (let star = 5; star >= 1; star -= 1) {
+      if (b.counts[star] !== a.counts[star]) return b.counts[star] - a.counts[star];
+    }
+    // Nothing rated on either side: whoever you have more of, then by name.
+    return b.videos - a.videos || a.name.localeCompare(b.name);
+  });
+
+  return ranked.filter((e) => e.rated > 0).slice(0, limit);
+}
+
 function stats() {
   const records = Object.values(data.records);
   return {
@@ -236,5 +277,5 @@ function stats() {
 
 module.exports = {
   init, keyFor, get, decorate, apply, rekey, flush,
-  counts, tagCounts, modelCounts, studioCounts, stats, normaliseTags,
+  counts, tagCounts, modelCounts, studioCounts, topModels, stats, normaliseTags,
 };

@@ -1143,6 +1143,13 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { meta });
     }
 
+    // The favourites overlay: whole-library, so it comes from the sidecar rather
+    // than from whatever is on screen.
+    if (route === '/api/top-models' && req.method === 'GET') {
+      const limit = Math.max(1, Math.min(50, Number(url.searchParams.get('limit')) || 10));
+      return sendJson(res, 200, { models: library.topModels(limit) });
+    }
+
     if (route === '/api/library') {
       if (req.method === 'GET') {
         return sendJson(res, 200, {

@@ -80,6 +80,13 @@
       </div>
     </div>
 
+    <button id="favBtn" class="btn btn-icon" title="Favourites — your best-rated performers">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+        <path d="M8 1.6l1.95 3.95 4.35.63-3.15 3.07.75 4.33L8 11.53l-3.9 2.05.75-4.33L1.7 6.18l4.35-.63z"
+              fill="currentColor"/>
+      </svg>
+    </button>
+
     <button id="settingsBtn" class="btn btn-icon" title="Settings">⚙</button>
   </div>
 
@@ -141,6 +148,20 @@
     <div id="grid" class="grid"></div>
   </section>
 </main>
+
+<!-- Favourites: the best-rated performers in the whole library -->
+<div id="favModal" class="modal" hidden>
+  <div class="modal-card">
+    <header class="modal-head">
+      <h2>Top performers</h2>
+      <button class="btn btn-icon modal-close">✕</button>
+    </header>
+    <div class="fav-body">
+      <p class="hint" id="favHint">Ranked by how many five-star videos each one has, then four, and so on.</p>
+      <ol id="favList" class="fav-list"></ol>
+    </div>
+  </div>
+</div>
 
 <!-- Folder picker -->
 <div id="pickerModal" class="modal" hidden>

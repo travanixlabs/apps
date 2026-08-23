@@ -863,6 +863,94 @@ function updateAdvMatch() {
   el.textContent = bits.join(' · ');
 }
 
+/**
+ * The best-rated performers, and one click to go and watch them.
+ *
+ * The ranking comes from the server because it is a fact about the library
+ * rather than about the listing: computing it from state.files would rank only
+ * what the current folder and filter happen to show.
+ */
+async function openFavourites() {
+  const list = $('#favList');
+  list.innerHTML = '<li class="fav-loading">Counting…</li>';
+  $('#favModal').hidden = false;
+
+  let models = [];
+  try {
+    models = (await api('/api/top-models?limit=10')).models || [];
+  } catch (err) {
+    list.innerHTML = '';
+    $('#favHint').textContent = err.message;
+    return;
+  }
+
+  $('#favHint').textContent = models.length
+    ? 'Ranked by how many five-star videos each one has, then four, and so on. Pick one to list their videos, best first.'
+    : 'Nothing to rank yet — rate a few videos that have a performer named on them.';
+
+  list.innerHTML = '';
+  for (const entry of models) {
+    const row = document.createElement('li');
+    row.className = 'fav-row';
+
+    const name = document.createElement('span');
+    name.className = 'fav-name';
+    name.textContent = entry.name;
+    row.appendChild(name);
+
+    // The whole distribution, not just the headline count: it shows why this
+    // one outranks the next, which a single number cannot.
+    const stars = document.createElement('span');
+    stars.className = 'fav-stars';
+    for (let star = 5; star >= 1; star -= 1) {
+      const n = entry.counts[star];
+      if (!n) continue;
+      const bit = document.createElement('span');
+      bit.className = 'fav-bucket';
+      bit.textContent = `${n}×${'★'.repeat(star)}`;
+      stars.appendChild(bit);
+    }
+    row.appendChild(stars);
+
+    const total = document.createElement('span');
+    total.className = 'fav-total';
+    total.textContent = `${entry.videos} video${entry.videos === 1 ? '' : 's'}`;
+    row.appendChild(total);
+
+    row.addEventListener('click', () => showModel(entry.name));
+    list.appendChild(row);
+  }
+}
+
+/**
+ * Everything by one performer, best first, from the top of the library down.
+ *
+ * Deliberately jumps to the sync root with the subfolders flattened: a
+ * performer's videos are spread across studio folders, so the answer to "show
+ * me theirs" is never inside the folder you happen to be standing in.
+ */
+async function showModel(name) {
+  $('#favModal').hidden = true;
+
+  const adv = newAdvFilter();
+  adv.models.set(name, 'in');
+  state.adv = adv;
+  advDraft = newAdvFilter();
+  syncAdvBadge();
+  $('#searchInput').value = '';
+
+  // Best first, since that is the whole point of arriving from a ranking.
+  $('#sortSelect').value = 'rating';
+  await saveConfig({ sort: 'rating', sortDir: 'desc' });
+  syncSortButton();
+
+  const root = state.config.homeDir || 'C:\\Users\\User\\OneDrive';
+  $('#recursiveToggle').checked = true;
+  $('#dirInput').value = root;
+  await scan(root);
+  toast(`${state.view.length.toLocaleString()} by ${name}, best first`, 'ok');
+}
+
 function chipToggle(label, on, onClick) {
   const chip = document.createElement('button');
   chip.type = 'button';
@@ -2895,6 +2983,8 @@ function wireEvents() {
   }
 
   // settings
+  $('#favBtn').addEventListener('click', openFavourites);
+
   $('#settingsBtn').addEventListener('click', () => {
     $('#setPreviewMode').value = state.config.previewMode === 'sprite' ? 'sprite' : 'live';
     $('#setPageSize').value = state.config.pageSize || 24;
