@@ -565,6 +565,22 @@ function applyFilterSort() {
       // should read A→Z whichever way the ratings are pointing. Multiplying it
       // by dir would put the unrated bulk in reverse alphabetical order.
       if (cmp === 0) return a.name.localeCompare(b.name, undefined, { numeric: true });
+    } else if (LABEL_SORTS[key]) {
+      // Sorting by a label sorts by its first value: a video has one studio but
+      // any number of performers, and "her name comes first alphabetically" is
+      // the only ordering a list of them has.
+      //
+      // Unlabelled goes last whichever way the arrow points, like the unrated
+      // do — reversing brings the labelled tail to the top, which is the half
+      // you asked to see, not a wall of blanks. Names break the ties unflipped,
+      // for the same reason as the ratings.
+      const av = LABEL_SORTS[key](a);
+      const bv = LABEL_SORTS[key](b);
+      if (!av && !bv) return a.name.localeCompare(b.name, undefined, { numeric: true });
+      if (!av) return 1;
+      if (!bv) return -1;
+      cmp = av.localeCompare(bv, undefined, { numeric: true, sensitivity: 'base' });
+      if (cmp === 0) return a.name.localeCompare(b.name, undefined, { numeric: true });
     } else {
       cmp = (Number(a[key]) || 0) - (Number(b[key]) || 0);
     }
@@ -576,12 +592,38 @@ function applyFilterSort() {
 
 // -------------------------------------------------------------------- sort
 
+/** Which label a sort key reads, and what it reads out of it. */
+const LABEL_SORTS = {
+  studio: (f) => (f.studio || '').trim(),
+  models: (f) => firstAlphabetically(f.models),
+  tags: (f) => firstAlphabetically(f.tags),
+};
+
+/**
+ * The name a list sorts under: the alphabetically first, taken by comparing
+ * rather than by reading element zero. The library does store these sorted, so
+ * the two agree today — but a record written by hand, or by an older version,
+ * would otherwise sort under whatever happened to be typed first.
+ */
+function firstAlphabetically(values) {
+  let best = '';
+  for (const raw of values || []) {
+    const value = String(raw).trim();
+    if (!value) continue;
+    if (!best || value.localeCompare(best, undefined, { sensitivity: 'base' }) < 0) best = value;
+  }
+  return best;
+}
+
 const SORT_FIELDS = [
   { value: 'name', label: 'Name' },
   { value: 'mtimeMs', label: 'Date modified' },
   { value: 'size', label: 'File size' },
   { value: 'duration', label: 'Duration' },
   { value: 'rating', label: 'Rating' },
+  { value: 'studio', label: 'Studio' },
+  { value: 'models', label: 'Model' },
+  { value: 'tags', label: 'Tag' },
   { value: 'relFolder', label: 'Folder' },
 ];
 
