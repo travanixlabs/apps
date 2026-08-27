@@ -80,6 +80,9 @@ function decorate(stat) {
     // Where this video came from, when that is known: a page about it rather
     // than a copy of it.
     url: record.url || '',
+    // When the labels last changed. Travels with the listing so "date modified"
+    // can mean the video *or* what is known about it, whichever happened later.
+    updated: record.updated || 0,
   };
 }
 
@@ -172,6 +175,7 @@ function apply(stat, name, patch) {
     models: next.models || [],
     studio: next.studio || '',
     url: next.url || '',
+    updated: next.updated,
   };
 }
 

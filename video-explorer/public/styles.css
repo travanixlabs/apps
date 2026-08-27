@@ -680,6 +680,14 @@ main { padding: 16px; }
 }
 /* The date and folder give way first; the link is short and fixed. */
 .folder-where { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* A date that comes from a label edit rather than the file, dotted to say the
+   tooltip has the other one. */
+.when-labelled {
+  text-decoration: underline dotted var(--border-strong);
+  text-underline-offset: 2px;
+  cursor: help;
+}
 .source-link {
   flex: none;
   margin-left: auto;

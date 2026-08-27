@@ -559,6 +559,9 @@ function applyFilterSort() {
       const av = Number((state.meta.get(a.path) || {}).duration) || 0;
       const bv = Number((state.meta.get(b.path) || {}).duration) || 0;
       cmp = av - bv;
+    } else if (key === 'mtimeMs') {
+      cmp = touchedAt(a) - touchedAt(b);
+      if (cmp === 0) return a.name.localeCompare(b.name, undefined, { numeric: true });
     } else if (key === 'rating') {
       cmp = (Number(a.rating) || 0) - (Number(b.rating) || 0);
       // The name tiebreak is returned unflipped: within one rating band, names
@@ -591,6 +594,19 @@ function applyFilterSort() {
 }
 
 // -------------------------------------------------------------------- sort
+
+/**
+ * When this video was last touched — the file itself, or what is known about it,
+ * whichever came later.
+ *
+ * Tagging a video does not change the file, so a listing sorted by date left
+ * the work you had just done wherever the file happened to sit. What the date is
+ * being asked for is "what have I dealt with lately", and rating or naming
+ * someone is dealing with it.
+ */
+function touchedAt(file) {
+  return Math.max(Number(file.mtimeMs) || 0, Number(file.updated) || 0);
+}
 
 /** Which label a sort key reads, and what it reads out of it. */
 const LABEL_SORTS = {
@@ -1335,6 +1351,7 @@ async function editRecords(paths, patch) {
       file.models = record.models;
       file.studio = record.studio;
       file.url = record.url;
+      file.updated = record.updated || 0;
       refreshCardRecord(file);
     }
     pruneFiltered(Object.keys(data.records || {}));
@@ -2748,7 +2765,19 @@ function buildFolderLine(file) {
   const where = document.createElement('span');
   where.className = 'folder-where';
   where.title = file.folder;
-  where.appendChild(document.createTextNode(`${fmtDate(file.mtimeMs)}  •  `));
+
+  // The same date the sort uses, or a list ordered by date would look wrong on
+  // screen. Where the two differ, the tooltip gives both — the file's own date
+  // is a fact about the file and worth not hiding.
+  const when = document.createElement('span');
+  when.textContent = fmtDate(touchedAt(file));
+  const edited = (Number(file.updated) || 0) > (Number(file.mtimeMs) || 0);
+  when.title = edited
+    ? `Labelled ${fmtDate(file.updated)} · file modified ${fmtDate(file.mtimeMs)}`
+    : `File modified ${fmtDate(file.mtimeMs)}`;
+  if (edited) when.className = 'when-labelled';
+  where.appendChild(when);
+  where.appendChild(document.createTextNode('  •  '));
 
   // The folder is a way of getting there, not merely a note of where this came
   // from — most useful with the subfolders flattened, where the listing is the
