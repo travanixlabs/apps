@@ -3457,6 +3457,17 @@ function modalOpen() {
     || !$('#settingsModal').hidden || !$('#tagModal').hidden || !$('#advModal').hidden;
 }
 
+/**
+ * The player is the frontmost thing, so a shortcut aimed at the open video is
+ * safe to fire. A dialog opened over the top of it — tags, filters, the folder
+ * picker — owns the keyboard instead, and one of those is where a bare digit
+ * most likely belongs to something being typed.
+ */
+function playerHasKeys() {
+  return !$('#playerModal').hidden && $('#pickerModal').hidden
+    && $('#settingsModal').hidden && $('#tagModal').hidden && $('#advModal').hidden;
+}
+
 function onKeyDown(ev) {
   // Escape always unwinds one layer: topmost modal first, then the selection.
   if (ev.key === 'Escape') {
@@ -3504,6 +3515,17 @@ function onKeyDown(ev) {
       playSibling(ev.key === 'ArrowLeft' ? -1 : 1);
       return;
     }
+  }
+
+  // A digit rates the open video, the way it rates the selection in the grid.
+  // Deliberately the open video and not the selection: what is selected behind
+  // the player is not what you are looking at, and rating one as you finish
+  // watching it is the whole reason the shortcut is wanted here.
+  if (playerHasKeys() && !isTyping() && !ev.ctrlKey && !ev.metaKey && !ev.altKey
+      && ev.key >= '0' && ev.key <= '5') {
+    ev.preventDefault();
+    if (state.playing) editRecords([state.playing.path], { rating: Number(ev.key) });
+    return;
   }
 
   if (isTyping() || modalOpen()) return;
