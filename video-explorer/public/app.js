@@ -646,6 +646,17 @@ function applyFilterSort() {
 }
 
 /**
+ * What a rating is worth to a performer's standing — the Top performers weights,
+ * client side. A five is worth ten fours and a four ten threes, so no pile of
+ * watchable videos outranks one good one.
+ *
+ * Scored from the listing rather than from the whole library on purpose: this is
+ * a view of what is in front of you, so filtering to one studio should reorder
+ * the sections by who is best *in that studio*.
+ */
+const STAR_POINTS = [0, 0, 0, 10, 100, 1000];
+
+/**
  * The current listing, split into one section per performer.
  *
  * A video with three performers belongs to three sections, so the same card is
@@ -664,21 +675,30 @@ function buildModelGroups(list) {
   for (const file of list) {
     const names = (file.models || []).map((n) => String(n).trim()).filter(Boolean);
     if (!names.length) { unnamed.push(file); continue; }
+    const rating = Math.max(0, Math.min(5, Math.round(Number(file.rating) || 0)));
     for (const name of names) {
       const key = name.toLowerCase();
       let group = groups.get(key);
       if (!group) {
-        group = { key, name, files: [] };
+        group = { key, name, files: [], points: 0, good: 0 };
         groups.set(key, group);
       }
       group.files.push(file);
+      group.points += STAR_POINTS[rating];
+      if (rating >= 4) group.good += 1;
     }
   }
 
   const out = [...groups.values()].sort((a, b) => {
     const fa = isFavouriteModel(a.name) ? 0 : 1;
     const fb = isFavouriteModel(b.name) ? 0 : 1;
+    // Marked first — that is what makes this a favourites view rather than a
+    // leaderboard — then Top performers order among the rest. Ties go to whoever
+    // has more well-rated videos, since ten fours and one five score alike, and
+    // a name settles the rest so the order never wobbles between renders.
     return fa - fb
+      || b.points - a.points
+      || b.good - a.good
       || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
   });
   if (unnamed.length) out.push({ key: '', name: '', files: unnamed, unnamed: true });
@@ -2723,6 +2743,15 @@ function buildGroupHead(group) {
   name.textContent = group.unnamed ? 'Nobody named' : group.name;
   head.appendChild(name);
 
+  if (!group.unnamed) {
+    const score = document.createElement('span');
+    score.className = 'group-score';
+    score.textContent = group.points.toLocaleString();
+    score.title = 'A five-star video is worth a thousand points, a four-star a hundred,'
+      + ' a three-star ten — counting only what is in this listing.';
+    head.appendChild(score);
+  }
+
   const count = document.createElement('span');
   count.className = 'group-count';
   count.textContent = `${group.files.length} video${group.files.length === 1 ? '' : 's'}`;
@@ -3318,8 +3347,8 @@ async function toggleGrouped() {
     const named = state.groups.filter((g) => !g.unnamed).length;
     const marked = state.groups.filter((g) => !g.unnamed && isFavouriteModel(g.name)).length;
     toast(named
-      ? `${named} performer${named === 1 ? '' : 's'} in this listing`
-        + (marked ? `, ${marked} marked` : '')
+      ? `${named} performer${named === 1 ? '' : 's'}, best rated first`
+        + (marked ? ` — ${marked} marked` : '')
       : 'Nobody named in this listing', 'ok');
   }
 }
