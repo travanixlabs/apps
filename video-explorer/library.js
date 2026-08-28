@@ -28,7 +28,7 @@ const os = require('os');
 // The studio is a single value, not a list: a video comes from one production
 // house. Kept out of tags for the same reason models are — one allowed answer is
 // a different shape of fact from "any number of these apply".
-const EMPTY = { rating: 0, tags: [], models: [], studio: '', url: '' };
+const EMPTY = { rating: 0, tags: [], models: [], studio: '', production: '', url: '' };
 
 const LIST_FIELDS = ['tags', 'models'];
 
@@ -80,6 +80,8 @@ function decorate(stat) {
     models: record.models || [],
     // The production house, one per video.
     studio: record.studio || '',
+    // The reference's letter code — the series within that house.
+    production: record.production || '',
     // Where this video came from, when that is known: a page about it rather
     // than a copy of it.
     url: record.url || '',
@@ -141,6 +143,13 @@ function apply(stat, name, patch) {
     next.studio = String(patch.studio || '').trim().replace(/\s+/g, ' ').slice(0, 80);
   }
 
+  if (patch.production !== undefined) {
+    // The reference's letter code — MD, RS, MCY. Upper-cased, since that is how
+    // the site writes it and a code that differs only in case is the same code.
+    next.production = String(patch.production || '')
+      .trim().replace(/\s+/g, ' ').slice(0, 24).toUpperCase();
+  }
+
   if (patch.url !== undefined) {
     const url = String(patch.url || '').trim();
     // Only http(s), and nothing with a scheme the shell would act on: this ends
@@ -164,7 +173,7 @@ function apply(stat, name, patch) {
 
   // An empty record is noise in a file that syncs; drop it instead.
   if (!next.rating && !(next.tags || []).length && !(next.models || []).length
-    && !next.studio && !next.url) {
+    && !next.studio && !next.production && !next.url) {
     delete data.records[key];
     save();
     return { ...EMPTY };
@@ -177,6 +186,7 @@ function apply(stat, name, patch) {
     tags: next.tags || [],
     models: next.models || [],
     studio: next.studio || '',
+    production: next.production || '',
     url: next.url || '',
     updated: next.updated,
   };
@@ -216,14 +226,23 @@ const modelCounts = () => counts('models');
 
 /** The studio vocabulary. A single value per record, so it counts itself. */
 function studioCounts() {
+  return singleCounts('studio');
+}
+
+function productionCounts() {
+  return singleCounts('production');
+}
+
+/** How often each value of a one-per-video field appears, commonest first. */
+function singleCounts(field) {
   const found = new Map();
   for (const record of Object.values(data.records)) {
-    const studio = (record.studio || '').trim();
-    if (!studio) continue;
-    const lower = studio.toLowerCase();
+    const value = (record[field] || '').trim();
+    if (!value) continue;
+    const lower = value.toLowerCase();
     const hit = found.get(lower);
     if (hit) hit.count += 1;
-    else found.set(lower, { tag: studio, count: 1 });
+    else found.set(lower, { tag: value, count: 1 });
   }
   return [...found.values()].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
 }
@@ -281,12 +300,13 @@ function stats() {
     linked: records.filter((r) => r.url).length,
     favourites: (data.favourites || []).length,
     studios: records.filter((r) => r.studio).length,
+    productions: records.filter((r) => r.production).length,
     named: records.filter((r) => (r.models || []).length).length,
   };
 }
 
 module.exports = {
   init, keyFor, get, decorate, apply, rekey, flush,
-  counts, tagCounts, modelCounts, studioCounts, stats, normaliseTags,
+  counts, tagCounts, modelCounts, studioCounts, productionCounts, stats, normaliseTags,
   favouriteModels, isFavouriteModel, setFavouriteModel,
 };

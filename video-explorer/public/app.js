@@ -44,6 +44,7 @@ const state = {
   tagVocab: [],        // [{ tag, count }] across the whole library
   modelVocab: [],      // the same, for performer names
   studioVocab: [],     // and for production houses, of which a video has one
+  productionVocab: [], // and for reference codes — MD, RS, MCY — likewise one
   tagTargets: [],      // files the open label dialog will edit
   adv: newAdvFilter(), // the advanced filter currently applied
 };
@@ -60,6 +61,8 @@ function newAdvFilter() {
     tags: new Map(),
     models: new Map(),
     studio: new Map(),
+    // The reference's letter code, one per video like the studio.
+    production: new Map(),
     // Per facet, because "all of these tags" and "any of these performers" is a
     // reasonable thing to ask for and one shared switch could not express it.
     // Exclusions are always all-of: "not this" means not this either way.
@@ -74,10 +77,10 @@ function newAdvFilter() {
   };
 }
 
-const FACETS = ['tags', 'models', 'studio', 'ratings'];
+const FACETS = ['tags', 'models', 'studio', 'production', 'ratings'];
 
 /** The label facets, in the order they appear on a card and in the dialog. */
-const LABEL_FACETS = ['studio', 'models', 'tags'];
+const LABEL_FACETS = ['studio', 'production', 'models', 'tags'];
 
 /** Which radio group drives which facet's all/any. Studio has none. */
 const MODE_INPUTS = [['tags', 'tagMode'], ['models', 'modelMode']];
@@ -513,8 +516,9 @@ function matchesAdvanced(file, adv) {
 
     const wanted = picked(adv[field], 'in').map((t) => t.toLowerCase());
     if (wanted.length) {
-      // A video holds one studio, so several of them can only mean "any".
-      const any = field === 'studio' || (adv.mode || {})[field] === 'any';
+      // A video holds one studio and one production code, so several of them
+      // can only mean "any".
+      const any = LABEL_FIELDS[field].single || (adv.mode || {})[field] === 'any';
       const hit = any ? wanted.some((t) => have.has(t)) : wanted.every((t) => have.has(t));
       if (!hit) return false;
     }
@@ -982,6 +986,7 @@ function openAdvanced() {
     tags: new Map(state.adv.tags),
     models: new Map(state.adv.models),
     studio: new Map(state.adv.studio),
+    production: new Map(state.adv.production),
     ratings: new Map(state.adv.ratings),
     mode: { ...state.adv.mode },
   };
@@ -1043,6 +1048,8 @@ function renderAdvanced() {
 
   for (const [field, el, empty, none] of [
     ['studio', '#advStudio', 'No studios yet — the import writes them.', 'no studio'],
+    ['production', '#advProduction', 'No production codes yet — the import writes them.',
+      'no production'],
     ['models', '#advModels', 'No models yet — name someone from a card first.', 'no models'],
     ['tags', '#advTags', 'No tags yet — add some from a card first.', 'no tags'],
   ]) {
@@ -1093,6 +1100,7 @@ function updateAdvMatch() {
     if (nothing === 'out') bits.push(`some ${many}`);
   };
   say('studio', 'studio', 'studios');
+  say('production', 'production code', 'production codes');
   say('models', 'model', 'models', ` (${advDraft.mode.models})`);
   say('tags', 'tag', 'tags', ` (${advDraft.mode.tags})`);
   say('ratings', 'rating');
@@ -1238,6 +1246,7 @@ async function editRecords(paths, patch) {
     state.tagVocab = data.tags || state.tagVocab;
     state.modelVocab = data.models || state.modelVocab;
     state.studioVocab = data.studios || state.studioVocab;
+    state.productionVocab = data.productions || state.productionVocab;
     for (const [filePath, record] of Object.entries(data.records || {})) {
       if (record.error) { toast(record.error, 'err'); continue; }
       const file = state.files.find((f) => f.path === filePath);
@@ -1246,6 +1255,7 @@ async function editRecords(paths, patch) {
       file.tags = record.tags;
       file.models = record.models;
       file.studio = record.studio;
+      file.production = record.production;
       file.url = record.url;
       file.updated = record.updated || 0;
       refreshCardRecord(file);
@@ -1408,6 +1418,14 @@ const LABEL_FIELDS = {
     values: (f) => (f.studio ? [f.studio] : []),
     single: true,
   },
+  // The series within a house: Model Media ships MD, MDX, MCY, TZ and MSD, and
+  // "which of those is this" is a question the studio cannot answer.
+  production: {
+    empty: '+ production',
+    chip: 'chip chip-production',
+    values: (f) => (f.production ? [f.production] : []),
+    single: true,
+  },
 };
 
 /**
@@ -1461,6 +1479,7 @@ function buildRecordRow(file) {
   // The studio leads: it is the one fact there can only be one of, so it reads
   // as a heading for the names rather than another entry among them.
   if (file.studio) row.appendChild(buildLabelChips(file, 'studio', { add: false }));
+  if (file.production) row.appendChild(buildLabelChips(file, 'production', { add: false }));
 
   // Names show when there are names; nothing sits there inviting you to add one.
   if ((file.models || []).length) row.appendChild(buildLabelChips(file, 'models', { add: false }));
@@ -1475,13 +1494,15 @@ function buildRecordRow(file) {
  * for it. The count stays on each chip, so nothing is lost by reordering.
  */
 function vocabByName(field) {
-  const vocab = { models: state.modelVocab, studio: state.studioVocab }[field] || state.tagVocab;
+  const vocab = { models: state.modelVocab, studio: state.studioVocab,
+    production: state.productionVocab }[field] || state.tagVocab;
   return vocab.slice().sort((a, b) =>
     a.tag.localeCompare(b.tag, undefined, { numeric: true, sensitivity: 'base' }));
 }
 
 function syncTagVocab() {
-  for (const [field, id] of [['tags', '#tagVocab'], ['models', '#modelVocab'], ['studio', '#studioVocab']]) {
+  for (const [field, id] of [['tags', '#tagVocab'], ['models', '#modelVocab'],
+    ['studio', '#studioVocab'], ['production', '#productionVocab']]) {
     const list = $(id);
     if (!list) continue;
     list.innerHTML = '';
@@ -1499,6 +1520,7 @@ const LABEL_INPUTS = {
   tags: { input: '#tagInput', suggest: '#tagSuggest' },
   models: { input: '#modelInput', suggest: '#modelSuggest' },
   studio: { input: '#studioInput', suggest: '#studioSuggest' },
+  production: { input: '#productionInput', suggest: '#productionSuggest' },
 };
 
 function parseTags(text) {
@@ -1524,10 +1546,12 @@ function openTagDialog(files) {
   for (const field of ['tags', 'models']) {
     $(LABEL_INPUTS[field].input).value = single ? (files[0][field] || []).join(', ') : '';
   }
-  // Across several videos a shared studio is a sensible starting point; a mixed
-  // selection starts blank, so Add leaves each one's own studio alone.
-  const studios = new Set(files.map((f) => f.studio || ''));
-  $('#studioInput').value = studios.size === 1 ? [...studios][0] : '';
+  // Across several videos a shared value is a sensible starting point; a mixed
+  // selection starts blank, so Add leaves each one's own alone.
+  for (const field of ['studio', 'production']) {
+    const shared = new Set(files.map((f) => f[field] || ''));
+    $(LABEL_INPUTS[field].input).value = shared.size === 1 ? [...shared][0] : '';
+  }
   $('#tagHint').textContent = single
     ? 'Add appends, Replace overwrites — every section at once. Right-click a chip on the card to remove one.'
     : `Add appends to each video's existing tags and models. Replace overwrites all ${files.length}.`;
@@ -1550,7 +1574,8 @@ function renderTagSuggestions() {
     box.innerHTML = '';
     const single = LABEL_FIELDS[field].single;
     const used = new Set(parseTags($(input).value).map((t) => t.toLowerCase()));
-    const extra = { models: ' chip-model', studio: ' chip-studio' }[field] || '';
+    const extra = { models: ' chip-model', studio: ' chip-studio',
+      production: ' chip-production' }[field] || '';
     // Every value, not the first 60. The cap was invisible: with 778 performers
     // the box looked complete and simply had no more to scroll to, which is the
     // one thing a truncated list must never look like. `.tag-suggest` already
@@ -1585,6 +1610,7 @@ async function commitTags(mode) {
   const tags = parseTags($('#tagInput').value);
   const models = parseTags($('#modelInput').value);
   const studio = $('#studioInput').value.trim();
+  const production = $('#productionInput').value.trim();
   const paths = state.tagTargets.map((f) => f.path);
 
   $('#tagModal').hidden = true;
@@ -1594,8 +1620,13 @@ async function commitTags(mode) {
   // to a field that holds one value; Replace sends it either way, so clearing
   // the box is how you clear the studio.
   await editRecords(paths, mode === 'add'
-    ? { addTags: tags, addModels: models, ...(studio ? { studio } : {}) }
-    : { tags, models, studio });
+    ? {
+      addTags: tags,
+      addModels: models,
+      ...(studio ? { studio } : {}),
+      ...(production ? { production } : {}),
+    }
+    : { tags, models, studio, production });
 
   const say = (n, noun) => `${n} ${noun}${n === 1 ? '' : 's'}`;
   const videos = say(paths.length, 'video');
@@ -3639,6 +3670,7 @@ async function init() {
     // happens to bring the second one back with its response.
     state.modelVocab = data.models || [];
     state.studioVocab = data.studios || [];
+    state.productionVocab = data.productions || [];
     setFavourites(data.favourites);
     syncTagVocab();
   }).catch(() => {});

@@ -1,8 +1,8 @@
 'use strict';
 
 /**
- * Puts back models, studio and source url that the catalogue knows and the
- * sidecar has lost.
+ * Fills in models, studio, production and source url that the catalogue knows
+ * and the sidecar does not.
  *
  *   node tools/xchina-relabel.js            what is missing — changes nothing
  *   node tools/xchina-relabel.js --apply    fills it in
@@ -38,10 +38,62 @@ const PORT = 4321;
 /** `size:mtime`, the sidecar's key — it survives a rename, which is the point. */
 const keyFor = (stat) => `${stat.size}:${Math.round(stat.mtimeMs)}`;
 
+/**
+ * The production code inside a reference: `MD0352` -> MD, `RS036-EP3` -> RS,
+ * `MKY-TH002` -> MKY, `91CM-224` -> 91CM.
+ *
+ * The leading run of letters, allowing digits before it — two of the site's
+ * references start with a number (`91CM`, `91CMX`) and their code includes it.
+ * Everything after that first letter run is the shoot's number and any part or
+ * episode suffix, none of which identifies the series.
+ */
+function productionOf(ref) {
+  const m = String(ref || '').trim().match(/^(\d*[A-Za-z]+)/);
+  return m ? m[1].toUpperCase() : '';
+}
+
+/**
+ * The reference the import baked into a filename: `Title (MD0352).mp4`.
+ *
+ * Only a code in trailing parentheses counts, because that is the shape this
+ * repo's own renamer writes — a code-shaped run anywhere else in a name is as
+ * likely to be part of the title.
+ */
+function refFromName(file) {
+  const base = path.basename(file, path.extname(file));
+  const m = base.match(/\(([^()]{2,30})\)\s*$/);
+  return m ? m[1].trim() : '';
+}
+
 function serverIsUp() {
   return new Promise((resolve) => {
     const req = http.get({ host: '127.0.0.1', port: PORT, path: '/api/config', timeout: 600 },
       (res) => { res.resume(); resolve(true); });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+  });
+}
+
+/**
+ * Whether the running app understands every field this run wants to write.
+ *
+ * A server started before a field existed accepts the write and drops it: the
+ * patch key is simply one it has never heard of, so the request succeeds, the
+ * count says it worked, and nothing changed. Asking what it can report is the
+ * cheapest way to find out, and refusing is better than a silent no-op.
+ */
+function serverKnows(field) {
+  const plural = field + 's';
+  return new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port: PORT, path: '/api/library', timeout: 3000 },
+      (res) => {
+        let text = '';
+        res.on('data', (chunk) => { text += chunk; });
+        res.on('end', () => {
+          try { resolve(Object.prototype.hasOwnProperty.call(JSON.parse(text), plural)); }
+          catch { resolve(false); }
+        });
+      });
     req.on('error', () => resolve(false));
     req.on('timeout', () => { req.destroy(); resolve(false); });
   });
@@ -105,12 +157,16 @@ function main() {
     const models = entry.models || [];
     const studio = entry.studio || '';
     const url = entry.url || '';
-    if (!models.length && !studio && !url) { nothingToSay += 1; continue; }
+    // The catalogue's reference first; failing that, the one already in the
+    // filename, which this repo's renamer put there from the same catalogue.
+    const production = productionOf(entry.ref) || productionOf(refFromName(item.file));
+    if (!models.length && !studio && !url && !production) { nothingToSay += 1; continue; }
 
     // Fill blanks only. A record that is absent entirely counts as blank.
     const patch = {};
     if (models.length && !((record && record.models) || []).length) patch.addModels = models;
     if (studio && !(record && record.studio)) patch.studio = studio;
+    if (production && !(record && record.production)) patch.production = production;
     if (url && !(record && record.url)) patch.url = url;
     if (!Object.keys(patch).length) { intact += 1; continue; }
 
@@ -132,7 +188,22 @@ function main() {
   console.log(`to repair        : ${work.length}`);
   console.log(`  models         : ${missing('addModels')}`);
   console.log(`  studio         : ${missing('studio')}`);
+  console.log(`  production     : ${missing('production')}`);
   console.log(`  url            : ${missing('url')}`);
+
+  // Which codes, and how many of each — a long tail of one-offs would mean the
+  // extraction rule is picking up something that is not a series.
+  const codes = new Map();
+  for (const w of work) {
+    if (!w.patch.production) continue;
+    codes.set(w.patch.production, (codes.get(w.patch.production) || 0) + 1);
+  }
+  if (codes.size) {
+    const top = [...codes].sort((a, b) => b[1] - a[1]);
+    console.log(`  distinct codes : ${codes.size}`);
+    console.log(`    busiest      : ${top.slice(0, 8).map(([c, n]) => c + '\u00d7' + n).join(', ')}`);
+    console.log(`    one-offs     : ${top.filter(([, n]) => n === 1).length}`);
+  }
 
   // A record that still has a rating or tags but has lost its cast is the
   // signature of the accident, as against a video that was never labelled.
@@ -146,6 +217,7 @@ function main() {
       const bits = [];
       if (w.patch.addModels) bits.push(`models: ${w.patch.addModels.join(', ')}`);
       if (w.patch.studio) bits.push(`studio: ${w.patch.studio}`);
+      if (w.patch.production) bits.push(`production: ${w.patch.production}`);
       if (w.patch.url) bits.push('url');
       console.log(`  ${path.basename(w.file)}`);
       console.log(`    + ${bits.join(' | ')}`);
@@ -175,6 +247,18 @@ async function apply(work) {
   const failed = [];
 
   if (up) {
+    // A field the running app predates would be accepted and dropped, so check
+    // before writing rather than reporting a success that changed nothing.
+    const fields = new Set(work.flatMap((w) => Object.keys(w.patch)));
+    for (const field of ['production', 'studio']) {
+      if (!fields.has(field)) continue;
+      if (await serverKnows(field)) continue;
+      console.error(`The running app does not know about "${field}" — it would accept`);
+      console.error('the write and drop it. Close Video Explorer and run this again,');
+      console.error('or restart it on the current build first.');
+      process.exit(1);
+    }
+
     // Through the app rather than under it: while it is running it holds the
     // sidecar in memory and writes it back on its own schedule, so a tool
     // editing the file directly would be overwritten by the next rating change.

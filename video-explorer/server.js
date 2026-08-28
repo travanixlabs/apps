@@ -1151,6 +1151,7 @@ const server = http.createServer(async (req, res) => {
           tags: library.tagCounts(),
           models: library.modelCounts(),
           studios: library.studioCounts(),
+          productions: library.productionCounts(),
           favourites: library.favouriteModels(),
           stats: library.stats(),
         });
@@ -1173,6 +1174,7 @@ const server = http.createServer(async (req, res) => {
           tags: library.tagCounts(),
           models: library.modelCounts(),
           studios: library.studioCounts(),
+          productions: library.productionCounts(),
         });
       }
     }

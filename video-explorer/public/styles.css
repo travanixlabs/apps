@@ -711,6 +711,17 @@ main { padding: 16px; }
 .chip.chip-studio:hover { border-color: #3f8b5c; color: #9ce8ba; }
 .chip.suggest.chip-studio.on { border-color: #4ea373; background: #1d3f28; color: #b6f0cd; }
 
+/* The production code: a violet, so it reads as a sibling of the green studio
+   without being mistaken for it at a glance. */
+.chip.chip-production {
+  border-color: #5a4a8c;
+  background: #24203c;
+  color: #c3b6ec;
+  font-variant-numeric: tabular-nums;
+}
+.chip.chip-production:hover { border-color: #7a66bd; color: #dcd3ff; }
+.chip.suggest.chip-production.on { border-color: #7a66bd; background: #2c2550; color: #ded6ff; }
+
 /* "one only", beside the section heading. */
 .label-note {
   margin-left: 7px;
