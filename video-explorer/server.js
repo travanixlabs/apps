@@ -693,61 +693,6 @@ async function listSubfolders(dir, videos) {
   return folders;
 }
 
-/**
- * Each ranked performer's best videos, for the thumbnails under their name.
- *
- * The sidecar knows ratings but not paths — records are keyed by size and
- * modified time so a rename cannot orphan them — so the paths have to come from
- * a walk. That is cheaper than it sounds: enumerating and stat-ing all 28,000
- * videos takes about half a second, against fetching a thumbnail each, so it is
- * done per request rather than cached into something that can go stale.
- */
-async function attachTopVideos(models, keep = null) {
-  // Every video that scored: five, four and three star — uncapped, because "she
-  // has thirty" is the point being made.
-  const perModel = new Map();
-  const root = config.homeDir || (config.roots || [])[0] || '';
-  const wanted = new Set(models.map((model) => model.name.toLowerCase()));
-  if (!root || !wanted.size) return;
-
-  let videos = [];
-  try {
-    videos = await collectVideos(root);
-  } catch {
-    return; // no thumbnails is a lesser failure than no ranking
-  }
-
-  for (const video of videos) {
-    const record = library.get(video);
-    if (!record) continue;
-    if (keep && !keep(record)) continue;
-    const rating = record.rating || 0;
-    if (rating < 3) continue; // a two or a one earned no points, so no still
-    for (const name of record.models || []) {
-      const key = String(name).toLowerCase();
-      if (!wanted.has(key)) continue;
-      if (!perModel.has(key)) perModel.set(key, []);
-      perModel.get(key).push({
-        path: video.path,
-        name: path.basename(video.path),
-        rating,
-        size: video.size,
-        cloudOnly: video.cloudOnly,
-      });
-    }
-  }
-
-  for (const model of models) {
-    const bucket = perModel.get(model.name.toLowerCase()) || [];
-    // Best rating first, and the bigger copy first within a rating — usually
-    // the better rip of the same video.
-    bucket.sort((a, b) => b.rating - a.rating || b.size - a.size
-      || a.name.localeCompare(b.name));
-    // `top`, not `videos`: that one already holds how many they have in all.
-    model.top = bucket;
-  }
-}
-
 async function scanDirectory(dir, recursive, includeCloud) {
   const videos = await collectVideos(dir);
   const folders = await listSubfolders(dir, videos);
@@ -1198,25 +1143,6 @@ const server = http.createServer(async (req, res) => {
         }
       }));
       return sendJson(res, 200, { meta });
-    }
-
-    // The favourites overlay: whole-library, so it comes from the sidecar rather
-    // than from whatever is on screen.
-    if (route === '/api/top-models' && req.method === 'GET') {
-      const limit = Math.max(1, Math.min(50, Number(url.searchParams.get('limit')) || 20));
-      // Tags come as repeated params rather than one comma-joined list: a tag is
-      // free text and may well contain a comma.
-      const keep = library.tagFilter({
-        tags: url.searchParams.getAll('tag'),
-        notTags: url.searchParams.getAll('notTag'),
-        noTags: url.searchParams.get('noTags') || '',
-        mode: url.searchParams.get('tagMode') === 'any' ? 'any' : 'all',
-      });
-      const models = library.topModels(limit, keep);
-      // The same test for the stills, or a row would show work that did not
-      // count towards the score beside it.
-      if (url.searchParams.get('shots') !== '0') await attachTopVideos(models, keep);
-      return sendJson(res, 200, { models });
     }
 
     if (route === '/api/library') {

@@ -240,88 +240,6 @@ function studioCounts() {
  * library however the app is currently filtered.
  */
 /**
- * What a rating is worth to a performer's standing.
- *
- * A five is worth ten fours and a four ten threes, so each step up the scale is
- * an order of magnitude: no pile of threes adds up to one good video, but a
- * three still counts for something, which separates someone with a body of
- * watchable work from someone with none. Two and one are a verdict against, so
- * they score the same as never having rated it.
- */
-const STAR_POINTS = [0, 0, 0, 10, 100, 1000];
-
-/**
- * Which videos a ranking is allowed to count, by tag.
- *
- * The same shape as a facet of the advanced filter — required tags, banned
- * tags, all-of or any-of, and "has no tags at all" as its own question — because
- * the panel reuses those chips and it would be strange for them to mean
- * something different here. Returns null when nothing is asked, so the caller
- * can skip the test rather than run a predicate that always says yes.
- */
-function tagFilter(spec) {
-  const lower = (list) => (list || []).map((t) => String(t).trim().toLowerCase()).filter(Boolean);
-  const wanted = lower(spec && spec.tags);
-  const banned = lower(spec && spec.notTags);
-  const none = (spec && spec.noTags) || '';
-  const any = !!spec && spec.mode === 'any';
-  if (!wanted.length && !banned.length && !none) return null;
-
-  return (record) => {
-    const have = new Set((record.tags || []).map((t) => String(t).toLowerCase()));
-    if (none === 'in' && have.size) return false;
-    if (none === 'out' && !have.size) return false;
-    if (wanted.length) {
-      const hit = any ? wanted.some((t) => have.has(t)) : wanted.every((t) => have.has(t));
-      if (!hit) return false;
-    }
-    return !banned.some((t) => have.has(t));
-  };
-}
-
-/**
- * The twenty performers with the best-rated work, by points.
- *
- * `keep` narrows which videos count at all, which re-ranks rather than
- * highlights: filter to one tag and the list becomes the top twenty *for that
- * tag*, with the scores and counts to match.
- *
- * One list rather than a tier per rating: tiers meant someone with a single five
- * outranked someone with fourteen fours, and barred them from the tier where
- * that would have shown. Points say the same thing without the cliff — ten fours
- * are worth one five, ten threes one four.
- *
- * Ties go to whoever has more well-rated videos (ten fours over one five, which
- * score alike), and then alphabetically.
- */
-function topModels(limit = 20, keep = null) {
-  const tally = new Map();
-  for (const record of Object.values(data.records)) {
-    if (keep && !keep(record)) continue;
-    const rating = Math.max(0, Math.min(5, Math.round(Number(record.rating) || 0)));
-    for (const raw of record.models || []) {
-      const name = String(raw).trim();
-      if (!name) continue;
-      const key = name.toLowerCase();
-      let entry = tally.get(key);
-      if (!entry) {
-        entry = { name, counts: [0, 0, 0, 0, 0, 0], videos: 0, points: 0 };
-        tally.set(key, entry);
-      }
-      entry.counts[rating] += 1;
-      entry.videos += 1;
-      entry.points += STAR_POINTS[rating];
-    }
-  }
-
-  const good = (entry) => entry.counts[5] + entry.counts[4];
-  return [...tally.values()]
-    .filter((entry) => entry.points > 0)
-    .sort((a, b) => b.points - a.points || good(b) - good(a) || a.name.localeCompare(b.name))
-    .slice(0, limit);
-}
-
-/**
  * Favourite performers, by name.
  *
  * Beside the records rather than inside them, because a favourite belongs to a
@@ -369,6 +287,6 @@ function stats() {
 
 module.exports = {
   init, keyFor, get, decorate, apply, rekey, flush,
-  counts, tagCounts, modelCounts, studioCounts, tagFilter, topModels, stats, normaliseTags,
+  counts, tagCounts, modelCounts, studioCounts, stats, normaliseTags,
   favouriteModels, isFavouriteModel, setFavouriteModel,
 };
