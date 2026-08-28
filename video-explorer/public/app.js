@@ -1561,8 +1561,14 @@ function openTagDialog(files) {
   syncTagVocab();
   renderTagSuggestions();
   $('#tagModal').hidden = false;
-  $('#tagInput').focus();
+
+  // The dialog opens at the top. Focusing the tag box scrolls it into view, and
+  // with four sections that means opening halfway down with Studio and
+  // Production above the fold — so the caret goes there without the scroll, and
+  // the body is put back to the top explicitly in case anything else moved it.
+  $('#tagInput').focus({ preventScroll: true });
   $('#tagInput').select();
+  $('#tagModal .tag-body').scrollTop = 0;
 }
 
 /** The existing vocabulary as one-click chips — faster than typing, and it

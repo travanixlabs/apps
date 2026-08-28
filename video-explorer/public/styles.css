@@ -807,7 +807,11 @@ main { padding: 16px; }
 .adv-row { display: flex; align-items: center; gap: 12px; }
 .adv-row input[type="text"] { flex: 1; min-width: 0; }
 
-.adv-block { display: flex; flex-direction: column; gap: 7px; min-height: 0; }
+/* `flex: 0 0 auto` is the whole of this: the body is a flex column, so without
+   it every block was shrunk below its own content to make the total fit, and the
+   labels ended up drawn over the chip rows beneath them. The body scrolls
+   instead — that is what it is for. */
+.adv-block { display: flex; flex-direction: column; gap: 7px; flex: 0 0 auto; }
 /* The folder list takes whatever height is left rather than a fixed slice. */
 .adv-block.grow { flex: 1 1 auto; }
 .adv-label {
@@ -841,7 +845,10 @@ main { padding: 16px; }
 .linkish:hover { color: var(--text); }
 
 .chip-row { display: flex; flex-wrap: wrap; gap: 5px; }
-.chip-row.scroller { max-height: 132px; overflow-y: auto; }
+/* Five whole rows. Row-aligned for the same reason the suggestion boxes are:
+   a row cut in half looks broken rather than scrollable. Four 34px pitches plus
+   a 29px chip. */
+.chip-row.scroller { max-height: 165px; overflow-y: auto; }
 
 /* Where a facet has no choice to offer, the word still sits in the same slot so
    the block headings stay aligned down the dialog. */
@@ -986,7 +993,13 @@ main { padding: 16px; }
 }
 .chip.tri.out .tri-mark { color: var(--danger); text-decoration: none; }
 
-.tag-body { padding: 14px 16px; }
+.tag-body {
+  padding: 14px 16px;
+  /* Both are load-bearing: without min-height a flex child refuses to shrink
+     below its content, and the overflowing half ends up outside the card. */
+  min-height: 0;
+  overflow-y: auto;
+}
 .tag-input {
   width: 100%;
   font-size: 14px;
@@ -997,8 +1010,18 @@ main { padding: 16px; }
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-  max-height: 34vh;
+  /* Four sections share the dialog now, so no one of them gets a third of the
+     screen. Three whole rows: a flat height rather than a fraction of the
+     viewport, because the point is to land on a row boundary — 120px cut the
+     fourth row eight pixels in, which reads as a rendering fault rather than as
+     something to scroll. 8px padding + three 29px chips + two 5px gaps + the
+     rule above them. */
+  max-height: 107px;
   overflow-y: auto;
+  /* A box that scrolls but looks like it ends is the one thing this must not
+     be, so it is ruled off from the section below it. */
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
 }
 .stars-batch { margin: 0 2px; }
 
@@ -1056,7 +1079,7 @@ body.dragging .card { cursor: grabbing; }
 
 .modal-card {
   width: min(620px, 100%);
-  max-height: 86vh;
+  max-height: 92vh;
   display: flex;
   flex-direction: column;
   background: var(--bg-elev);
