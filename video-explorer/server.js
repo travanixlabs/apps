@@ -66,6 +66,8 @@ const DEFAULT_CONFIG = {
   volume: 1,          // master playback volume, 0..1 — a preference, not a view
   foldersCollapsed: false,
   recursive: false,   // explorer-style by default: one folder level at a time
+  grouped: false,     // the grid split into a section per performer
+
   scrubWithMouse: false,
   // Highest rated first: your own judgement beats any property of the file.
   // Everything unrated falls below, in name order.
@@ -1223,6 +1225,7 @@ const server = http.createServer(async (req, res) => {
           tags: library.tagCounts(),
           models: library.modelCounts(),
           studios: library.studioCounts(),
+          favourites: library.favouriteModels(),
           stats: library.stats(),
         });
       }
@@ -1246,6 +1249,12 @@ const server = http.createServer(async (req, res) => {
           studios: library.studioCounts(),
         });
       }
+    }
+
+    if (req.method === 'POST' && route === '/api/favourites') {
+      const body = await readBody(req);
+      const favourites = library.setFavouriteModel(body.name, body.on !== false);
+      return sendJson(res, 200, { favourites });
     }
 
     if (req.method === 'POST' && route === '/api/library/embed') {

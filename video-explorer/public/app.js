@@ -26,11 +26,17 @@ const state = {
   playingAnchor: null, // the slot it held, once a filter drops it from the view
   selected: new Set(),
   lastClickedIndex: -1,
+  rangeList: null,     // which list that index was into: a section, or the view
   sprites: new Map(),  // path -> { url, frames }
   thumbs: new Map(),   // path -> poster blob URL
   pending: new Map(),  // path -> in-flight poster/sprite promise
   failed: new Set(),
   picker: null,        // { dir, onConfirm, title }
+  grouped: false,      // the grid split into one section per performer
+  groups: [],          // [{ key, name, files }] when grouped, favourites first
+  slots: [],           // the grouped layout flattened: a heading or a card
+  favourites: [],      // performer names marked a favourite, library-wide
+  favSet: new Set(),   // the same, lower-cased, for asking about one video
   tagVocab: [],        // [{ tag, count }] across the whole library
   modelVocab: [],      // the same, for performer names
   studioVocab: [],     // and for production houses, of which a video has one
@@ -56,6 +62,9 @@ function newAdvFilter() {
     // Studio is absent on purpose — one studio per video makes all-of empty.
     mode: { tags: 'all', models: 'all' },
     ratings: new Map(),   // 0 means unrated
+    // Whether anyone in this video is a favourite. Not a facet of values like
+    // the others: there is one question to ask, and it has three answers.
+    favourite: 'all',     // 'all' | 'yes' | 'no'
     link: 'all',          // 'all' | 'yes' | 'no' — whether a source url is stored
     cloud: 'all',         // 'all' | 'downloaded' | 'cloud'
   };
@@ -92,12 +101,14 @@ function picked(facet, want) {
  * puts these back; card size, preview engine and the default folder are
  * preferences and survive it.
  */
-const VIEW_DEFAULTS = { sort: 'rating', sortDir: 'desc', recursive: false };
+const VIEW_DEFAULTS = { sort: 'rating', sortDir: 'desc', recursive: false, grouped: false };
 const RESET_KEY = 've-reset-home';
 
 /** Drops filters, search and sort back to the defaults, saving as it goes. */
 function resetView() {
   Object.assign(state.config, VIEW_DEFAULTS);
+  state.grouped = false;
+  syncGroupButton();
   saveConfig({ ...VIEW_DEFAULTS });
   state.adv = newAdvFilter();
   advDraft = newAdvFilter();
@@ -110,7 +121,7 @@ function resetView() {
 
 function advActive(adv = state.adv) {
   return Boolean(adv.text) || adv.cloud !== 'all' || adv.link !== 'all'
-    || FACETS.some((f) => adv[f].size > 0);
+    || adv.favourite !== 'all' || FACETS.some((f) => adv[f].size > 0);
 }
 
 // ----------------------------------------------------------------- utilities
@@ -435,6 +446,40 @@ function parseQuery(query) {
   }).filter(Boolean);
 }
 
+/** Whether anyone named in this video is marked a favourite. */
+function hasFavouriteModel(file) {
+  if (!state.favSet.size) return false;
+  return (file.models || []).some((name) => state.favSet.has(String(name).toLowerCase()));
+}
+
+const isFavouriteModel = (name) => state.favSet.has(String(name || '').trim().toLowerCase());
+
+/** Keeps the lower-cased lookup set in step with the list the server sent. */
+function setFavourites(list) {
+  state.favourites = Array.isArray(list) ? list : [];
+  state.favSet = new Set(state.favourites.map((n) => String(n).toLowerCase()));
+}
+
+/**
+ * Marks or unmarks one performer. The server owns the list, so its answer is
+ * what the app then believes — two windows can be open on one library.
+ */
+async function toggleFavouriteModel(name) {
+  const on = !isFavouriteModel(name);
+  try {
+    const data = await api('/api/favourites', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, on }),
+    });
+    setFavourites(data.favourites);
+  } catch (err) {
+    toast(err.message, 'err');
+    return isFavouriteModel(name);
+  }
+  return on;
+}
+
 /**
  * The advanced filter, on top of whatever the quick filter box says. Every
  * populated facet has to match; an empty one is ignored.
@@ -477,6 +522,12 @@ function matchesAdvanced(file, adv) {
     const wanted = picked(adv.ratings, 'in');
     if (wanted.length && !wanted.includes(rating)) return false;
     if (picked(adv.ratings, 'out').includes(rating)) return false;
+  }
+
+  if (adv.favourite !== 'all') {
+    const has = hasFavouriteModel(file);
+    if (adv.favourite === 'yes' && !has) return false;
+    if (adv.favourite === 'no' && has) return false;
   }
 
   if (adv.link === 'yes' && !file.url) return false;
@@ -591,6 +642,73 @@ function applyFilterSort() {
   });
 
   state.view = list;
+  buildSlots();
+}
+
+/**
+ * The current listing, split into one section per performer.
+ *
+ * A video with three performers belongs to three sections, so the same card is
+ * built three times — that is the point of the view rather than a flaw in it:
+ * you are looking at each video once per person in it. Videos with nobody named
+ * are collected at the end instead of being dropped, or switching views would
+ * quietly hide part of the listing.
+ *
+ * Favourites lead, then alphabetical. Ordering by how many videos each has would
+ * move a section every time the filter changed.
+ */
+function buildModelGroups(list) {
+  const groups = new Map();
+  const unnamed = [];
+
+  for (const file of list) {
+    const names = (file.models || []).map((n) => String(n).trim()).filter(Boolean);
+    if (!names.length) { unnamed.push(file); continue; }
+    for (const name of names) {
+      const key = name.toLowerCase();
+      let group = groups.get(key);
+      if (!group) {
+        group = { key, name, files: [] };
+        groups.set(key, group);
+      }
+      group.files.push(file);
+    }
+  }
+
+  const out = [...groups.values()].sort((a, b) => {
+    const fa = isFavouriteModel(a.name) ? 0 : 1;
+    const fb = isFavouriteModel(b.name) ? 0 : 1;
+    return fa - fb
+      || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+  });
+  if (unnamed.length) out.push({ key: '', name: '', files: unnamed, unnamed: true });
+  return out;
+}
+
+/**
+ * The grouped layout as one flat list, so the grid keeps paging the way it does
+ * flat: each entry is either a section heading or one card under it. Without
+ * this, paging would have to understand sections, and a section of six hundred
+ * videos would render in one go.
+ */
+function buildSlots() {
+  state.groups = state.grouped ? buildModelGroups(state.view) : [];
+  state.slots = [];
+  if (!state.grouped) return;
+  for (const group of state.groups) {
+    state.slots.push({ head: group });
+    for (const [at, file] of group.files.entries()) state.slots.push({ file, group, at });
+  }
+}
+
+/** How many cards the current view holds — more than the videos, once grouped. */
+function slotCards() {
+  return state.grouped ? state.slots.length - state.groups.length : state.view.length;
+}
+
+/** What paging walks: sections and cards when grouped, plain videos when not. */
+function pageSource() {
+  return state.grouped ? state.slots : state.view;
 }
 
 // -------------------------------------------------------------------- sort
@@ -838,6 +956,18 @@ function renderAdvanced() {
     ));
   }
 
+  // Above the ratings, and the same shape as Source link: one of three rather
+  // than a cycle, since "someone in this is a favourite" and "nobody is" cover
+  // the whole listing between them.
+  const fav = $('#advFav');
+  fav.innerHTML = '';
+  for (const [value, label] of [['all', 'everything'], ['yes', 'a favourite is in it'], ['no', 'nobody marked']]) {
+    fav.appendChild(chipToggle(label, advDraft.favourite === value, () => {
+      advDraft.favourite = value;
+      renderAdvanced();
+    }));
+  }
+
   // Same shape as Availability directly below it: one of three, not a cycle,
   // because "has a link" and "has none" already cover the whole listing.
   const link = $('#advLink');
@@ -914,6 +1044,8 @@ function updateAdvMatch() {
   say('models', 'model', 'models', ` (${advDraft.mode.models})`);
   say('tags', 'tag', 'tags', ` (${advDraft.mode.tags})`);
   say('ratings', 'rating');
+  if (advDraft.favourite === 'yes') bits.push('a favourite is in it');
+  if (advDraft.favourite === 'no') bits.push('nobody marked');
   if (advDraft.link === 'yes') bits.push('linked');
   if (advDraft.link === 'no') bits.push('unlinked');
   if (advDraft.cloud !== 'all') bits.push(advDraft.cloud);
@@ -1393,10 +1525,22 @@ function pruneFiltered(paths) {
   state.view = state.view.filter((f) => !gone.has(f.path));
   for (const path of gone) {
     state.selected.delete(path);
-    const card = document.querySelector(`.card[data-path="${CSS.escape(path)}"]`);
-    if (!card) continue;
-    card.remove();
-    state.rendered = Math.max(0, state.rendered - 1); // one fewer of state.view on screen
+    // Grouped, one video holds a card per performer in it, so every copy goes.
+    for (const card of cardsFor(path)) {
+      card.remove();
+      state.rendered = Math.max(0, state.rendered - 1); // one fewer slot on screen
+    }
+  }
+
+  // The sections are derived from the view, so the counts in their headings and
+  // the slots paging walks are both stale now. Rebuilt in place, keeping roughly
+  // as much loaded as before so the scroll position survives.
+  if (state.grouped) {
+    const loaded = state.rendered;
+    buildSlots();
+    $('#grid').innerHTML = '';
+    state.rendered = 0;
+    while (state.rendered < Math.min(loaded, state.slots.length)) appendPage();
   }
 
   syncFileCount();
@@ -1425,10 +1569,14 @@ function pruneFiltered(paths) {
     + (moved ? ' — on to the next' : ''), 'ok');
 }
 
+/** Every card for one path. Grouped, a video appears once per performer in it. */
+function cardsFor(filePath) {
+  return document.querySelectorAll(`.card[data-path="${CSS.escape(filePath)}"]`);
+}
+
 /** Repaints just the stars and chips, so an edit never disturbs a playing hover. */
 function refreshCardRecord(file) {
-  const card = document.querySelector(`.card[data-path="${CSS.escape(file.path)}"]`);
-  if (card) {
+  for (const card of cardsFor(file.path)) {
     const row = card.querySelector('.record-row');
     if (row) row.replaceWith(buildRecordRow(file));
     // The source link lives on the folder line, so a url arriving by edit has
@@ -2509,11 +2657,21 @@ function pageSize() {
 /** Renders the next page only. Nothing below the fold costs anything. */
 function appendPage() {
   const grid = $('#grid');
+  const source = pageSource();
   const start = state.rendered;
-  const end = Math.min(state.view.length, start + pageSize());
+  const end = Math.min(source.length, start + pageSize());
   const batch = [];
 
   for (let index = start; index < end; index += 1) {
+    if (state.grouped) {
+      const slot = state.slots[index];
+      // A heading costs a slot of the page, so a section of one video does not
+      // arrive with the next twenty-three crammed under it.
+      if (slot.head) { grid.appendChild(buildGroupHead(slot.head)); continue; }
+      grid.appendChild(buildCard(slot.file, slot.at, slot.group));
+      batch.push(slot.file);
+      continue;
+    }
     const file = state.view[index];
     grid.appendChild(buildCard(file, index));
     batch.push(file);
@@ -2526,18 +2684,86 @@ function appendPage() {
   updateStatusLine();
 }
 
+/**
+ * One performer's heading: the heart that marks them, their name, and how many
+ * of the current listing are theirs.
+ *
+ * The heart writes to the library rather than to any video, so it takes effect
+ * everywhere at once — including the order of these very sections, which is why
+ * pressing it re-renders rather than just repainting itself.
+ */
+function buildGroupHead(group) {
+  const head = document.createElement('div');
+  head.className = 'group-head' + (group.unnamed ? ' group-unnamed' : '');
+  head.dataset.group = group.key;
+
+  if (!group.unnamed) {
+    const marked = isFavouriteModel(group.name);
+    const heart = document.createElement('button');
+    heart.type = 'button';
+    heart.className = 'group-fav' + (marked ? ' on' : '');
+    heart.textContent = marked ? '\u2665' : '\u2661';
+    heart.title = marked
+      ? `${group.name} is a favourite — click to unmark`
+      : `Mark ${group.name} a favourite`;
+    heart.setAttribute('aria-label', heart.title);
+    heart.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      const on = await toggleFavouriteModel(group.name);
+      toast(on ? `${group.name} marked a favourite` : `${group.name} unmarked`, 'ok');
+      // Favourites lead the sections, so the page is rebuilt to put this one
+      // where it now belongs rather than just recolouring the heart.
+      render();
+    });
+    head.appendChild(heart);
+  }
+
+  const name = document.createElement('span');
+  name.className = 'group-name';
+  name.textContent = group.unnamed ? 'Nobody named' : group.name;
+  head.appendChild(name);
+
+  const count = document.createElement('span');
+  count.className = 'group-count';
+  count.textContent = `${group.files.length} video${group.files.length === 1 ? '' : 's'}`;
+  head.appendChild(count);
+
+  if (!group.unnamed) {
+    // Straight to the flat listing for this one performer, the way a pill on a
+    // card behaves: the grouped view is for finding someone, not for working
+    // through them.
+    const only = document.createElement('button');
+    only.type = 'button';
+    only.className = 'linkish group-only';
+    only.textContent = 'only this one';
+    only.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      filterByLabel('models', group.name);
+    });
+    head.appendChild(only);
+  }
+
+  return head;
+}
+
 /** Loaded of matching, or matching of scanned — whichever the listing is short of. */
 function syncFileCount() {
-  $('#fileCount').textContent = state.rendered < state.view.length
-    ? `(${state.rendered} of ${state.view.length})`
-    : `(${state.view.length}${state.view.length === state.files.length ? '' : ' of ' + state.files.length})`;
+  // Grouped, the honest number is cards rather than videos: the same video is on
+  // screen once per performer in it, and "12 of 9" would look like a bug.
+  const total = slotCards();
+  const loaded = state.grouped
+    ? state.slots.slice(0, state.rendered).filter((s) => s.file).length
+    : state.rendered;
+  $('#fileCount').textContent = loaded < total
+    ? `(${loaded} of ${total})`
+    : `(${total}${total === state.files.length ? '' : ' of ' + state.files.length})`;
 }
 
 function renderPager() {
   let pager = $('#pager');
   if (pager) pager.remove();
 
-  const remaining = state.view.length - state.rendered;
+  const remaining = pageSource().length - state.rendered;
   if (remaining <= 0) return;
 
   pager = document.createElement('div');
@@ -2613,20 +2839,22 @@ async function fetchMetaFor(files) {
 
 /** Fills in duration/resolution once a probe lands, without a full re-render. */
 function updateCardMeta(filePath) {
-  const card = document.querySelector(`.card[data-path="${CSS.escape(filePath)}"]`);
-  if (!card) return;
   const file = state.files.find((f) => f.path === filePath);
   if (!file) return;
-
   const info = state.meta.get(filePath) || {};
-  const line = card.querySelector('.meta-line');
-  if (line) line.innerHTML = metaLineHtml(file, info);
 
-  const badge = card.querySelector('.badge-duration');
-  if (badge && info.duration) badge.textContent = fmtDuration(info.duration);
+  // Every copy: one probe answers for the video, and grouped it is on screen
+  // once per performer in it.
+  for (const card of cardsFor(filePath)) {
+    const line = card.querySelector('.meta-line');
+    if (line) line.innerHTML = metaLineHtml(file, info);
 
-  const preview = card.querySelector('.preview');
-  if (preview && info.duration) preview.dataset.duration = String(info.duration);
+    const badge = card.querySelector('.badge-duration');
+    if (badge && info.duration) badge.textContent = fmtDuration(info.duration);
+
+    const preview = card.querySelector('.preview');
+    if (preview && info.duration) preview.dataset.duration = String(info.duration);
+  }
 }
 
 function renderEmptyState() {
@@ -2636,7 +2864,7 @@ function renderEmptyState() {
   empty.innerHTML = '<p class="empty-title">Nothing here.</p><p>No videos and no subfolders in this folder.</p>';
 }
 
-function buildCard(file, index) {
+function buildCard(file, index, group = null) {
   const card = document.createElement('article');
   card.className = 'card' + (state.selected.has(file.path) ? ' selected' : '');
   card.dataset.path = file.path;
@@ -2712,13 +2940,13 @@ function buildCard(file, index) {
     const selecting = state.selected.size > 0 || ev.shiftKey;
     if (!selecting) { playFile(file); return; }
     if (ev.shiftKey) ev.preventDefault(); // stop shift-click text selection
-    toggleSelect(file.path, index, ev.shiftKey);
+    toggleSelect(file.path, index, ev.shiftKey, group);
   });
 
   selectMark.addEventListener('click', (ev) => {
     ev.stopPropagation();
     ev.preventDefault();
-    toggleSelect(file.path, index, ev.shiftKey);
+    toggleSelect(file.path, index, ev.shiftKey, group);
   });
   selectMark.title = 'Select';
 
@@ -3074,18 +3302,63 @@ async function dropOnto(paths, destPath, copy, label) {
   }
 }
 
+/**
+ * Groups the grid by performer, or puts it back.
+ *
+ * A view of the same listing rather than a different listing: the filters, the
+ * search and the sort all still apply, and every video in it is still there —
+ * just once per person named in it.
+ */
+async function toggleGrouped() {
+  state.grouped = !state.grouped;
+  syncGroupButton();
+  await saveConfig({ grouped: state.grouped });
+  render();
+  if (state.grouped) {
+    const named = state.groups.filter((g) => !g.unnamed).length;
+    const marked = state.groups.filter((g) => !g.unnamed && isFavouriteModel(g.name)).length;
+    toast(named
+      ? `${named} performer${named === 1 ? '' : 's'} in this listing`
+        + (marked ? `, ${marked} marked` : '')
+      : 'Nobody named in this listing', 'ok');
+  }
+}
+
+function syncGroupButton() {
+  const btn = $('#groupBtn');
+  if (!btn) return;
+  btn.classList.toggle('on', state.grouped);
+  btn.title = state.grouped
+    ? 'Grouped by performer — click for the plain listing'
+    : 'Favourite models — group this listing by performer';
+}
+
 // ---------------------------------------------------------------- selection
 
-function toggleSelect(filePath, index, shiftKey) {
-  if (shiftKey && state.lastClickedIndex >= 0) {
+/**
+ * `group` is the section a card sits in, when the grid is grouped by performer.
+ *
+ * A shift-range then means "these videos of hers", not a slice of the flat
+ * listing — the indexes a grouped card carries are positions within its own
+ * section, so ranging over state.view would select the wrong videos entirely.
+ * A range that starts in one section and ends in another is refused rather than
+ * guessed at.
+ */
+function toggleSelect(filePath, index, shiftKey, group = null) {
+  const within = group ? group.files : state.view;
+  const sameList = state.rangeList === within;
+  if (shiftKey && state.lastClickedIndex >= 0 && sameList) {
     const [from, to] = [state.lastClickedIndex, index].sort((a, b) => a - b);
-    for (let i = from; i <= to; i += 1) state.selected.add(state.view[i].path);
+    for (let i = from; i <= to; i += 1) {
+      if (within[i]) state.selected.add(within[i].path);
+    }
   } else if (state.selected.has(filePath)) {
     state.selected.delete(filePath);
   } else {
     state.selected.add(filePath);
   }
   state.lastClickedIndex = index;
+  state.rangeList = within;
   syncSelectionUI();
 }
 
@@ -3316,6 +3589,7 @@ function wireEvents() {
   }
 
   // settings
+  $('#groupBtn').addEventListener('click', toggleGrouped);
   $('#favBtn').addEventListener('click', openFavourites);
 
   // The tag filter re-ranks on every change: there is nothing to apply, since
@@ -3581,7 +3855,7 @@ async function init() {
   } catch {
     state.config = {
       previewMode: 'live', frames: 10, dwellMs: 1000, tileWidth: 640, cardWidth: 520,
-      pageSize: 24, recursive: false, sortDir: 'desc', sort: 'rating',
+      pageSize: 24, recursive: false, grouped: false, sortDir: 'desc', sort: 'rating',
     };
   }
 
@@ -3604,6 +3878,8 @@ async function init() {
     || state.config.homeDir || state.config.lastDir || '';
   $('#dirInput').value = start;
   $('#recursiveToggle').checked = state.config.recursive === true;
+  state.grouped = state.config.grouped === true;
+  syncGroupButton();
   $('#sortSelect').value = state.config.sort || 'name';
   syncSortButton();
   $('#cardWidth').value = state.config.cardWidth || 520;
@@ -3619,6 +3895,7 @@ async function init() {
     // happens to bring the second one back with its response.
     state.modelVocab = data.models || [];
     state.studioVocab = data.studios || [];
+    setFavourites(data.favourites);
     syncTagVocab();
   }).catch(() => {});
 

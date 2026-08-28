@@ -56,6 +56,9 @@ async function init(oneDriveRoot) {
   } catch {
     data = { version: 1, records: {} };
   }
+  // A file written before favourites existed has no list; the rest of the module
+  // may then assume there is one.
+  if (!Array.isArray(data.favourites)) data.favourites = [];
   return { file: FILE, count: Object.keys(data.records).length };
 }
 
@@ -318,6 +321,38 @@ function topModels(limit = 20, keep = null) {
     .slice(0, limit);
 }
 
+/**
+ * Favourite performers, by name.
+ *
+ * Beside the records rather than inside them, because a favourite belongs to a
+ * person and a record belongs to a file: one performer spans hundreds of videos,
+ * so marking her would otherwise mean writing to every one of them — and a
+ * performer with no videos on disk yet could not be marked at all.
+ */
+function favouriteModels() {
+  return (data.favourites || []).slice();
+}
+
+function isFavouriteModel(name) {
+  const key = String(name || '').trim().toLowerCase();
+  return !!key && (data.favourites || []).some((m) => String(m).toLowerCase() === key);
+}
+
+/** Marks or unmarks one performer, and returns the whole list as it now stands. */
+function setFavouriteModel(name, on) {
+  const clean = String(name || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  if (!clean) return favouriteModels();
+  const key = clean.toLowerCase();
+  // Filter then push, so a second marking cannot duplicate a name and the
+  // spelling most recently used is the one kept.
+  const list = (data.favourites || []).filter((m) => String(m).toLowerCase() !== key);
+  if (on) list.push(clean);
+  list.sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: 'base' }));
+  data.favourites = list;
+  save();
+  return list.slice();
+}
+
 function stats() {
   const records = Object.values(data.records);
   return {
@@ -326,6 +361,7 @@ function stats() {
     rated: records.filter((r) => r.rating).length,
     tagged: records.filter((r) => (r.tags || []).length).length,
     linked: records.filter((r) => r.url).length,
+    favourites: (data.favourites || []).length,
     studios: records.filter((r) => r.studio).length,
     named: records.filter((r) => (r.models || []).length).length,
   };
@@ -334,4 +370,5 @@ function stats() {
 module.exports = {
   init, keyFor, get, decorate, apply, rekey, flush,
   counts, tagCounts, modelCounts, studioCounts, tagFilter, topModels, stats, normaliseTags,
+  favouriteModels, isFavouriteModel, setFavouriteModel,
 };

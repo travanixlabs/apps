@@ -836,6 +836,43 @@ main { padding: 16px; }
    the block headings stay aligned down the dialog. */
 .adv-mode-fixed { color: var(--text-faint); }
 
+/* --------------------------------------------------- grouped by performer */
+
+/* A section heading spans the whole grid rather than taking a cell, or it would
+   sit in the first column with cards beside it. */
+.group-head {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 2px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.group-head:first-child { margin-top: 0; }
+.group-name { font-size: 15px; font-weight: 600; }
+.group-count { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+.group-only { margin-left: auto; }
+.group-unnamed .group-name { color: var(--text-faint); font-style: italic; font-weight: 500; }
+
+/* The heart is the control, so it is sized to be hit rather than to be read. */
+.group-fav {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--text-faint);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.group-fav:hover { color: #e06c8a; border-color: #e06c8a; }
+.group-fav.on { color: #e0506f; border-color: #e0506f; background: rgba(224, 80, 111, .12); }
+
+/* The toolbar toggle, lit while the grid is grouped. */
+#groupBtn.on { color: #e0506f; border-color: #e0506f; }
+
 /* ------------------------------------------------------------- favourites */
 
 .fav-body { padding: 12px 16px 16px; overflow-y: auto; }
