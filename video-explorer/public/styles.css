@@ -942,6 +942,39 @@ main { padding: 16px; }
   color: var(--text);
 }
 
+/* Picked, for the one-of-three rows — Favourite model, Source link,
+   Availability — where a chip is a radio rather than a cycle. */
+.chip.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text);
+}
+
+/* Not a value but a question about the absence of them, so it reads as a label
+   rather than one more entry in the vocabulary. */
+.chip.chip-none { font-style: italic; }
+.chip.chip-none::after { content: ''; }
+
+/* Three-state chips: green includes, red excludes, plain is no constraint. The
+   sign carries the meaning as well as the colour, so the two states stay
+   distinguishable without relying on hue alone. */
+.chip.tri { display: inline-flex; align-items: center; gap: 5px; }
+.chip.tri .tri-mark { font-weight: 700; line-height: 1; }
+.chip.tri .tri-mark:empty { display: none; }
+.chip.tri.in {
+  border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 20%, transparent);
+  color: var(--text);
+}
+.chip.tri.in .tri-mark { color: var(--ok); }
+.chip.tri.out {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--text);
+  text-decoration: line-through;
+}
+.chip.tri.out .tri-mark { color: var(--danger); text-decoration: none; }
+
 .tag-body { padding: 14px 16px; }
 .tag-input {
   width: 100%;
