@@ -29,6 +29,7 @@ const http = require('http');
 const { build } = require('./xchina-match');
 
 const APPLY = process.argv.includes('--apply');
+const FIX = process.argv.includes('--fix-production');
 const ONEDRIVE = process.env.OneDrive || 'C:\\Users\\User\\OneDrive';
 const SIDECAR = process.env.VIDEO_EXPLORER_LIBRARY
   || path.join(ONEDRIVE, '.video-explorer', 'library.json');
@@ -39,17 +40,51 @@ const PORT = 4321;
 const keyFor = (stat) => `${stat.size}:${Math.round(stat.mtimeMs)}`;
 
 /**
- * The production code inside a reference: `MD0352` -> MD, `RS036-EP3` -> RS,
- * `MKY-TH002` -> MKY, `91CM-224` -> 91CM.
+ * Which letter-prefixes number their *series* rather than their shoots.
  *
- * The leading run of letters, allowing digits before it — two of the site's
- * references start with a number (`91CM`, `91CMX`) and their code includes it.
- * Everything after that first letter run is the shoot's number and any part or
- * episode suffix, none of which identifies the series.
+ * Learned from the whole catalogue instead of guessed per reference, because a
+ * single reference cannot tell you: `MTVQ18` and `XSJTC09` are the same shape,
+ * but MTVQ also publishes `MTVQ12-EP1`, which proves the 12 is a season and the
+ * episode is what follows. XSJTC never does that, so its 09 is a shoot number.
+ *
+ * The evidence is a short number followed by a separator: letters, one or two
+ * digits, then `-`. Three prefixes qualify across all 8,975 references — MTVQ,
+ * MTVSQ and XKK — and once a prefix qualifies, every one of its references is
+ * read that way, so `MTVQ12` and `MTVQ12-EP1` land on the same code.
  */
-function productionOf(ref) {
-  const m = String(ref || '').trim().match(/^(\d*[A-Za-z]+)/);
-  return m ? m[1].toUpperCase() : '';
+function seriesNumberedPrefixes(entries) {
+  const found = new Set();
+  for (const entry of entries) {
+    const m = String(entry.ref || '').trim().match(/^(\d*[A-Za-z]+)\d{1,2}[-_ ]/);
+    if (m) found.add(m[1].toUpperCase());
+  }
+  return found;
+}
+
+/**
+ * The production code inside a reference.
+ *
+ *   MD0352        -> MD        the digits are the shoot's number
+ *   MD0200-2      -> MD        and -2 is a part of that shoot
+ *   RS036-EP3     -> RS        three digits is a shoot, not a season
+ *   MKY-TH002     -> MKY       the letters stop at the separator
+ *   91CM-224      -> 91CM      two references begin with a number
+ *   MTVQ21-EP1-2  -> MTVQ21    MTVQ numbers its series
+ *   MTVQ18        -> MTVQ18    so a bare one is a season too
+ *   MTVSQ2-EP11   -> MTVSQ2
+ *   XKK9-8009     -> XKK9
+ *   XSJTC09       -> XSJTC     XSJTC does not, so 09 is the shoot
+ */
+function productionOf(ref, seriesNumbered) {
+  const text = String(ref || '').trim();
+  const m = text.match(/^(\d*[A-Za-z]+)(\d*)/);
+  if (!m || !m[1]) return '';
+  const letters = m[1].toUpperCase();
+  const digits = m[2];
+  if (digits.length >= 1 && digits.length <= 2 && seriesNumbered.has(letters)) {
+    return letters + digits;
+  }
+  return letters;
 }
 
 /**
@@ -123,7 +158,8 @@ function post(body) {
 }
 
 function main() {
-  const { matched } = build();
+  const { matched, entries } = build();
+  const seriesNumbered = seriesNumberedPrefixes(entries);
   const records = JSON.parse(fs.readFileSync(SIDECAR, 'utf8')).records || {};
 
   // Every catalogue entry that names a cast, by its page url, so a record can be
@@ -159,14 +195,23 @@ function main() {
     const url = entry.url || '';
     // The catalogue's reference first; failing that, the one already in the
     // filename, which this repo's renamer put there from the same catalogue.
-    const production = productionOf(entry.ref) || productionOf(refFromName(item.file));
+    const production = productionOf(entry.ref, seriesNumbered)
+      || productionOf(refFromName(item.file), seriesNumbered);
     if (!models.length && !studio && !url && !production) { nothingToSay += 1; continue; }
 
     // Fill blanks only. A record that is absent entirely counts as blank.
     const patch = {};
     if (models.length && !((record && record.models) || []).length) patch.addModels = models;
     if (studio && !(record && record.studio)) patch.studio = studio;
-    if (production && !(record && record.production)) patch.production = production;
+    if (production && !(record && record.production)) {
+      patch.production = production;
+    } else if (FIX && production && record && record.production !== production
+      // Only a value the old rule would have produced: MTVQ where the code is
+      // MTVQ21. Anything else is someone's own answer and is left alone.
+      && production.startsWith(record.production)) {
+      patch.production = production;
+      patch.wasProduction = record.production;
+    }
     if (url && !(record && record.url)) patch.url = url;
     if (!Object.keys(patch).length) { intact += 1; continue; }
 
@@ -189,6 +234,18 @@ function main() {
   console.log(`  models         : ${missing('addModels')}`);
   console.log(`  studio         : ${missing('studio')}`);
   console.log(`  production     : ${missing('production')}`);
+  const corrected = work.filter((w) => w.patch.wasProduction);
+  if (corrected.length) {
+    const moves = new Map();
+    for (const w of corrected) {
+      const move = w.patch.wasProduction + ' -> ' + w.patch.production;
+      moves.set(move, (moves.get(move) || 0) + 1);
+    }
+    console.log(`    corrected    : ${corrected.length}`);
+    for (const [move, n] of [...moves].sort((a, b) => b[1] - a[1])) {
+      console.log(`      ${move.padEnd(22)} ${n}`);
+    }
+  }
   console.log(`  url            : ${missing('url')}`);
 
   // Which codes, and how many of each — a long tail of one-offs would mean the
@@ -197,6 +254,9 @@ function main() {
   for (const w of work) {
     if (!w.patch.production) continue;
     codes.set(w.patch.production, (codes.get(w.patch.production) || 0) + 1);
+  }
+  if (seriesNumbered.size) {
+    console.log(`  series-numbered: ${[...seriesNumbered].sort().join(', ')}`);
   }
   if (codes.size) {
     const top = [...codes].sort((a, b) => b[1] - a[1]);
@@ -217,7 +277,10 @@ function main() {
       const bits = [];
       if (w.patch.addModels) bits.push(`models: ${w.patch.addModels.join(', ')}`);
       if (w.patch.studio) bits.push(`studio: ${w.patch.studio}`);
-      if (w.patch.production) bits.push(`production: ${w.patch.production}`);
+      if (w.patch.production) {
+        bits.push(`production: ${w.patch.production}`
+          + (w.patch.wasProduction ? ` (was ${w.patch.wasProduction})` : ''));
+      }
       if (w.patch.url) bits.push('url');
       console.log(`  ${path.basename(w.file)}`);
       console.log(`    + ${bits.join(' | ')}`);
@@ -265,7 +328,8 @@ async function apply(work) {
     console.log('writing through the running app');
     for (const w of work) {
       try {
-        const data = await post({ paths: [w.file], ...w.patch });
+        const { wasProduction, ...fields } = w.patch;
+        const data = await post({ paths: [w.file], ...fields });
         const result = (data.records || {})[w.file];
         if (result && result.error) throw new Error(result.error);
         done += 1;
@@ -279,7 +343,8 @@ async function apply(work) {
     await library.init(ONEDRIVE);
     for (const w of work) {
       try {
-        library.apply(fs.statSync(w.file), path.basename(w.file), w.patch);
+        const { wasProduction, ...fields } = w.patch;
+        library.apply(fs.statSync(w.file), path.basename(w.file), fields);
         done += 1;
       } catch (err) {
         failed.push({ file: w.file, why: err.message });
