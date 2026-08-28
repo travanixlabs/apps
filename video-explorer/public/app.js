@@ -22,8 +22,12 @@ const state = {
   meta: new Map(),    // path -> probed metadata, filled in per page
   metaAsked: new Set(),
   cloudOptIn: new Set(), // cloud files the user explicitly chose to fetch
+  cards: [],           // grouped: every card in reading order, for the player
   playing: null,      // file open in the player modal
   playingAnchor: null, // the slot it held, once a filter drops it from the view
+  // Which card it was opened from, grouped: the same video sits in a section per
+  // performer, so "the next one" depends on which copy you clicked.
+  playingCard: null,
   selected: new Set(),
   lastClickedIndex: -1,
   rangeList: null,     // which list that index was into: a section, or the view
@@ -714,11 +718,39 @@ function buildModelGroups(list) {
 function buildSlots() {
   state.groups = state.grouped ? buildModelGroups(state.view) : [];
   state.slots = [];
+  state.cards = [];
   if (!state.grouped) return;
   for (const group of state.groups) {
     state.slots.push({ head: group });
-    for (const [at, file] of group.files.entries()) state.slots.push({ file, group, at });
+    for (const [at, file] of group.files.entries()) {
+      // `seq` is the card's place in reading order across the whole page, which
+      // is what the player's arrows follow. It is not the same as `at`, the
+      // position within this section, which is what a shift-range uses.
+      const slot = { file, group, at, seq: state.cards.length };
+      state.slots.push(slot);
+      state.cards.push(slot);
+    }
   }
+}
+
+/** The cards in the order they appear, which is state.view unless grouped. */
+function visibleCards() {
+  return state.grouped ? state.cards : state.view;
+}
+
+/** Where the open video sits in that order, or -1. */
+function playingAt() {
+  const list = visibleCards();
+  if (!state.playing) return -1;
+  // Grouped, the same video appears several times, so the copy it was opened
+  // from is the one to walk from — falling back to the first if that card has
+  // since gone.
+  if (state.grouped) {
+    const seq = state.playingCard;
+    if (seq !== null && list[seq] && list[seq].file.path === state.playing.path) return seq;
+    return list.findIndex((slot) => slot.file.path === state.playing.path);
+  }
+  return list.findIndex((f) => f.path === state.playing.path);
 }
 
 /** How many cards the current view holds — more than the videos, once grouped. */
@@ -1250,7 +1282,7 @@ function pruneFiltered(paths) {
   // Remember where the open video sat before it goes, so the player's arrows
   // still know which way is next.
   if (state.playing && gone.has(state.playing.path)) {
-    const at = state.view.findIndex((f) => f.path === state.playing.path);
+    const at = playingAt();
     state.playingAnchor = at >= 0 ? at : null;
   }
 
@@ -1273,6 +1305,11 @@ function pruneFiltered(paths) {
     $('#grid').innerHTML = '';
     state.rendered = 0;
     while (state.rendered < Math.min(loaded, state.slots.length)) appendPage();
+    // The rebuild renumbered every card, so the remembered one is stale.
+    state.playingCard = state.playing
+      ? state.cards.findIndex((slot) => slot.file.path === state.playing.path)
+      : null;
+    if (state.playingCard < 0) state.playingCard = null;
   }
 
   syncFileCount();
@@ -1291,7 +1328,10 @@ function pruneFiltered(paths) {
     if (!state.view.length) closePlayer();
     else {
       const at = state.playingAnchor === null ? 0 : state.playingAnchor;
-      playFile(state.view[Math.min(at, state.view.length - 1)]);
+      const walk = visibleCards();
+      const seq = Math.max(0, Math.min(at, walk.length - 1));
+      const next = walk[seq];
+      if (next) playFile(state.grouped ? next.file : next, state.grouped ? seq : null);
       moved = true;
     }
   }
@@ -2172,10 +2212,11 @@ function buildPlayerActions(file) {
   }
 }
 
-function playFile(file) {
+function playFile(file, seq = null) {
   stopLive(); // free the hover decoder before opening a second one
   state.playing = file;
   state.playingAnchor = null; // this one is in the listing until told otherwise
+  state.playingCard = seq;
   buildPlayerActions(file);
   $('#playerTitle').textContent = file.name;
   const info = state.meta.get(file.path) || {};
@@ -2220,9 +2261,9 @@ function playFile(file) {
  * keeps the buttons live instead of leaving one dead at each edge.
  */
 function playSibling(step) {
-  const list = state.view;
+  const list = visibleCards();
   if (!state.playing || !list.length) return;
-  const at = list.findIndex((f) => f.path === state.playing.path);
+  const at = playingAt();
 
   // An edit can filter the open video out of the listing while you are watching
   // it. The arrows then work from the slot it vacated: forward lands on whatever
@@ -2232,12 +2273,15 @@ function playSibling(step) {
     : (state.playingAnchor === null ? null : state.playingAnchor + (step > 0 ? 0 : -1));
   if (target === null) return;
 
-  playFile(list[((target % list.length) + list.length) % list.length]);
+  const seq = ((target % list.length) + list.length) % list.length;
+  const next = list[seq];
+  // Flat, there are no cards to number, so nothing is remembered.
+  playFile(state.grouped ? next.file : next, state.grouped ? seq : null);
 }
 
 function syncPlayerNav() {
-  const list = state.view;
-  const at = state.playing ? list.findIndex((f) => f.path === state.playing.path) : -1;
+  const list = visibleCards();
+  const at = playingAt();
   const adrift = Boolean(at < 0 && state.playing && state.playingAnchor !== null && list.length);
   const usable = (at >= 0 && list.length > 1) || adrift;
   $('#playerPrev').hidden = !usable;
@@ -2248,7 +2292,10 @@ function syncPlayerNav() {
   const pos = $('#playerPos');
   pos.hidden = !state.playing;
   if (at >= 0) {
-    pos.textContent = `${(at + 1).toLocaleString()} of ${list.length.toLocaleString()} in this listing`;
+    // "shown" rather than "in this listing" when grouped: the number counts
+    // cards, and a video in three sections is three of them.
+    const of = state.grouped ? 'shown' : 'in this listing';
+    pos.textContent = `${(at + 1).toLocaleString()} of ${list.length.toLocaleString()} ${of}`;
   } else if (adrift) {
     pos.textContent = `filtered out · ${list.length.toLocaleString()} still listed`;
   } else {
@@ -2373,7 +2420,7 @@ function appendPage() {
       // A heading costs a slot of the page, so a section of one video does not
       // arrive with the next twenty-three crammed under it.
       if (slot.head) { grid.appendChild(buildGroupHead(slot.head)); continue; }
-      grid.appendChild(buildCard(slot.file, slot.at, slot.group));
+      grid.appendChild(buildCard(slot.file, slot.at, slot.group, slot.seq));
       batch.push(slot.file);
       continue;
     }
@@ -2578,7 +2625,7 @@ function renderEmptyState() {
   empty.innerHTML = '<p class="empty-title">Nothing here.</p><p>No videos and no subfolders in this folder.</p>';
 }
 
-function buildCard(file, index, group = null) {
+function buildCard(file, index, group = null, seq = null) {
   const card = document.createElement('article');
   card.className = 'card' + (state.selected.has(file.path) ? ' selected' : '');
   card.dataset.path = file.path;
@@ -2630,7 +2677,7 @@ function buildCard(file, index, group = null) {
   playBtn.addEventListener('click', (ev) => {
     ev.stopPropagation();
     ev.preventDefault();
-    playFile(file);
+    playFile(file, seq);
   });
   preview.appendChild(playBtn);
 
@@ -2652,7 +2699,7 @@ function buildCard(file, index, group = null) {
     if (ev.target.closest('.select-mark')) return; // the ring handles itself
 
     const selecting = state.selected.size > 0 || ev.shiftKey;
-    if (!selecting) { playFile(file); return; }
+    if (!selecting) { playFile(file, seq); return; }
     if (ev.shiftKey) ev.preventDefault(); // stop shift-click text selection
     toggleSelect(file.path, index, ev.shiftKey, group);
   });
