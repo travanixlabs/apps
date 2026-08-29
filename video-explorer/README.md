@@ -334,8 +334,9 @@ on its own is worth nothing.
 - **In the label dialog** — the same chips beside the Models box. Clicking one
   types the name into the box rather than saving it, so **Add** and **Replace**
   still mean exactly what they say.
-- **Advanced filters → Suggested models** — *has a suggestion*, *all credited*,
-  *a name it lacks*, *nothing recognised*. The third is the one to hunt with.
+- **Advanced filters → Suggested models** — *profiled with matching model*,
+  *profiled without matching model*, *not profiled*. Three states that cover the
+  listing and do not overlap. The middle one is the work.
 - **Grouped by performer** — each section says how many of that performer's
   videos have been read: `83 videos · 9 profiled`, turning green at the full set.
 - **The toolbar pill** — `1,204 / 2,735 reading… · 31 cached`. It says what it
@@ -375,9 +376,10 @@ averaging is cheaper than deciding who to believe.
 
 A video is not one performer. Credited to A with A, B and C recognised in it,
 the fact worth surfacing is that **B and C are missing** — so "does any
-suggestion match" would call that agreement and hide it. *All credited* means
-every face recognised is already named; *a name it lacks* is everything else, a
-missing performer and a wrong one being the same question until you look.
+suggestion match" would call that a match and hide it. A **match** therefore
+means *every* face recognised is already named: nothing left to do. Everything
+else read — a name it lacks, a wrong one, or nobody recognised at all — is the
+same question until you look at it, so it sits in one pile.
 
 On a correctly credited video the name already on it should be the **top**
 suggestion. That is the shape of a healthy answer, which is why they are ordered

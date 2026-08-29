@@ -74,10 +74,11 @@ function newAdvFilter() {
     favourite: 'all',     // 'all' | 'yes' | 'no'
     link: 'all',          // 'all' | 'yes' | 'no' — whether a source url is stored
     cloud: 'all',         // 'all' | 'downloaded' | 'cloud'
-    // Whether a face was recognised in this video, and whether it agrees with
-    // the name already on it. "Disagrees" is the one worth hunting: it is where
-    // a label is wrong, or where a second performer was never credited.
-    suggested: 'all',     // 'all' | 'yes' | 'no' | 'agrees' | 'disagrees'
+    // Where a video stands with the face index: not read yet, read and its
+    // faces are all named, or read and something in it is not. The three cover
+    // the listing between them and do not overlap, which the earlier
+    // has-a-suggestion / agrees pair did not.
+    suggested: 'all',     // 'all' | 'match' | 'nomatch' | 'unprofiled'
   };
 }
 
@@ -555,28 +556,27 @@ function matchesAdvanced(file, adv) {
 }
 
 /**
- * A video against the suggested-models question.
+ * Where a video stands with the face index.
  *
- * Deliberately independent of whether the video is already credited: a
- * suggestion on a named video is a second opinion, and both answers it can give
- * are worth listing.
+ * Three states that cover the listing and do not overlap: not read yet, read
+ * and settled, read and not. "Nothing was recognised" is not a fourth -- a
+ * video whose faces matched nobody still has work outstanding, so it belongs
+ * with the rest of the work.
  *
- * The two are asked per NAME, not per video, because a video is not one
- * performer. Credited to A with A, B and C recognised in it, the interesting
- * fact is that B and C are missing -- and asking "does any suggestion match"
- * would call that agreement and hide it. So agreement means every recognised
- * face is already credited, and the other bucket is everything with a name it
- * has not been given: a missing performer or a wrong one, which are the same
- * question until you look.
+ * Matching is asked per NAME, not per video. Credited to A with A, B and C all
+ * recognised in it, the interesting fact is that B and C are missing -- and
+ * "does any suggestion match" would call that a match and hide it. So a match
+ * means EVERY recognised face is already credited: nothing left to do here.
  */
 function suggestionMatch(file, want) {
+  const profiled = file.profiled === true;
+  if (want === 'unprofiled') return !profiled;
+  if (!profiled) return false;
   const suggested = file.suggested || [];
-  if (want === 'yes') return suggested.length > 0;
-  if (want === 'no') return suggested.length === 0;
-  if (!suggested.length) return false;
   const named = new Set((file.models || []).map((m) => m.toLowerCase()));
-  const uncredited = suggested.filter((sug) => !named.has(sug.name.toLowerCase()));
-  return want === 'agrees' ? uncredited.length === 0 : uncredited.length > 0;
+  const settled = suggested.length > 0
+    && suggested.every((sug) => named.has(sug.name.toLowerCase()));
+  return want === 'match' ? settled : !settled;
 }
 
 function matchesQuery(file, terms) {
@@ -1063,12 +1063,13 @@ function renderAdvanced() {
   suggest.innerHTML = '';
   for (const [value, label, hint] of [
     ['all', 'everything', ''],
-    ['yes', 'has a suggestion', 'a face here matches a performer you have named elsewhere'],
-    ['agrees', 'all credited', 'every face recognised here is already named on the video'],
-    ['disagrees', 'a name it lacks',
-      'a face here belongs to someone the video is not credited with — a missing '
-      + 'performer, or a wrong one'],
-    ['no', 'nothing recognised', ''],
+    ['match', 'profiled with matching model',
+      'read for faces, and every performer recognised in it is already named on it '
+      + '— nothing left to do'],
+    ['nomatch', 'profiled without matching model',
+      'read for faces, and someone recognised in it is not named on it — a missing '
+      + 'performer, a wrong one, or nobody recognised at all'],
+    ['unprofiled', 'not profiled', 'not read for faces yet, or it holds no usable face'],
   ]) {
     const chip = chipToggle(label, advDraft.suggested === value, () => {
       advDraft.suggested = value;
