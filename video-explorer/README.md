@@ -426,15 +426,32 @@ way the sprite sheets and probed metadata already do.
 
 ### What it is under the hood
 
-`ffmpeg` samples a frame every ten seconds (at most sixty), **YuNet** finds the
-faces, each is warped onto the standard five-point template, and **ArcFace
-w600k_r50** turns it into a 512-number vector. The faces within one video are
-clustered, so a video with several people in it can suggest several names — and
-the male co-star simply becomes his own cluster and matches nobody.
+`ffmpeg` samples a frame every five seconds (at most 120, so ten minutes of the
+video), **YuNet** finds the faces, each is warped onto the standard five-point
+template, and **ArcFace w600k_r50** turns it into a 512-number vector. The faces
+within one video are clustered, so a video with several people in it can suggest
+several names — and the male co-star simply becomes his own cluster and matches
+nobody.
 
 Three faces are taken from each frame rather than one. Measured over 61 videos
 that costs nothing — 77.0% top-1 against 78.7% for one face, inside the noise of
 that sample — and it is what makes a second and third performer nameable at all.
+
+**Finding the second performer is a question of supply.** At one frame every ten
+seconds a video yielded about nine usable faces; split between two people that
+is five and four, and a second person needs enough of them to be worth trusting.
+Measured on 14 videos credited to two performers who are both in the index:
+
+| | every 10s, 3-face minimum | every 5s, 2-face minimum |
+|---|---|---|
+| named both | 4 / 14 | **8 / 14** |
+| named one | 9 / 14 | 5 / 14 |
+| only one face group survived | **9 / 14** | 1 / 14 |
+| faces per video | ~9 | 16.4 |
+
+That is the whole of it: the recogniser was never the problem, the sampling was.
+It costs about seven seconds a video rather than four, on work that runs in the
+background, and memory settles around 450MB — 245MB of which is the model.
 The line between one person and the next is 0.35 for ArcFace, measured across
 271 videos: two crops of the same face land near 0.48 and two people near 0.10.
 SFace's 0.55 was wrong here, and split more than half of all solo videos into two

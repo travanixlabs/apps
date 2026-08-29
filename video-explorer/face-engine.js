@@ -25,10 +25,23 @@ const H = 640;
 const CROP = 112;
 const CROP_BYTES = CROP * CROP * 3;
 
-// Proven on the hold-out set: every 10s, at most 60 frames, at most 24 faces.
-// Sixty frames is the memory budget as much as the sampling rate — a raw 640x640
-// frame is 1.2MB, and holding a whole film's worth killed the harvest twice.
-const HARVEST = { everySeconds: 10, maxFrames: 60, maxFaces: 24 };
+/**
+ * How much of a video to look at.
+ *
+ * A frame every five seconds rather than ten, for twice the faces over the same
+ * ten minutes. One performer needs far fewer than this; two need enough that
+ * both clear the bar, and at the old rate a video yielding nine faces split them
+ * five and four — or six and three, at which point the second person was one
+ * missed frame away from vanishing.
+ *
+ * The face budget matters as much as the frame rate. At 24 a busy scene filled
+ * the quota inside the first two minutes, so the sweep never saw who else turned
+ * up later; 48 spends the whole window.
+ *
+ * 120 frames is 144MB of raw pixels held at once, which is the real ceiling
+ * here — 600 of them killed the harvest twice while this was being built.
+ */
+const HARVEST = { everySeconds: 5, maxFrames: 120, maxFaces: 48 };
 
 /** A face rather than a smear of skin: confident, big enough, and face-shaped. */
 const looksLikeAFace = (f) => f.score >= 0.9 && f.w >= 48 && f.h >= 48
@@ -192,18 +205,47 @@ function decodeYunet(out, width, height) {
   return kept;
 }
 
+/**
+ * Input tensors, reused rather than allocated per frame.
+ *
+ * A 640x640 detection input is 4.9MB of float32, and a video is a hundred and
+ * twenty of them: 590MB of garbage per video, which is where the memory went.
+ * Refilling one buffer costs the same as filling a new one and keeps nothing.
+ *
+ * Detection is sequential within a video and only one video is read at a time,
+ * so the buffer is free by the time the next frame wants it. A caller that
+ * overlaps anyway gets its own, rather than quietly sharing one.
+ */
+const scratch = new Map();
+function reuse(key, size) {
+  const held = scratch.get(key);
+  if (held && !held.busy && held.buf.length === size) {
+    held.busy = true;
+    return held;
+  }
+  if (held && held.busy) return { buf: new Float32Array(size), busy: true, own: true };
+  const made = { buf: new Float32Array(size), busy: true };
+  scratch.set(key, made);
+  return made;
+}
+
 async function detect(rgb, width, height) {
   const s = await session('yunet', 'yunet.onnx');
-  // NCHW, BGR, unnormalised — what YuNet was exported expecting.
-  const input = new Float32Array(3 * width * height);
   const plane = width * height;
-  for (let i = 0; i < plane; i += 1) {
-    input[i] = rgb[i * 3 + 2];
-    input[plane + i] = rgb[i * 3 + 1];
-    input[2 * plane + i] = rgb[i * 3 + 0];
+  const held = reuse('detect', 3 * plane);
+  const input = held.buf;
+  try {
+    // NCHW, BGR, unnormalised — what YuNet was exported expecting.
+    for (let i = 0; i < plane; i += 1) {
+      input[i] = rgb[i * 3 + 2];
+      input[plane + i] = rgb[i * 3 + 1];
+      input[2 * plane + i] = rgb[i * 3 + 0];
+    }
+    const out = await s.run({ input: new ort.Tensor('float32', input, [1, 3, height, width]) });
+    return decodeYunet(out, width, height);
+  } finally {
+    held.busy = false;
   }
-  const out = await s.run({ input: new ort.Tensor('float32', input, [1, 3, height, width]) });
-  return decodeYunet(out, width, height);
 }
 
 // ----------------------------------------------------------------- alignment
@@ -295,12 +337,16 @@ function alignFace(rgb, width, height, face) {
  */
 async function embed(crop) {
   const s = await session(recogniser.name, recogniser.file);
-  const input = new Float32Array(3 * CROP * CROP);
-  recogniser.fill(input, crop, CROP * CROP);
-  const out = await s.run({
-    [recogniser.input]: new ort.Tensor('float32', input, [1, 3, CROP, CROP]),
-  });
-  return normalise(Float32Array.from(out[recogniser.output].data));
+  const held = reuse('embed', 3 * CROP * CROP);
+  try {
+    recogniser.fill(held.buf, crop, CROP * CROP);
+    const out = await s.run({
+      [recogniser.input]: new ort.Tensor('float32', held.buf, [1, 3, CROP, CROP]),
+    });
+    return normalise(Float32Array.from(out[recogniser.output].data));
+  } finally {
+    held.busy = false;
+  }
 }
 
 /** Which recogniser the vectors in hand were made by. */
@@ -386,9 +432,12 @@ function frames(file, opts, onFrame) {
     });
     proc.on('error', () => resolve([]));
     proc.on('close', async () => {
-      for (const frame of held) {
+      for (let i = 0; i < held.length; i += 1) {
+        const frame = held[i];
+        held[i] = null; // 1.2MB released now rather than at the end of the video
         if ((await onFrame(frame)) === false) break;
       }
+      held.length = 0;
       resolve();
     });
   });

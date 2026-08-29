@@ -37,8 +37,25 @@ const VERSION = 2;
 
 // Enough videos to average into a face. Two is a coincidence; three is a person.
 const MIN_VIDEOS = 3;
-// A group of frames too small to trust as a second person in the video.
-const MIN_GROUP = 3;
+/**
+ * A group of frames too small to trust as a second person in the video.
+ *
+ * Two, not three. Three lost real performers: a video yielding five faces, three
+ * of the male co-star and two of her, kept him as the video's face and dropped
+ * her entirely — she had been found and then thrown away. Denser sampling makes
+ * that rarer; this makes it survivable when it still happens.
+ */
+const MIN_GROUP = 2;
+
+/**
+ * What the harvest settings were when a video was read.
+ *
+ * Bumped when they change materially, because a profile taken at the old
+ * settings answers a different question -- it cannot show a second performer it
+ * never sampled. Rather than discard those, they are re-read in the background,
+ * last in the queue, and go on working in the meantime.
+ */
+const HARVEST_GEN = 2;
 
 /**
  * When a match is worth showing, per recogniser.
@@ -472,7 +489,8 @@ const isCloudOnly = (s) => (s.size ? (s.blocks || 0) * 512 < s.size * 0.5 : fals
  */
 async function profile(file, stat, opts = {}) {
   const key = keyFor(stat);
-  if (state.index.videos[key]) return state.index.videos[key];
+  const have = state.index.videos[key];
+  if (have && !opts.force) return have;
   const faces = await engine.facesIn(file, opts);
   const groups = faces.length >= 2 ? engine.groupFaces(faces) : [];
   const people = groups
@@ -482,6 +500,7 @@ async function profile(file, stat, opts = {}) {
 
   const entry = {
     at: Date.now(), faces: faces.length, people, name: path.basename(file),
+    gen: HARVEST_GEN,
   };
   state.index.videos[key] = entry;
   saveSoon();
@@ -583,10 +602,14 @@ async function walkForWork() {
         if (isCloudOnly(stat)) continue;
         const key = keyFor(stat);
         onDisk.add(key);
-        if (seen.has(key) || state.index.videos[key]) continue;
+        if (seen.has(key)) continue;
+        const have = state.index.videos[key];
+        // Read at the current settings: nothing to do. Read at older ones: worth
+        // doing again, but only once everything unread has had its turn.
+        if (have && (have.gen || 0) >= HARVEST_GEN) continue;
         if ((state.failures.get(key) || 0) >= 2) continue;
         seen.add(key);
-        work.push({ file: full, stat, key });
+        work.push({ file: full, stat, key, redo: Boolean(have) });
       }
     }
   }
@@ -625,7 +648,11 @@ function prioritise(work) {
   const byPerformer = new Map();
   const unnamed = [];
   const rest = [];
+  // Already answered, just at older settings. Last, always: a video nobody has
+  // looked at beats a better look at one already covered.
+  const again = [];
   for (const item of work) {
+    if (item.redo) { again.push(item); continue; }
     const models = modelsOf(item);
     if (models.length === 1) {
       const name = models[0];
@@ -649,7 +676,7 @@ function prioritise(work) {
     }
     if (!anyLeft) break;
   }
-  return [...seeding, ...unnamed, ...deeper, ...rest];
+  return [...seeding, ...unnamed, ...deeper, ...rest, ...again];
 }
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -720,13 +747,17 @@ async function loop() {
       state.lastRead = state.current;
       if (!state.startedAt) state.startedAt = Date.now();
       try {
-        const entry = await profile(next.file, next.stat, { shouldStop: busy });
+        const entry = await profile(next.file, next.stat,
+          { shouldStop: busy, force: next.redo });
         if (!entry.people.length && entry.faces < 2) {
           // Abandoned early because the app woke up, or genuinely faceless. A
           // second look costs one more read; a third would be stubbornness.
           const tries = (state.failures.get(next.key) || 0) + 1;
           state.failures.set(next.key, tries);
-          if (busy()) delete state.index.videos[next.key];
+          // Abandoned midway rather than genuinely empty: drop it so it is read
+          // again properly. Never for a re-read -- that would throw away a
+          // working profile in exchange for an interrupted one.
+          if (busy() && !next.redo) delete state.index.videos[next.key];
         } else {
           // A solo credit joins someone's average, which moves every score. An
           // unnamed video moves nothing but its own, so it is scored alone --
@@ -810,6 +841,10 @@ function status() {
     remaining: state.walking ? null : state.queue.length,
     performers: state.centroids.size,
     suggestions: state.suggestions.size,
+    // Profiled, but before the sampling was made dense enough to see a second
+    // performer. They work; they are queued to be read again.
+    stale: keys.reduce((n, k) => n
+      + ((state.index.videos[k].gen || 0) < HARVEST_GEN ? 1 : 0), 0),
     covering: sweepRoots(),
     model: engine.available().model,
     rebuilding: state.rebuilding,
