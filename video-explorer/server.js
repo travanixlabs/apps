@@ -1244,6 +1244,15 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, faces.setEnabled(body.enabled !== false));
     }
 
+    // Where one video stands: read or not, and what came closest if nothing
+    // cleared the bar. Asked when the player opens rather than carried with
+    // every listing entry.
+    if (req.method === 'GET' && route === '/api/faces/standing') {
+      const target = authoriseOrThrow(url.searchParams.get('path') || '');
+      const stat = await fsp.stat(target);
+      return sendJson(res, 200, faces.standing(stat));
+    }
+
     // A performer's other faces, to hold the suggested one up against.
     if (req.method === 'GET' && route === '/api/faces/lineup') {
       return sendJson(res, 200, faces.lineup(

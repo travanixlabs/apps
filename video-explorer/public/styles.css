@@ -1442,6 +1442,23 @@ body.dragging .card { cursor: grabbing; }
 .face-chip.confirmed:hover { border-color: #3f7d5c; background: #16281f; }
 .face-chip.confirmed .face-band { color: #7fd1a3; }
 
+/* A name that did not clear the bar. Outlined rather than filled, so it does
+   not read as a suggestion the way the others do. */
+.face-chip.band-near {
+  border-style: dashed;
+  border-color: var(--border-strong);
+  background: transparent;
+  color: var(--text-dim);
+  padding-left: 8px;
+  cursor: zoom-in;
+}
+.face-chip.band-near:hover { border-color: var(--accent); color: var(--text); }
+
+/* Why there is nothing to suggest, beside the heading that says so. */
+.face-note { color: var(--text-faint); font-size: 11px; flex: none; }
+
+.face-verdict.band-near { color: var(--text-faint); }
+
 .face-lead {
   color: var(--text-faint);
   font-size: 11px;

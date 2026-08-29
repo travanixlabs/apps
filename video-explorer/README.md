@@ -327,7 +327,11 @@ on its own is worth nothing.
 ### Where it shows up
 
 - **Under the player** — a strip with the face it matched, the name, how alike
-  they are, and one click to add it: `Wu Mengmeng 83% +`. The heading says what
+  they are, and one click to add it: `Wu Mengmeng 83% +`. At most four names,
+  one per person the video's faces cluster into. When nothing clears the bar it
+  says which of three situations that is — *Not read for faces yet*, *No usable
+  face*, or *Nobody recognised* with the closest few shown dimmed and their
+  scores, so a near miss looks like a near miss rather than an absence. The heading says what
   there is to do — *Looks like*, *All credited*, or *Also looks like · 2 not
   credited*. Shown on credited videos too: agreement is a confirmation, and
   disagreement is the most useful thing this can tell you.
@@ -455,9 +459,20 @@ ArcFace is the default for the last column as much as the first: its wrong answe
 0.49, and a library full of performers the index has never seen needs that gap.
 It is the difference between staying quiet and inventing a name.
 
-Confidence is shown as a band — *strong*, *likely*, *possible* — and both a score
-floor and a margin over the runner-up have to pass. A high score with a close
-second is two performers who look alike, and naming either would be a guess.
+Confidence is shown as a band, and **both** a score floor and a margin over the
+runner-up have to pass:
+
+| band | at least | and clear of the next name by |
+|---|---|---|
+| strong | 55% | 15 points |
+| likely | 45% | 10 points |
+| possible | 38% | 6 points |
+
+Below 38%, or within 6 points of the runner-up, nothing is suggested. The two
+gates are why the numbers look lower than a percentage usually implies: a wrong
+name scores around 18% here and a right one around 74%, so 38% is already well
+clear of the noise — while a high score with a close second is two performers
+who look alike, and naming either would be a guess.
 
 ### Setup
 

@@ -349,6 +349,43 @@ function rankFor(stat, person = 0) {
   return ranked.sort((a, b) => b.score - a.score);
 }
 
+/**
+ * What a video came to, whether or not anything cleared the bar.
+ *
+ * Silence is ambiguous: not read yet, read and no face found, and read with a
+ * face that matched nobody are three different situations and the strip showed
+ * nothing for all of them. This says which, and names the closest few so a near
+ * miss is visible as a near miss rather than as an absence.
+ *
+ * Asked per video when the player opens, not carried with the listing -- three
+ * more names on every one of several thousand entries is a lot of payload for
+ * something read one video at a time.
+ */
+function standing(stat) {
+  const key = keyFor(stat);
+  const entry = state.index.videos[key];
+  if (!entry) return { profiled: false };
+  const suggested = state.suggestions.get(key) || [];
+  const out = {
+    profiled: true,
+    faces: entry.faces || 0,
+    people: (entry.people || []).length,
+    suggested: suggested.length,
+    performers: state.centroids.size,
+    near: [],
+  };
+  if (suggested.length || !out.people) return out;
+  // Nothing cleared the bar. Say what came closest, and by how much it did not.
+  const ranked = rankFor(stat, 0);
+  const gap = ranked.length > 1 ? ranked[0].score - ranked[1].score : 0;
+  out.near = ranked.slice(0, 3).map((r, i) => ({
+    name: r.name,
+    score: r.score,
+    margin: i === 0 ? Math.round(gap * 1000) / 1000 : 0,
+  }));
+  return out;
+}
+
 /** Where the face behind a suggestion came from, as a PNG. */
 async function faceImage(stat, person = 0) {
   return faceImageByKey(keyFor(stat), person);
@@ -782,7 +819,7 @@ function status() {
 module.exports = {
   init, start, setEnabled, status, noteActivity, rootsChanged, decorate,
   suggestionsFor, rankFor,
-  lineup, faceImageByKey,
+  lineup, faceImageByKey, standing,
   // The reading order, for checking what a fresh install would do first.
   __queueForTest: walkForWork,
   faceImage, profile, rebuild, flush, keyFor, MIN_VIDEOS,

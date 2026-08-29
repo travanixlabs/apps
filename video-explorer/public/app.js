@@ -1453,6 +1453,7 @@ const BAND_LABEL = {
   strong: 'strong match',
   likely: 'likely',
   maybe: 'possible',
+  near: 'below the bar',
 };
 
 /** One suggestion: the face it came from, the name, and how sure it is. */
@@ -1533,8 +1534,17 @@ function buildPlayerSuggestions(file) {
   const current = state.files.find((f) => f.path === file.path) || file;
   const suggested = current.suggested || [];
   host.replaceChildren();
-  host.hidden = !suggested.length;
-  if (!suggested.length) return;
+  host.hidden = false;
+
+  // Nothing to show is three different situations -- not read yet, read and no
+  // face found, read and nobody matched -- and showing nothing for all of them
+  // reads as the feature being broken. The answer is fetched per video because
+  // it costs a ranking; the strip says so while it is coming.
+  if (!suggested.length) {
+    say(host, 'face-lead', current.profiled ? 'Checking…' : 'Not read for faces yet');
+    if (current.profiled) explainNothing(host, current);
+    return;
+  }
 
   const named = new Set((current.models || []).map((m) => m.toLowerCase()));
   const missing = suggested.filter((sug) => !named.has(sug.name.toLowerCase())).length;
@@ -1558,6 +1568,93 @@ function buildPlayerSuggestions(file) {
         else host.replaceChildren();
       },
     }));
+  }
+}
+
+/** A label in the strip, and the element back so it can be replaced. */
+function say(host, className, text) {
+  const el = document.createElement('span');
+  el.className = className;
+  el.textContent = text;
+  host.appendChild(el);
+  return el;
+}
+
+/**
+ * Why a profiled video suggested nobody.
+ *
+ * A near miss and an empty video look identical from outside, and the first is
+ * worth seeing: the closest name and how far short it fell says whether the
+ * performer is simply not in the index yet or whether the video is unreadable.
+ * The near misses open the lineup rather than adding anyone -- they did not
+ * clear the bar, so the one useful action is to look.
+ */
+async function explainNothing(host, file) {
+  let info;
+  try {
+    info = await api(`/api/faces/standing?path=${encodeURIComponent(file.path)}`);
+  } catch {
+    host.replaceChildren();
+    say(host, 'face-lead', 'Could not read its standing');
+    return;
+  }
+  // The player may have moved on while that was in the air.
+  if (!state.playing || state.playing.path !== file.path) return;
+  host.replaceChildren();
+
+  if (!info.profiled) { say(host, 'face-lead', 'Not read for faces yet'); return; }
+  if (!info.people) {
+    say(host, 'face-lead', 'No usable face');
+    say(host, 'face-note', info.faces
+      ? `${info.faces} face${info.faces === 1 ? '' : 's'} found, too few to compare`
+      : 'nothing clear enough to compare — often a video shot from behind or in the dark');
+    return;
+  }
+
+  say(host, 'face-lead', 'Nobody recognised');
+  if (!info.near.length) {
+    say(host, 'face-note', info.performers
+      ? 'no performer in the index is close'
+      : 'no performer has enough profiled videos to compare against yet');
+    return;
+  }
+  say(host, 'face-note', 'closest');
+  for (const near of info.near) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'face-chip band-near';
+    const name = document.createElement('span');
+    name.className = 'face-name';
+    name.textContent = near.name;
+    chip.appendChild(name);
+    const pct = document.createElement('span');
+    pct.className = 'face-pct';
+    pct.textContent = `${Math.round(near.score * 100)}%`;
+    chip.appendChild(pct);
+    chip.title = [
+      `${Math.round(near.score * 100)}% like ${near.name} — below the bar, so not suggested`,
+      near.margin
+        ? `only ${Math.round(near.margin * 100)} point`
+          + `${Math.round(near.margin * 100) === 1 ? '' : 's'} clear of the next name; `
+          + 'a suggestion needs a real gap as well as a score'
+        : null,
+      'Click to compare the faces anyway',
+    ].filter(Boolean).join('\n');
+    chip.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      openFaceLineup(file, {
+        name: near.name,
+        score: near.score,
+        margin: near.margin,
+        band: 'near',
+        person: 0,
+        videos: 0,
+        runnerUp: '—',
+      }, (picked) => editRecords([file.path], { addModels: [picked] })
+        .then(() => { if (state.playing) buildPlayerSuggestions(state.playing); }));
+    });
+    host.appendChild(chip);
   }
 }
 
@@ -1628,8 +1725,9 @@ async function openFaceLineup(file, sug, onPick) {
 
   const pct = Math.round(sug.score * 100);
   const gap = Math.round(sug.margin * 100);
-  $('#faceVerdict').textContent = `${pct}% alike, ${gap} points clear of ${sug.runnerUp} — `
-    + `${BAND_LABEL[sug.band]}.`;
+  $('#faceVerdict').textContent = sug.band === 'near'
+    ? `${pct}% alike — below the bar to suggest, so judge it yourself.`
+    : `${pct}% alike, ${gap} points clear of ${sug.runnerUp} — ${BAND_LABEL[sug.band]}.`;
   $('#faceVerdict').className = `face-verdict band-${sug.band}`;
 
   $('#faceAdd').textContent = already ? 'Already credited' : `Add ${sug.name}`;
