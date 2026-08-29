@@ -319,6 +319,9 @@ function rememberRoot(dir) {
   const resolved = path.resolve(dir);
   if (!config.roots.some((r) => path.resolve(r).toLowerCase() === resolved.toLowerCase())) {
     config.roots.push(resolved);
+    // New ground for the face sweep to count, and its denominator is wrong
+    // until it has.
+    faces.rootsChanged();
   }
   config.lastDir = resolved;
   saveConfigSoon();

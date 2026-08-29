@@ -77,6 +77,12 @@ const state = {
   running: false,
   enabled: true,
   current: '',
+  // The last file read, kept after it finishes. `current` empties between
+  // videos and while the library is being counted, and a progress indicator
+  // that blanks every few seconds reads as nothing happening.
+  lastRead: '',
+  done: 0,
+  startedAt: 0,
   lastActivity: 0,
   counted: { downloaded: 0, at: 0 },
   // Every downloaded video's key, from the last sweep for work. Its purpose is
@@ -563,6 +569,19 @@ function noteActivity() {
 }
 
 /**
+ * A folder was opened that had not been before.
+ *
+ * The library is otherwise re-counted on a timer, and until that fires the
+ * denominator is whatever the last sweep happened to see -- which on a fresh
+ * install, before any folder is open, is almost nothing. So opening one counts
+ * again straight away rather than in a quarter of an hour.
+ */
+function rootsChanged() {
+  state.nextWalk = 0;
+  start();
+}
+
+/**
  * The sweep itself: one video at a time, only while nothing else is happening.
  *
  * It yields to the app rather than competing with it — the moment a request
@@ -600,6 +619,8 @@ async function loop() {
 
       const next = state.queue.shift();
       state.current = path.basename(next.file);
+      state.lastRead = state.current;
+      if (!state.startedAt) state.startedAt = Date.now();
       try {
         const entry = await profile(next.file, next.stat, { shouldStop: busy });
         if (!entry.people.length && entry.faces < 2) {
@@ -620,6 +641,7 @@ async function loop() {
       } catch {
         state.failures.set(next.key, (state.failures.get(next.key) || 0) + 1);
       }
+      state.done += 1;
       state.current = '';
       await wait(150);
     }
@@ -665,6 +687,19 @@ function status() {
     walking: state.walking,
     idle: !busy(),
     current: state.current,
+    // What it is doing right now, in one word, so the UI does not have to
+    // reconstruct it from four booleans.
+    doing: !state.enabled ? 'paused'
+      : state.walking ? 'counting'
+        : state.current ? 'reading'
+          : state.running ? 'waiting' : 'stopped',
+    lastRead: state.lastRead,
+    done: state.done,
+    // Videos an hour, from this session's own work. Nothing to calibrate and it
+    // answers the only question a progress readout is really asked.
+    rate: state.done > 2 && state.startedAt
+      ? Math.round((state.done / ((Date.now() - state.startedAt) / 3600000)))
+      : 0,
     profiled: keys.length,
     // How many of the downloaded videos are done -- the pair that belongs
     // either side of a slash. Profiles of freed-up files are counted apart,
@@ -683,7 +718,8 @@ function status() {
 }
 
 module.exports = {
-  init, start, setEnabled, status, noteActivity, decorate, suggestionsFor, rankFor,
+  init, start, setEnabled, status, noteActivity, rootsChanged, decorate,
+  suggestionsFor, rankFor,
   lineup, faceImageByKey,
   // The reading order, for checking what a fresh install would do first.
   __queueForTest: walkForWork,

@@ -1742,43 +1742,68 @@ function renderFacePill() {
   }
   pill.hidden = false;
   const {
-    profiled, profiledOnDisk, cached, downloaded, counted,
-    performers, current, enabled, walking,
+    profiled, profiledOnDisk, cached, downloaded, counted, remaining,
+    performers, current, lastRead, enabled, doing, done, rate,
   } = faceStatus;
   const n = (x) => Number(x || 0).toLocaleString();
-  const done = counted && downloaded && profiledOnDisk >= downloaded;
-  pill.classList.toggle('working', Boolean(enabled && current));
-  pill.classList.toggle('paused', !enabled);
-  pill.classList.toggle('done', Boolean(done));
 
-  // Videos profiled out of videos downloaded -- both halves counting the same
-  // thing, which is the only way a fraction reads. Profiles of files since
-  // freed up to the cloud are not part of that denominator, so they are their
-  // own number rather than a lie in this one.
+  // "Finished" has to mean finished: counted the library, nothing queued, and
+  // nothing left over. A green pill over an untouched library is worse than no
+  // pill, and that is what a bare "profiled >= downloaded" gave when the count
+  // itself was wrong.
+  const finished = counted && !remaining && downloaded > 0 && profiledOnDisk >= downloaded;
+  const busy = doing === 'reading' || doing === 'counting';
+
+  pill.classList.toggle('working', busy);
+  pill.classList.toggle('waiting', doing === 'waiting');
+  pill.classList.toggle('paused', doing === 'paused' || doing === 'stopped');
+  pill.classList.toggle('done', finished && !busy);
+
+  // What it is doing comes first, because that is the question being asked of
+  // it. The fraction is the answer to a different one.
   text.replaceChildren();
+  const said = {
+    counting: 'counting the library…',
+    reading: 'reading…',
+    waiting: 'waiting for you to pause',
+    paused: 'paused',
+    stopped: 'stopped',
+  };
   const main = document.createElement('span');
-  main.textContent = counted
-    ? `${n(profiledOnDisk)} / ${n(downloaded)} profiled`
-    : `${n(profiled)} profiled`;
+  main.textContent = counted && downloaded
+    ? `${n(profiledOnDisk)} / ${n(downloaded)}`
+    : `${n(profiled)}`;
   text.appendChild(main);
+
+  const state = document.createElement('span');
+  state.className = 'faces-doing';
+  state.textContent = ' ' + (finished && !busy ? 'all profiled' : (said[doing] || 'profiled'));
+  text.appendChild(state);
+
   if (cached > 0) {
     const kept = document.createElement('span');
     kept.className = 'faces-cached';
-    kept.textContent = `\u00b7 ${n(cached)} cached`;
+    kept.textContent = ` \u00b7 ${n(cached)} cached`;
     text.appendChild(kept);
   }
 
   pill.title = [
-    counted
-      ? `Familiar faces \u2014 ${n(profiledOnDisk)} of ${n(downloaded)} downloaded videos profiled`
-      : `Familiar faces \u2014 ${n(profiled)} videos profiled, still counting the library`,
+    doing === 'reading' ? `Reading ${current}`
+      : doing === 'counting' ? 'Counting the library…'
+        : doing === 'waiting' ? 'Ready — it reads a video whenever you pause for a moment'
+          : doing === 'paused' ? 'Paused'
+            : 'Not running',
+    counted && downloaded
+      ? `${n(profiledOnDisk)} of ${n(downloaded)} videos on this machine profiled`
+        + (remaining ? `, ${n(remaining)} to go` : '')
+      : `${n(profiled)} videos profiled, still counting the library`,
     cached > 0
       ? `${n(cached)} more were profiled before being freed up to the cloud, and still work`
       : null,
-    `${performers} performers have enough videos to recognise`,
-    walking ? 'looking for new files\u2026' : null,
-    current ? `reading ${current}` : null,
-    enabled ? 'Click to pause' : 'Paused \u2014 click to resume',
+    done ? `${n(done)} read this session${rate ? `, about ${n(rate)} an hour` : ''}` : null,
+    lastRead && doing !== 'reading' ? `Last read ${lastRead}` : null,
+    `${performers} performer${performers === 1 ? '' : 's'} recognisable so far`,
+    enabled ? 'Click to pause' : 'Click to resume',
   ].filter(Boolean).join('\n');
 }
 
@@ -3839,7 +3864,7 @@ function wireEvents() {
     if (ev.target.id === 'faceModal' || ev.target.closest('.modal-close')) closeFaceLineup();
   });
   pollFaceStatus();
-  setInterval(pollFaceStatus, 5000);
+  setInterval(pollFaceStatus, 2000);
 
   // settings
   $('#groupBtn').addEventListener('click', toggleGrouped);

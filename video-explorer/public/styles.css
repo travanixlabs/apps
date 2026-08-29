@@ -1379,12 +1379,20 @@ body.dragging .card { cursor: grabbing; }
 .faces-pill.working { color: #7fb5ff; border-color: #2f4a6d; }
 .faces-pill.working .faces-dot { animation: faces-pulse 1.8s ease-in-out infinite; }
 @keyframes faces-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+/* Between videos, and while the library is counted. Still running, just not
+   holding a file open -- so it breathes rather than pulses. */
+.faces-pill.waiting { color: #8aa0b8; }
+.faces-pill.waiting .faces-dot { animation: faces-breathe 3s ease-in-out infinite; }
+@keyframes faces-breathe { 0%, 100% { opacity: 0.9; } 50% { opacity: 0.45; } }
+
 .faces-pill.paused { color: var(--text-faint); opacity: 0.6; }
 .faces-pill.paused .faces-dot { background: none; box-shadow: inset 0 0 0 1px currentColor; }
 .faces-pill.done { color: #7fd1a3; border-color: #2f5a44; }
 /* Profiles kept for videos since freed up to the cloud: a second, quieter
    number, because it is not part of the fraction beside it. */
 .faces-cached { color: var(--text-faint); margin-left: 5px; }
+/* What it is doing, beside the count rather than instead of it. */
+.faces-doing { margin-left: 5px; opacity: 0.85; }
 
 /* A suggested performer: the face it came from, the name, and one click to
    accept it. Sized off the chip rules so it sits in the same rhythm as the

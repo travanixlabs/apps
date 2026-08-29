@@ -338,11 +338,16 @@ on its own is worth nothing.
   *a name it lacks*, *nothing recognised*. The third is the one to hunt with.
 - **Grouped by performer** — each section says how many of that performer's
   videos have been read: `83 videos · 9 profiled`, turning green at the full set.
-- **The toolbar pill** — `1,204 / 2,735 profiled · 31 cached`. The fraction is
-  videos read out of videos on this machine; the second number is profiles kept
-  for videos since freed up to the cloud, which still work but are not part of
-  that denominator. Hover for the performer count and the file being read. Click
-  to pause the sweep, click again to resume.
+- **The toolbar pill** — `1,204 / 2,735 reading… · 31 cached`. It says what it
+  is doing, because that is the question actually being asked of it: *reading…*
+  with a pulsing dot while a file is open, *waiting for you to pause* with a
+  slower one between files, *counting the library…*, *paused*, or *all
+  profiled*. The count climbs as it goes, which is the plainest proof of life
+  there is. The fraction is videos read out of videos on this machine; the
+  second number is profiles kept for videos since freed up to the cloud, which
+  still work but are not part of that denominator. Hover for the file being
+  read, how many this session and at what rate, and the performer count. Click
+  to pause, click again to resume.
 
 ### Is this her?
 
