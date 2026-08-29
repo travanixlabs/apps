@@ -57,6 +57,11 @@ const RECOGNISERS = [
     file: 'arcface.onnx',
     input: 'input.1',
     output: '683',
+    // Where one person ends and the next begins. Measured across 271 videos:
+    // two crops of the same face land around 0.48 and two different people at
+    // 0.10, so the line goes between rather than at SFace's 0.55 -- which split
+    // more than half of all solo videos into two of the same woman.
+    apart: 0.35,
     // RGB, scaled to [-1, 1].
     fill: (input, crop, plane) => {
       for (let i = 0; i < plane; i += 1) {
@@ -71,6 +76,7 @@ const RECOGNISERS = [
     file: 'sface.onnx',
     input: 'data',
     output: 'fc1',
+    apart: 0.55,
     // BGR, unnormalised.
     fill: (input, crop, plane) => {
       for (let i = 0; i < plane; i += 1) {
@@ -331,9 +337,9 @@ function meanOf(vectors) {
  * stream, so they are cut out of the pipe by length rather than by any process
  * boundary.
  *
- * Two faces a frame, not one. A second person in shot is the difference between
- * suggesting one name and suggesting the pair, and the clustering downstream is
- * what tells them apart.
+ * Three faces a frame, not one. Two performers and a co-star is an ordinary
+ * scene here, and a face never cropped is a name that can never be suggested;
+ * the clustering downstream is what tells them apart again.
  */
 function frames(file, opts, onFrame) {
   const { everySeconds, maxFrames } = { ...HARVEST, ...opts };
@@ -402,12 +408,14 @@ async function facesIn(file, { shouldStop = () => false, maxFaces = HARVEST.maxF
     try { detected = await detect(frame, W, H); } catch { return true; }
     const good = detected.filter(looksLikeAFace)
       .sort((a, b) => (b.w * b.h) - (a.w * a.h))
-      .slice(0, 2); // the two biggest: one video, at most two people worth naming
-    for (const face of good) {
+      .slice(0, 3); // the three biggest, so a third performer is not lost
+    for (const [rank, face] of good.entries()) {
       if (found.length >= maxFaces) break;
       const crop = alignFace(frame, W, H, face);
       if (!crop) continue;
-      found.push({ crop, vector: await embed(crop), size: Math.round(face.w) });
+      // How far down the frame this face was, biggest first. Only used to
+      // measure what taking a second and third face is worth.
+      found.push({ crop, vector: await embed(crop), size: Math.round(face.w), rank });
     }
     await breathe();
     return true;
@@ -429,11 +437,12 @@ async function facesIn(file, { shouldStop = () => false, maxFaces = HARVEST.maxF
  * male co-star out of her average — he simply becomes his own group and matches
  * nothing.
  */
-function groupFaces(faces, threshold = 0.55) {
+function groupFaces(faces, threshold = null) {
+  const apart = threshold === null ? (recogniser ? recogniser.apart : 0.55) : threshold;
   const groups = [];
   for (const face of [...faces].sort((a, b) => b.size - a.size)) {
     let best = null;
-    let bestScore = threshold;
+    let bestScore = apart;
     for (const g of groups) {
       const score = cosine(face.vector, g.centre);
       if (score > bestScore) { bestScore = score; best = g; }

@@ -1397,7 +1397,10 @@ async function main() {
   const face = faces.init({
     cacheDir: path.join(CACHE_DIR, '..', 'faces'),
     library,
-    roots: () => config.roots,
+    // The home folder counts even when nothing has been opened yet: a fresh
+    // install has an empty `roots`, and a sweep over nothing would report a
+    // library of nothing.
+    roots: () => [...config.roots, config.homeDir].filter(Boolean),
   });
   if (face.ok) {
     log(`familiar faces: ${face.profiled} videos profiled, models at ${face.modelDir}`);

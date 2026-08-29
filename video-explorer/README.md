@@ -326,18 +326,35 @@ on its own is worth nothing.
 
 ### Where it shows up
 
-- **Under the player** — a *Looks like* strip with the face it matched, the name,
-  and one click to add it. Shown on credited videos too: agreement is a
-  confirmation, and disagreement is the most useful thing this can tell you.
+- **Under the player** — a strip with the face it matched, the name, how alike
+  they are, and one click to add it: `Wu Mengmeng 83% +`. The heading says what
+  there is to do — *Looks like*, *All credited*, or *Also looks like · 2 not
+  credited*. Shown on credited videos too: agreement is a confirmation, and
+  disagreement is the most useful thing this can tell you.
 - **In the label dialog** — the same chips beside the Models box. Clicking one
   types the name into the box rather than saving it, so **Add** and **Replace**
   still mean exactly what they say.
-- **Advanced filters → Suggested models** — *has a suggestion*, *agrees with the
-  label*, *disagrees*, *nothing recognised*. **Disagrees** is the one to hunt
-  with: it finds mislabels and uncredited second performers.
-- **The toolbar pill** — `1,204 / 2,735 profiled`, with the performer count and
-  the file being read on hover. Click it to pause the sweep, click again to
-  resume.
+- **Advanced filters → Suggested models** — *has a suggestion*, *all credited*,
+  *a name it lacks*, *nothing recognised*. The third is the one to hunt with.
+- **Grouped by performer** — each section says how many of that performer's
+  videos have been read: `83 videos · 9 profiled`, turning green at the full set.
+- **The toolbar pill** — `1,204 / 2,735 profiled · 31 cached`. The fraction is
+  videos read out of videos on this machine; the second number is profiles kept
+  for videos since freed up to the cloud, which still work but are not part of
+  that denominator. Hover for the performer count and the file being read. Click
+  to pause the sweep, click again to resume.
+
+### Why it asks per name, not per video
+
+A video is not one performer. Credited to A with A, B and C recognised in it,
+the fact worth surfacing is that **B and C are missing** — so "does any
+suggestion match" would call that agreement and hide it. *All credited* means
+every face recognised is already named; *a name it lacks* is everything else, a
+missing performer and a wrong one being the same question until you look.
+
+On a correctly credited video the name already on it should be the **top**
+suggestion. That is the shape of a healthy answer, which is why they are ordered
+by score rather than by how much of the video each face fills.
 
 ### How the backfill runs
 
@@ -364,8 +381,16 @@ way the sprite sheets and probed metadata already do.
 `ffmpeg` samples a frame every ten seconds (at most sixty), **YuNet** finds the
 faces, each is warped onto the standard five-point template, and **ArcFace
 w600k_r50** turns it into a 512-number vector. The faces within one video are
-clustered, so a video with two people in it can suggest two names — and the male
-co-star simply becomes his own cluster and matches nobody.
+clustered, so a video with several people in it can suggest several names — and
+the male co-star simply becomes his own cluster and matches nobody.
+
+Three faces are taken from each frame rather than one. Measured over 61 videos
+that costs nothing — 77.0% top-1 against 78.7% for one face, inside the noise of
+that sample — and it is what makes a second and third performer nameable at all.
+The line between one person and the next is 0.35 for ArcFace, measured across
+271 videos: two crops of the same face land near 0.48 and two people near 0.10.
+SFace's 0.55 was wrong here, and split more than half of all solo videos into two
+of the same woman.
 
 Measured on 258 held-out videos across 28 performers, every video taking a turn
 as the unknown one:
@@ -375,8 +400,14 @@ as the unknown one:
 | SFace | 89.9% | 94.2% | 0.77 | 0.49 |
 | **ArcFace** | **96.1%** | **96.5%** | 0.74 | **0.18** |
 
-Guessing at random would score 3.6% / 10.7%. ArcFace is the default for the last
-column as much as the first: its wrong answers sit at 0.18 where SFace's sit at
+Guessing at random would score 3.6% / 10.7%. Against the running library, on
+whole videos re-read end to end rather than cached crops, the same measurement
+comes out lower — around 77% top-1 and 85% top-3 — so treat 96% as the ceiling
+and the high seventies as the floor. What keeps the gap off the screen is the
+banding: a suggestion has to clear a margin as well as a score, and among those
+that did, 261 of 268 already-credited videos agreed with their label.
+
+ArcFace is the default for the last column as much as the first: its wrong answers sit at 0.18 where SFace's sit at
 0.49, and a library full of performers the index has never seen needs that gap.
 It is the difference between staying quiet and inventing a name.
 

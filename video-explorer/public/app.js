@@ -558,8 +558,16 @@ function matchesAdvanced(file, adv) {
  * A video against the suggested-models question.
  *
  * Deliberately independent of whether the video is already credited: a
- * suggestion on a named video is a second opinion, and the two answers it can
- * give -- the same name, or a different one -- are both worth listing.
+ * suggestion on a named video is a second opinion, and both answers it can give
+ * are worth listing.
+ *
+ * The two are asked per NAME, not per video, because a video is not one
+ * performer. Credited to A with A, B and C recognised in it, the interesting
+ * fact is that B and C are missing -- and asking "does any suggestion match"
+ * would call that agreement and hide it. So agreement means every recognised
+ * face is already credited, and the other bucket is everything with a name it
+ * has not been given: a missing performer or a wrong one, which are the same
+ * question until you look.
  */
 function suggestionMatch(file, want) {
   const suggested = file.suggested || [];
@@ -567,9 +575,8 @@ function suggestionMatch(file, want) {
   if (want === 'no') return suggested.length === 0;
   if (!suggested.length) return false;
   const named = new Set((file.models || []).map((m) => m.toLowerCase()));
-  if (!named.size) return want === 'disagrees'; // nothing to agree with
-  const agrees = suggested.some((sug) => named.has(sug.name.toLowerCase()));
-  return want === 'agrees' ? agrees : !agrees;
+  const uncredited = suggested.filter((sug) => !named.has(sug.name.toLowerCase()));
+  return want === 'agrees' ? uncredited.length === 0 : uncredited.length > 0;
 }
 
 function matchesQuery(file, terms) {
@@ -1057,8 +1064,10 @@ function renderAdvanced() {
   for (const [value, label, hint] of [
     ['all', 'everything', ''],
     ['yes', 'has a suggestion', 'a face here matches a performer you have named elsewhere'],
-    ['agrees', 'agrees with the label', 'the suggestion is a name already on this video'],
-    ['disagrees', 'disagrees', 'the suggestion is someone other than who is credited'],
+    ['agrees', 'all credited', 'every face recognised here is already named on the video'],
+    ['disagrees', 'a name it lacks',
+      'a face here belongs to someone the video is not credited with — a missing '
+      + 'performer, or a wrong one'],
     ['no', 'nothing recognised', ''],
   ]) {
     const chip = chipToggle(label, advDraft.suggested === value, () => {
@@ -1469,15 +1478,26 @@ function buildFaceChip(file, sug, { onPick, showFace = true } = {}) {
   name.textContent = sug.name;
   chip.appendChild(name);
 
+  // The number, because "who" without "how sure" is not something you can act
+  // on. It is the similarity to that performer's average face, not a
+  // probability, and the tooltip says so.
+  const pct = document.createElement('span');
+  pct.className = 'face-pct';
+  pct.textContent = `${Math.round(sug.score * 100)}%`;
+  chip.appendChild(pct);
+
   const mark = document.createElement('span');
   mark.className = 'face-band';
   mark.textContent = already ? '\u2713' : '+';
   chip.appendChild(mark);
 
-  chip.title = already
-    ? `Already credited \u2014 the face agrees (${sug.score.toFixed(2)}, ${BAND_LABEL[sug.band]})`
-    : `${BAND_LABEL[sug.band]} \u00b7 ${sug.score.toFixed(2)}, ${sug.margin.toFixed(2)} clear of `
-      + `${sug.runnerUp} \u00b7 from ${sug.videos} videos \u2014 click to add`;
+  chip.title = [
+    `${Math.round(sug.score * 100)}% like ${sug.name}'s average face, `
+      + `across the ${sug.videos} videos she is named in`,
+    `${Math.round(sug.margin * 100)} points clear of the next name (${sug.runnerUp}) `
+      + `\u2014 ${BAND_LABEL[sug.band]}`,
+    already ? 'Already credited on this video' : 'Click to add her',
+  ].join('\n');
   chip.addEventListener('click', (ev) => {
     ev.stopPropagation();
     ev.preventDefault();
@@ -1502,14 +1522,27 @@ function buildPlayerSuggestions(file) {
   host.hidden = !suggested.length;
   if (!suggested.length) return;
 
+  const named = new Set((current.models || []).map((m) => m.toLowerCase()));
+  const missing = suggested.filter((sug) => !named.has(sug.name.toLowerCase())).length;
   const label = document.createElement('span');
   label.className = 'face-lead';
-  label.textContent = 'Looks like';
+  // A video can hold more than one performer, so the count is the useful part:
+  // "two names it lacks" is a job, where "looks like" is only an observation.
+  label.textContent = missing === 0 ? 'All credited'
+    : missing === suggested.length ? 'Looks like'
+      : `Also looks like · ${missing} not credited`;
   host.appendChild(label);
   for (const sug of suggested) {
     host.appendChild(buildFaceChip(current, sug, {
-      onPick: (name) => editRecords([current.path], { addModels: [name] })
-        .then(() => buildPlayerSuggestions(current)),
+      onPick: async (name) => {
+        await editRecords([current.path], { addModels: [name] });
+        // Accepting a name can take the video out of the filter that found it,
+        // and the player then moves to the next one. Redrawing the strip for
+        // the video that was open would put its chips over somebody else's --
+        // so whatever is playing NOW is what the strip is rebuilt for.
+        if (state.playing) buildPlayerSuggestions(state.playing);
+        else host.replaceChildren();
+      },
     }));
   }
 }
@@ -1577,17 +1610,40 @@ function renderFacePill() {
     return;
   }
   pill.hidden = false;
-  const { profiled, downloaded, performers, current, enabled, walking } = faceStatus;
-  const done = downloaded && profiled >= downloaded;
+  const {
+    profiled, profiledOnDisk, cached, downloaded, counted,
+    performers, current, enabled, walking,
+  } = faceStatus;
+  const n = (x) => Number(x || 0).toLocaleString();
+  const done = counted && downloaded && profiledOnDisk >= downloaded;
   pill.classList.toggle('working', Boolean(enabled && current));
   pill.classList.toggle('paused', !enabled);
   pill.classList.toggle('done', Boolean(done));
-  text.textContent = downloaded
-    ? `${profiled.toLocaleString()} / ${downloaded.toLocaleString()} profiled`
-    : `${profiled.toLocaleString()} profiled`;
+
+  // Videos profiled out of videos downloaded -- both halves counting the same
+  // thing, which is the only way a fraction reads. Profiles of files since
+  // freed up to the cloud are not part of that denominator, so they are their
+  // own number rather than a lie in this one.
+  text.replaceChildren();
+  const main = document.createElement('span');
+  main.textContent = counted
+    ? `${n(profiledOnDisk)} / ${n(downloaded)} profiled`
+    : `${n(profiled)} profiled`;
+  text.appendChild(main);
+  if (cached > 0) {
+    const kept = document.createElement('span');
+    kept.className = 'faces-cached';
+    kept.textContent = `\u00b7 ${n(cached)} cached`;
+    text.appendChild(kept);
+  }
+
   pill.title = [
-    `Familiar faces \u2014 ${profiled.toLocaleString()} of `
-      + `${(downloaded || profiled).toLocaleString()} downloaded videos profiled`,
+    counted
+      ? `Familiar faces \u2014 ${n(profiledOnDisk)} of ${n(downloaded)} downloaded videos profiled`
+      : `Familiar faces \u2014 ${n(profiled)} videos profiled, still counting the library`,
+    cached > 0
+      ? `${n(cached)} more were profiled before being freed up to the cloud, and still work`
+      : null,
     `${performers} performers have enough videos to recognise`,
     walking ? 'looking for new files\u2026' : null,
     current ? `reading ${current}` : null,
@@ -2756,6 +2812,20 @@ function buildGroupHead(group) {
   count.className = 'group-count';
   count.textContent = `${group.files.length} video${group.files.length === 1 ? '' : 's'}`;
   head.appendChild(count);
+
+  // How much of this performer the face index has actually read. Only shown
+  // once something has been, so the row stays quiet on a library with the
+  // feature switched off.
+  const profiled = group.files.reduce((n, f) => n + (f.profiled ? 1 : 0), 0);
+  if (profiled) {
+    const read = document.createElement('span');
+    read.className = 'group-profiled' + (profiled === group.files.length ? ' all' : '');
+    read.textContent = `${profiled} profiled`;
+    read.title = profiled === group.files.length
+      ? `All ${group.files.length} have been read for faces`
+      : `${profiled} of ${group.files.length} read for faces so far`;
+    head.appendChild(read);
+  }
 
   if (!group.unnamed) {
     // Straight to the flat listing for this one performer, the way a pill on a

@@ -30,7 +30,10 @@ const os = require('os');
 
 const engine = require('./face-engine');
 
-const VERSION = 1;
+// 2: three faces a frame instead of two, and a clustering threshold that stops
+// splitting one woman into two people. Older entries are re-profiled rather than
+// carried, since the grouping is what a suggestion is built on.
+const VERSION = 2;
 
 // Enough videos to average into a face. Two is a coincidence; three is a person.
 const MIN_VIDEOS = 3;
@@ -70,11 +73,16 @@ const state = {
   suggestions: new Map(), // video key -> [{ name, score, band, person }]
   queue: [],
   walking: false,
+  nextWalk: 0,
   running: false,
   enabled: true,
   current: '',
   lastActivity: 0,
   counted: { downloaded: 0, at: 0 },
+  // Every downloaded video's key, from the last sweep for work. Its purpose is
+  // the difference: a profile whose video is NOT in here is one whose file has
+  // since gone back to the cloud, and the work is kept regardless.
+  onDisk: new Set(),
   failures: new Map(),
   library: null,
   rootsOf: () => [],
@@ -240,6 +248,10 @@ function scoreVideo(key, entry) {
       runnerUp: ranked[1].name,
     });
   }
+  // Strongest first, not biggest-group first. On a correctly credited video the
+  // name already on it should be the one at the top -- that is the shape of a
+  // healthy answer, and it only reads that way if the order is the score.
+  out.sort((a, b) => b.score - a.score);
   if (out.length) state.suggestions.set(key, out);
   else state.suggestions.delete(key);
   return out;
@@ -254,7 +266,7 @@ function rescore() {
 
 // -------------------------------------------------------------- the listing
 
-const EMPTY = Object.freeze({ suggested: [] });
+const EMPTY = Object.freeze({ suggested: [], profiled: false });
 
 /**
  * Safe to spread onto any file entry.
@@ -264,8 +276,10 @@ const EMPTY = Object.freeze({ suggested: [] });
  * where a suggestion is a confirmation, or a disagreement worth looking at.
  */
 function decorate(stat) {
-  const found = state.suggestions.get(keyFor(stat));
-  return found ? { suggested: found } : EMPTY;
+  const key = keyFor(stat);
+  const entry = state.index.videos[key];
+  if (!entry) return EMPTY;
+  return { suggested: state.suggestions.get(key) || [], profiled: true };
 }
 
 function suggestionsFor(stat) {
@@ -317,7 +331,7 @@ async function profile(file, stat, opts = {}) {
   const groups = faces.length >= 2 ? engine.groupFaces(faces) : [];
   const people = groups
     .filter((g, i) => i === 0 || g.faces >= MIN_GROUP)
-    .slice(0, 3)
+    .slice(0, 4)
     .map((g) => ({ n: g.faces, vec: packVector(g.vector) }));
 
   const entry = { at: Date.now(), faces: faces.length, people };
@@ -349,7 +363,7 @@ async function walkForWork() {
     && r.toLowerCase().startsWith(other.toLowerCase() + path.sep)));
 
   const work = [];
-  let downloaded = 0;
+  const onDisk = new Set();
   const skip = new Set(['node_modules', '$recycle.bin', 'system volume information']);
   const seen = new Set();
 
@@ -365,8 +379,8 @@ async function walkForWork() {
         let stat;
         try { stat = await fsp.stat(full); } catch { continue; }
         if (isCloudOnly(stat)) continue;
-        downloaded += 1;
         const key = keyFor(stat);
+        onDisk.add(key);
         if (seen.has(key) || state.index.videos[key]) continue;
         if ((state.failures.get(key) || 0) >= 2) continue;
         seen.add(key);
@@ -376,7 +390,8 @@ async function walkForWork() {
   }
 
   for (const root of outer) await walk(root);
-  state.counted = { downloaded, at: Date.now() };
+  state.onDisk = onDisk;
+  state.counted = { downloaded: onDisk.size, at: Date.now() };
   // Unnamed videos first: a suggestion is worth most where there is no answer.
   const records = state.library ? state.library.all() : {};
   work.sort((a, b) => {
@@ -391,6 +406,9 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // How long the app must be quiet before the sweep takes a turn. Profiling holds
 // the CPU in bursts, and a browse that stutters is worse than a slow backfill.
 const IDLE_MS = 1500;
+// How often the library is counted again, so the pill's denominator corrects
+// itself rather than standing at whatever the first sweep happened to see.
+const WALK_EVERY_MS = 15 * 60 * 1000;
 const busy = () => Date.now() - state.lastActivity < IDLE_MS;
 
 function noteActivity() {
@@ -411,9 +429,20 @@ async function loop() {
     while (state.enabled && engine.available().ok) {
       if (busy()) { await wait(400); continue; }
 
-      if (!state.queue.length) {
+      // Re-counted on a timer as well as when the queue runs dry. The library
+      // is not fixed -- files are added, and freed up -- and on a fresh install
+      // the first sweep can run before any folder has been opened, which would
+      // otherwise leave a denominator counted from nothing until the queue
+      // emptied. Anything already profiled is skipped, so a re-walk is cheap.
+      if (!state.queue.length || Date.now() > state.nextWalk) {
         state.walking = true;
-        try { state.queue = await walkForWork(); } finally { state.walking = false; }
+        try {
+          const found = await walkForWork();
+          // Merge rather than replace: an in-flight queue keeps its order, and
+          // its unfinished items are in `found` again anyway.
+          state.queue = found;
+          state.nextWalk = Date.now() + WALK_EVERY_MS;
+        } finally { state.walking = false; }
         if (!state.queue.length) {
           // Nothing outstanding: sleep, then look again in case files arrived.
           state.current = '';
@@ -473,9 +502,14 @@ function setEnabled(on) {
  */
 function status() {
   const ready = engine.available().ok;
-  const profiled = Object.keys(state.index.videos).length;
+  const keys = Object.keys(state.index.videos);
   const withFaces = Object.values(state.index.videos)
     .reduce((n, v) => n + ((v.people || []).length ? 1 : 0), 0);
+  // Profiles whose video is no longer on this machine. They keep working --
+  // the key is size and modified time, which dehydration does not touch -- so
+  // this is the count of work that outlived the file being freed up.
+  const cached = state.counted.at
+    ? keys.reduce((n, k) => n + (state.onDisk.has(k) ? 0 : 1), 0) : 0;
   return {
     available: ready,
     reason: engine.available().reason,
@@ -484,7 +518,13 @@ function status() {
     walking: state.walking,
     idle: !busy(),
     current: state.current,
-    profiled,
+    profiled: keys.length,
+    // How many of the downloaded videos are done -- the pair that belongs
+    // either side of a slash. Profiles of freed-up files are counted apart,
+    // since a denominator they are not part of cannot contain them.
+    profiledOnDisk: keys.length - cached,
+    cached,
+    counted: Boolean(state.counted.at),
     withFaces,
     downloaded: state.counted.downloaded,
     remaining: state.walking ? null : state.queue.length,

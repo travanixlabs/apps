@@ -870,6 +870,19 @@ main { padding: 16px; }
 .group-head:first-child { margin-top: 0; }
 .group-name { font-size: 15px; font-weight: 600; }
 .group-count { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+/* How much of this performer the face index has read. Quieter than the video
+   count it follows -- it qualifies that number rather than adding a new one --
+   and it turns green only when there is nothing left to read. */
+.group-profiled {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 7px;
+  white-space: nowrap;
+}
+.group-profiled.all { color: #7fd1a3; border-color: #2f5a44; }
 /* The score the sections are ordered by, gold as it is in Top performers. */
 .group-score { color: #f0c060; font-size: 12px; font-variant-numeric: tabular-nums; cursor: help; }
 .group-only { margin-left: auto; }
@@ -1369,6 +1382,9 @@ body.dragging .card { cursor: grabbing; }
 .faces-pill.paused { color: var(--text-faint); opacity: 0.6; }
 .faces-pill.paused .faces-dot { background: none; box-shadow: inset 0 0 0 1px currentColor; }
 .faces-pill.done { color: #7fd1a3; border-color: #2f5a44; }
+/* Profiles kept for videos since freed up to the cloud: a second, quieter
+   number, because it is not part of the fraction beside it. */
+.faces-cached { color: var(--text-faint); margin-left: 5px; }
 
 /* A suggested performer: the face it came from, the name, and one click to
    accept it. Sized off the chip rules so it sits in the same rhythm as the
@@ -1396,6 +1412,15 @@ body.dragging .card { cursor: grabbing; }
   background: #0e141c;
 }
 .face-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The confidence, dimmer than the name: it qualifies the answer rather than
+   being one. Tabular so a column of them does not jitter. */
+.face-pct {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.face-chip.band-strong .face-pct { color: #7fd1a3; }
 .face-band { color: var(--text-faint); font-size: 11px; flex: none; }
 
 /* Confidence, as border weight rather than another word to read. */
