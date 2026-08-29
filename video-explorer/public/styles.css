@@ -1467,3 +1467,91 @@ body.dragging .card { cursor: grabbing; }
   flex-wrap: wrap;
   margin-top: 7px;
 }
+
+/* ------------------------------------------------- the lineup: is this her? */
+
+/* The face inside a chip, once it is a button of its own. */
+.face-look {
+  display: inline-flex;
+  border-radius: 50%;
+  cursor: zoom-in;
+  flex: none;
+  outline-offset: 1px;
+}
+.face-look:hover { outline: 2px solid var(--accent); }
+
+.face-card { width: min(760px, 94vw); }
+
+.face-body {
+  display: flex;
+  gap: 18px;
+  padding: 16px;
+  align-items: flex-start;
+}
+.face-side { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.face-side-wide { flex: 1 1 auto; }
+.face-side-label {
+  color: var(--text-faint);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.face-side-note { color: var(--text-faint); font-size: 11px; }
+/* Only the left column is pinned to the width of the face above it. The right
+   one is as wide as the grid and its note has room to be a sentence. */
+.face-side:not(.face-side-wide) > .face-side-note {
+  max-width: 168px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The face under question, big enough to actually look at. */
+.face-big {
+  width: 168px;
+  height: 168px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-strong);
+}
+
+/* Hers, as many as fit. Four across matches the 168px on the left. */
+.face-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+  gap: 8px;
+}
+.face-cell { margin: 0; min-width: 0; }
+.face-cell img {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  display: block;
+}
+/* A face that does not look like her others. Dimmed rather than removed: it is
+   in her average whether or not it flatters the picture. */
+.face-odd img { opacity: 0.45; border-style: dashed; }
+.face-odd figcaption { opacity: 0.6; font-style: italic; }
+
+.face-cell figcaption {
+  color: var(--text-faint);
+  font-size: 10px;
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The number, said in words, directly under both sets of faces. */
+.face-verdict {
+  margin: 0;
+  padding: 0 16px 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.face-verdict.band-strong { color: #7fd1a3; }
+.face-verdict.band-maybe { color: var(--text-faint); }

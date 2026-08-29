@@ -344,6 +344,28 @@ on its own is worth nothing.
   that denominator. Hover for the performer count and the file being read. Click
   to pause the sweep, click again to resume.
 
+### Is this her?
+
+A name beside a 22px thumbnail asks to be taken on trust. Click the face on a
+suggestion and the lineup opens: **this video's face on the left, hers from
+other videos on the right**, each captioned with where it came from. Same person
+or not is then a two-second judgement.
+
+It also names the runner-up — on a close call, who else it nearly was tells you
+as much as who it was — and offers *See her N videos* to go through the rest.
+
+Faces most like the rest of her come first. A video that yielded only two or
+three faces can have the male co-star as its biggest one, so his face ends up
+standing for hers; those are shown last, dimmed, and the note says how many
+there are. They are **not** hidden and **not** dropped from her average: they
+are part of what the match was made against, and a lineup that quietly removes
+its awkward evidence is not a lineup.
+
+Dropping them was tried. Measured leave-one-out over 280 videos it moved top-1
+by −0.4 points and top-3 by +0.3 — noise, in exchange for discarding 11% of the
+evidence. One wrong face among a dozen right ones is simply outvoted, and the
+averaging is cheaper than deciding who to believe.
+
 ### Why it asks per name, not per video
 
 A video is not one performer. Credited to A with A, B and C recognised in it,
@@ -360,8 +382,15 @@ by score rather than by how much of the video each face fills.
 
 While the app is open, one video at a time, and only while nothing else is
 happening. A request arriving abandons the current harvest mid-frame rather than
-finishing it, so browsing never waits behind a profile. Uncredited videos are
-done first — a suggestion is worth most where there is no answer already.
+finishing it, so browsing never waits behind a profile.
+
+**Credited videos are read first**, and round-robin across performers rather than
+one performer at a time. The obvious order — unnamed videos first, since that is
+where a suggestion is worth most — is exactly wrong: nothing can be suggested
+until somebody has an average face, and averages come only from videos that
+already carry a name. Six each across everyone is a working index; sixty of one
+woman is one working performer. Twenty-five videos in, twenty-five performers are
+represented. Then the unnamed videos it is all for, then deeper coverage.
 
 A video takes three to five seconds. Two and a half thousand of them is a few
 evenings of having the app open, and it survives being interrupted: the index is

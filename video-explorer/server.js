@@ -1241,6 +1241,31 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, faces.setEnabled(body.enabled !== false));
     }
 
+    // A performer's other faces, to hold the suggested one up against.
+    if (req.method === 'GET' && route === '/api/faces/lineup') {
+      return sendJson(res, 200, faces.lineup(
+        url.searchParams.get('model') || '',
+        Number(url.searchParams.get('limit') || 8),
+      ));
+    }
+
+    // One of those, by key. Keyed rather than pathed because a lineup shows
+    // other videos, which may since have been renamed or freed up -- and this
+    // is our own crop, not any part of a file.
+    if (req.method === 'GET' && route === '/api/faces/crop') {
+      const png = await faces.faceImageByKey(
+        url.searchParams.get('key') || '',
+        Number(url.searchParams.get('person') || 0),
+      );
+      if (!png) return sendJson(res, 404, { error: 'no face stored' });
+      res.writeHead(200, {
+        'Content-Type': 'image/png',
+        'Content-Length': png.length,
+        'Cache-Control': 'private, max-age=86400',
+      });
+      return res.end(png);
+    }
+
     // The face a suggestion was made from, so a name can be checked against a
     // picture rather than taken on trust.
     if (req.method === 'GET' && route === '/api/faces/face') {

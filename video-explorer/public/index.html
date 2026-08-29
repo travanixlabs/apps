@@ -216,6 +216,37 @@
   </div>
 </div>
 
+<!-- Is this her? The suggested face, against faces from her other videos. -->
+<div id="faceModal" class="modal" hidden>
+  <div class="modal-card face-card">
+    <header class="modal-head">
+      <h2 id="faceTitle">Is this her?</h2>
+      <button class="btn btn-icon modal-close">✕</button>
+    </header>
+
+    <div class="face-body">
+      <div class="face-side">
+        <div class="face-side-label">This video</div>
+        <img id="faceThis" class="face-big" alt="">
+        <div id="faceThisName" class="face-side-note"></div>
+      </div>
+
+      <div class="face-side face-side-wide">
+        <div id="faceHerLabel" class="face-side-label"></div>
+        <div id="faceHer" class="face-grid"></div>
+        <div id="faceHerNote" class="face-side-note"></div>
+      </div>
+    </div>
+
+    <p id="faceVerdict" class="face-verdict"></p>
+
+    <footer class="modal-foot">
+      <button id="faceOnly" class="btn btn-ghost">See her videos</button>
+      <button id="faceAdd" class="btn btn-primary">Add</button>
+    </footer>
+  </div>
+</div>
+
 <!-- Advanced filters -->
 <div id="advModal" class="modal" hidden>
   <div class="modal-card wide">

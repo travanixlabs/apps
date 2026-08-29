@@ -192,6 +192,40 @@ function rebuild() {
   rescore();
 }
 
+// Below this, two faces are different people: same-person crops sit at 0.5 and
+// up, different people around 0.1. Used to order a lineup, not to filter one.
+const SAME_PERSON = 0.30;
+
+/**
+ * How much each of a performer's videos looks like the rest of her.
+ *
+ * The dominant face in a video is usually the performer but not always -- where
+ * a video yielded only two or three faces the male co-star can be the biggest of
+ * them, and the lineup shows this plainly: two of six faces for one performer
+ * were a man.
+ *
+ * Dropping those from her average was the obvious fix and it does not work.
+ * Measured leave-one-out over 280 videos it moved top-1 by -0.4 points and top-3
+ * by +0.3 -- noise, in exchange for discarding 11% of the evidence. A wrong face
+ * among a dozen right ones is simply outvoted by the averaging, and the averaging
+ * is cheaper than deciding who to believe.
+ *
+ * So nothing is thrown away. This only says which faces are most like her, so
+ * a lineup can lead with those rather than opening on the co-star.
+ */
+function agreementWithin(acc) {
+  const entries = [...acc.keys.entries()];
+  if (entries.length < 2) return new Map(entries.map(([k]) => [k, 1]));
+  const sims = entries.map(([, a]) => entries.map(([, b]) => engine.cosine(a, b)));
+  let best = 0;
+  let bestTotal = -Infinity;
+  for (let i = 0; i < entries.length; i += 1) {
+    const total = sims[i].reduce((n, x) => n + x, 0);
+    if (total > bestTotal) { bestTotal = total; best = i; }
+  }
+  return new Map(entries.map(([key], i) => [key, sims[best][i]]));
+}
+
 /**
  * The centroid a video did not help build.
  *
@@ -309,8 +343,75 @@ function rankFor(stat, person = 0) {
 
 /** Where the face behind a suggestion came from, as a PNG. */
 async function faceImage(stat, person = 0) {
-  const at = path.join(state.dir, 'thumbs', `${fileNameFor(keyFor(stat))}-${person}.png`);
+  return faceImageByKey(keyFor(stat), person);
+}
+
+/**
+ * The same picture, addressed by key rather than by path.
+ *
+ * A lineup shows faces from other videos, and those videos may since have been
+ * renamed, moved, or freed up to the cloud -- none of which changes the key. It
+ * is also our own generated 112x112 crop rather than any part of a file, so
+ * there is nothing here for the path authorisation to protect.
+ */
+async function faceImageByKey(key, person = 0) {
+  if (!/^\d+:\d+$/.test(String(key))) return null;
+  const at = path.join(state.dir, 'thumbs', `${fileNameFor(key)}-${Number(person) || 0}.png`);
   try { return await fsp.readFile(at); } catch { return null; }
+}
+
+/**
+ * A performer's other faces, for checking a suggestion against.
+ *
+ * A name beside a thumbnail asks to be taken on trust. The same face beside
+ * eight of hers does not -- it is the comparison the ranking already made,
+ * shown rather than asserted.
+ *
+ * Solo credits lead, because those are the videos her average is actually built
+ * from; a face from a two-hander might be the other performer.
+ */
+function lineup(model, limit = 8) {
+  const want = String(model || '').toLowerCase();
+  if (!want) return { model: '', total: 0, faces: [] };
+  const records = state.library ? state.library.all() : {};
+  const rows = [];
+  for (const [key, entry] of Object.entries(state.index.videos)) {
+    const record = records[key];
+    if (!record || !(entry.people || []).length) continue;
+    const models = record.models || [];
+    if (!models.some((m) => m.toLowerCase() === want)) continue;
+    rows.push({
+      key,
+      name: entry.name || '',
+      rating: record.rating || 0,
+      solo: models.length === 1,
+      faces: entry.people[0].n || 0,
+    });
+  }
+  rows.sort((a, b) => Number(b.solo) - Number(a.solo) || b.faces - a.faces);
+  const centroid = state.centroids.get(model);
+  // Most like the rest of her first, so the panel opens on faces that are
+  // actually hers. The odd ones stay in the list, and stay in her average --
+  // they are part of what the match was made against, and hiding them would
+  // make the lineup a nicer picture of a less honest answer.
+  let odd = 0;
+  if (centroid) {
+    const agreement = agreementWithin(centroid);
+    for (const row of rows) row.agrees = agreement.has(row.key)
+      ? Math.round(agreement.get(row.key) * 100) / 100 : null;
+    odd = rows.filter((r) => r.agrees !== null && r.agrees < SAME_PERSON).length;
+    rows.sort((a, b) => (b.agrees ?? -1) - (a.agrees ?? -1)
+      || Number(b.solo) - Number(a.solo) || b.faces - a.faces);
+  }
+  return {
+    model,
+    total: rows.length,
+    odd,
+    // How many of hers the average is actually built from, which is not the
+    // same as how many she is in.
+    contributing: centroid ? centroid.count : 0,
+    faces: rows.slice(0, Math.max(1, Math.min(24, limit))),
+  };
 }
 
 // ------------------------------------------------------------- profiling one
@@ -334,7 +435,9 @@ async function profile(file, stat, opts = {}) {
     .slice(0, 4)
     .map((g) => ({ n: g.faces, vec: packVector(g.vector) }));
 
-  const entry = { at: Date.now(), faces: faces.length, people };
+  const entry = {
+    at: Date.now(), faces: faces.length, people, name: path.basename(file),
+  };
   state.index.videos[key] = entry;
   saveSoon();
 
@@ -392,13 +495,57 @@ async function walkForWork() {
   for (const root of outer) await walk(root);
   state.onDisk = onDisk;
   state.counted = { downloaded: onDisk.size, at: Date.now() };
-  // Unnamed videos first: a suggestion is worth most where there is no answer.
+  return prioritise(work);
+}
+
+/**
+ * What to read first.
+ *
+ * The obvious order -- unnamed videos first, since that is where a suggestion
+ * is worth most -- is exactly wrong, and was how this shipped. Nothing can be
+ * suggested until somebody has an average face, and averages are built only
+ * from videos that already carry a name. Starting with the unnamed ones means
+ * hours of reading that produces no suggestion at all, and an empty lineup to
+ * check the first one against.
+ *
+ * So the credited videos come first, and round-robin rather than performer by
+ * performer: six each across everyone is a working index, where sixty of one
+ * woman is one working performer. Then the unnamed videos it is all for, and
+ * then the rest -- deeper coverage of people already recognised, and the
+ * two-handers that no average can be built from.
+ */
+function prioritise(work) {
   const records = state.library ? state.library.all() : {};
-  work.sort((a, b) => {
-    const named = (w) => ((records[w.key] || {}).models || []).length > 0;
-    return Number(named(a)) - Number(named(b));
-  });
-  return work;
+  const modelsOf = (w) => ((records[w.key] || {}).models || []);
+
+  const byPerformer = new Map();
+  const unnamed = [];
+  const rest = [];
+  for (const item of work) {
+    const models = modelsOf(item);
+    if (models.length === 1) {
+      const name = models[0];
+      if (!byPerformer.has(name)) byPerformer.set(name, []);
+      byPerformer.get(name).push(item);
+    } else if (!models.length) unnamed.push(item);
+    else rest.push(item);
+  }
+
+  // Enough of one performer to be recognisable, twice over: the first pass
+  // makes her nameable, the second makes her average steady.
+  const ENOUGH = MIN_VIDEOS * 2;
+  const seeding = [];
+  const deeper = [];
+  for (let round = 0; ; round += 1) {
+    let anyLeft = false;
+    for (const vids of byPerformer.values()) {
+      if (round >= vids.length) continue;
+      anyLeft = true;
+      (round < ENOUGH ? seeding : deeper).push(vids[round]);
+    }
+    if (!anyLeft) break;
+  }
+  return [...seeding, ...unnamed, ...deeper, ...rest];
 }
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -537,5 +684,8 @@ function status() {
 
 module.exports = {
   init, start, setEnabled, status, noteActivity, decorate, suggestionsFor, rankFor,
+  lineup, faceImageByKey,
+  // The reading order, for checking what a fresh install would do first.
+  __queueForTest: walkForWork,
   faceImage, profile, rebuild, flush, keyFor, MIN_VIDEOS,
 };

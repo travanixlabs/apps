@@ -1463,14 +1463,26 @@ function buildFaceChip(file, sug, { onPick, showFace = true } = {}) {
   if (already) chip.classList.add('confirmed');
 
   if (showFace) {
+    // The face is a button in its own right: pressing the chip accepts the
+    // name, pressing the face asks to be shown why. Accepting stays the whole
+    // chip so the main action is not a 22px target.
+    const look = document.createElement('span');
+    look.className = 'face-look';
+    look.title = `See ${sug.name}'s other faces before deciding`;
     const img = document.createElement('img');
     img.className = 'face-thumb';
     img.alt = '';
     img.loading = 'lazy';
     img.src = `/api/faces/face?path=${encodeURIComponent(file.path)}&person=${sug.person || 0}`;
     // No stored crop is not an error worth showing; the name still stands.
-    img.addEventListener('error', () => img.remove());
-    chip.appendChild(img);
+    img.addEventListener('error', () => look.remove());
+    look.appendChild(img);
+    look.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      openFaceLineup(file, sug, onPick);
+    });
+    chip.appendChild(look);
   }
 
   const name = document.createElement('span');
@@ -1494,10 +1506,11 @@ function buildFaceChip(file, sug, { onPick, showFace = true } = {}) {
   chip.title = [
     `${Math.round(sug.score * 100)}% like ${sug.name}'s average face, `
       + `across the ${sug.videos} videos she is named in`,
+    showFace ? 'Click her face to compare against her other videos' : null,
     `${Math.round(sug.margin * 100)} points clear of the next name (${sug.runnerUp}) `
       + `\u2014 ${BAND_LABEL[sug.band]}`,
     already ? 'Already credited on this video' : 'Click to add her',
-  ].join('\n');
+  ].filter(Boolean).join('\n');
   chip.addEventListener('click', (ev) => {
     ev.stopPropagation();
     ev.preventDefault();
@@ -1583,6 +1596,124 @@ function renderDialogSuggestions(files) {
       },
     }));
   }
+}
+
+/**
+ * The lineup: is this her?
+ *
+ * A name beside a 22px thumbnail asks to be taken on trust. The same face
+ * beside eight of hers does not -- it shows the comparison the ranking already
+ * made instead of asserting the result of it, and same-person-or-not is then a
+ * two-second judgement rather than an act of faith.
+ *
+ * The runner-up is named too. When it is a close call, who else it nearly was
+ * tells you as much as who it was.
+ */
+let lineupFor = null;
+
+async function openFaceLineup(file, sug, onPick) {
+  lineupFor = { file, sug, onPick };
+  const already = (file.models || []).some((m) => m.toLowerCase() === sug.name.toLowerCase());
+
+  $('#faceTitle').textContent = already
+    ? `${sug.name} — does the face agree?`
+    : `Is this ${sug.name}?`;
+  $('#faceThis').src =
+    `/api/faces/face?path=${encodeURIComponent(file.path)}&person=${sug.person || 0}`;
+  $('#faceThisName').textContent = file.name;
+  $('#faceHerLabel').textContent = 'Loading her other videos…';
+  $('#faceHer').replaceChildren();
+  $('#faceHerNote').textContent = '';
+
+  const pct = Math.round(sug.score * 100);
+  const gap = Math.round(sug.margin * 100);
+  $('#faceVerdict').textContent = `${pct}% alike, ${gap} points clear of ${sug.runnerUp} — `
+    + `${BAND_LABEL[sug.band]}.`;
+  $('#faceVerdict').className = `face-verdict band-${sug.band}`;
+
+  $('#faceAdd').textContent = already ? 'Already credited' : `Add ${sug.name}`;
+  $('#faceAdd').disabled = already;
+  // Every video she is credited with, which is what the button actually does --
+  // not the smaller number of hers that have been read for faces.
+  const credited = (state.modelVocab.find(
+    (v) => v.tag.toLowerCase() === sug.name.toLowerCase(),
+  ) || {}).count;
+  $('#faceOnly').textContent = credited
+    ? `See her ${credited} video${credited === 1 ? '' : 's'}`
+    : 'See her videos';
+  $('#faceModal').hidden = false;
+
+  let data;
+  try {
+    data = await api(`/api/faces/lineup?model=${encodeURIComponent(sug.name)}&limit=8`);
+  } catch (err) {
+    $('#faceHerLabel').textContent = 'Could not load her other faces';
+    return;
+  }
+  // The dialog may have been closed, or reopened on someone else, while that
+  // request was in the air.
+  if (!lineupFor || lineupFor.sug.name !== sug.name) return;
+
+  const others = (data.faces || []).filter((f) => f.key !== keyOf(file));
+  // What is on the right is what has been read, not everything she is in --
+  // those are different numbers and saying the larger one over the smaller set
+  // reads as missing pictures.
+  $('#faceHerLabel').textContent = others.length
+    ? `${sug.name} — ${others.length} of her ${data.total} read so far`
+    : `No stored faces for ${sug.name} yet`;
+  $('#faceHerNote').textContent = data.contributing
+    ? `Her average is built from ${data.contributing} of them`
+      + (data.odd ? `, ${data.odd} of which look unlike the rest — likely a co-star.` : '.')
+    : '';
+
+  const grid = $('#faceHer');
+  grid.replaceChildren();
+  // A profile can exist without a picture -- the vector is what matters and the
+  // crop is a courtesy -- so the grid can end up empty even when she has
+  // videos. Saying so beats an unexplained blank next to "9 videos".
+  let showing = others.length;
+  const noteWhenEmpty = () => {
+    showing -= 1;
+    if (showing > 0) return;
+    $('#faceHerLabel').textContent = `No stored faces for ${sug.name} yet`;
+    $('#faceHerNote').textContent = 'They are written as the sweep reaches her videos.';
+  };
+  for (const other of others) {
+    const cell = document.createElement('figure');
+    // Marked, not hidden: it counts towards her average either way, and a
+    // lineup that quietly drops its awkward evidence is not a lineup.
+    cell.className = 'face-cell'
+      + (other.agrees !== null && other.agrees < 0.3 ? ' face-odd' : '');
+    if (other.agrees !== null && other.agrees < 0.3) {
+      cell.title = 'This face looks unlike her others — probably a co-star picked '
+        + 'from a video with few faces in it';
+    }
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.alt = '';
+    img.src = `/api/faces/crop?key=${encodeURIComponent(other.key)}&person=0`;
+    img.addEventListener('error', () => { cell.remove(); noteWhenEmpty(); });
+    // A profile written before filenames were recorded has no caption of its
+    // own; the listing usually holds the same video and can supply one.
+    const known = other.name
+      || (state.files.find((f) => keyOf(f) === other.key) || {}).name || '';
+    const cap = document.createElement('figcaption');
+    cap.textContent = known || '—';
+    cap.title = known;
+    cell.appendChild(img);
+    cell.appendChild(cap);
+    grid.appendChild(cell);
+  }
+}
+
+function closeFaceLineup() {
+  lineupFor = null;
+  $('#faceModal').hidden = true;
+}
+
+/** The library's key for a file, so a lineup can leave this video out of it. */
+function keyOf(file) {
+  return `${file.size}:${Math.round(file.mtimeMs)}`;
 }
 
 /**
@@ -3688,6 +3819,25 @@ function wireEvents() {
   }
 
   $('#facesPill').addEventListener('click', toggleFaceSweep);
+  $('#faceAdd').addEventListener('click', () => {
+    if (!lineupFor) return;
+    const { sug, onPick } = lineupFor;
+    closeFaceLineup();
+    onPick(sug.name);
+  });
+  $('#faceOnly').addEventListener('click', () => {
+    if (!lineupFor) return;
+    const { sug } = lineupFor;
+    closeFaceLineup();
+    // Her videos, and nothing else -- the same thing a pill on a card does.
+    $('#playerModal').hidden = true;
+    $('#tagModal').hidden = true;
+    filterByLabel('models', sug.name);
+  });
+
+  $('#faceModal').addEventListener('click', (ev) => {
+    if (ev.target.id === 'faceModal' || ev.target.closest('.modal-close')) closeFaceLineup();
+  });
   pollFaceStatus();
   setInterval(pollFaceStatus, 5000);
 
@@ -3814,7 +3964,8 @@ function isTyping() {
 
 function modalOpen() {
   return !$('#playerModal').hidden || !$('#pickerModal').hidden
-    || !$('#settingsModal').hidden || !$('#tagModal').hidden || !$('#advModal').hidden;
+    || !$('#settingsModal').hidden || !$('#tagModal').hidden || !$('#advModal').hidden
+    || !$('#faceModal').hidden;
 }
 
 /**
@@ -3832,6 +3983,9 @@ function onKeyDown(ev) {
   // Escape always unwinds one layer: topmost modal first, then the selection.
   if (ev.key === 'Escape') {
     if (!$('#volMenu').hidden) { toggleVolumeMenu(false); return; }
+    // The lineup opens over the player and over the label dialog, so it is the
+    // first layer Escape takes off.
+    if (!$('#faceModal').hidden) return closeFaceLineup();
     if (!$('#pickerModal').hidden) return closePicker();
     if (!$('#tagModal').hidden) { $('#tagModal').hidden = true; return; }
     if (!$('#advModal').hidden) { $('#advModal').hidden = true; return; }
