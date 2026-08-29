@@ -1751,7 +1751,8 @@ function renderFacePill() {
   // nothing left over. A green pill over an untouched library is worse than no
   // pill, and that is what a bare "profiled >= downloaded" gave when the count
   // itself was wrong.
-  const finished = counted && !remaining && downloaded > 0 && profiledOnDisk >= downloaded;
+  const finished = counted && !remaining && downloaded > 0
+    && profiledOnDisk >= downloaded && doing !== 'counting';
   const busy = doing === 'reading' || doing === 'counting';
 
   pill.classList.toggle('working', busy);

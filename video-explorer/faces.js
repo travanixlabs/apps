@@ -92,6 +92,7 @@ const state = {
   failures: new Map(),
   library: null,
   rootsOf: () => [],
+  homeOf: () => '',
   dirty: false,
   saveTimer: null,
 };
@@ -101,12 +102,13 @@ const state = {
 const keyFor = (stat) => `${stat.size}:${Math.round(stat.mtimeMs)}`;
 const fileNameFor = (key) => key.replace(':', '_');
 
-function init({ cacheDir, library, roots }) {
+function init({ cacheDir, library, roots, home }) {
   state.dir = cacheDir || path.join(
     process.env.LOCALAPPDATA || os.tmpdir(), 'video-explorer', 'faces',
   );
   state.library = library;
   state.rootsOf = roots;
+  state.homeOf = home || (() => '');
   const modelDir = process.env.VIDEO_EXPLORER_FACE_MODELS
     || path.join(path.dirname(state.dir), 'face-models');
 
@@ -464,26 +466,80 @@ async function profile(file, stat, opts = {}) {
 
 // ------------------------------------------------------ the background sweep
 
-/** Every downloaded video under the folders you have opened, deepest root wins. */
-async function walkForWork() {
-  const roots = state.rootsOf().map((r) => path.resolve(r));
-  // A root inside another root would walk the same tree twice.
-  const outer = roots.filter((r) => !roots.some((other) => other !== r
-    && r.toLowerCase().startsWith(other.toLowerCase() + path.sep)));
+/**
+ * Folders that are never a video library and are expensive to prove empty.
+ *
+ * AppData in particular contains junctions that point at their own ancestors --
+ * "Application Data" inside "AppData\Local" is the classic one -- so walking it
+ * without a loop guard does not finish at all.
+ */
+const NEVER_WALK = new Set([
+  'appdata', 'application data', 'local settings', 'windows', 'program files',
+  'program files (x86)', 'programdata', 'node_modules', '$recycle.bin',
+  'system volume information', 'onedrivetemp', 'temp', 'tmp', '.cache', '.git',
+]);
 
+const skipDir = (name) => name.startsWith('$') || name.startsWith('.')
+  || NEVER_WALK.has(name.toLowerCase());
+
+const inside = (child, parent) => {
+  const c = path.resolve(child).toLowerCase();
+  const r = path.resolve(parent).toLowerCase();
+  return c === r || c.startsWith(r + path.sep);
+};
+
+/**
+ * Which folders the sweep should cover.
+ *
+ * Opening a folder authorises reading it, and one of those can easily be a
+ * parent of the library -- C:\Users\User was in the list here, put there by a
+ * single browse. Taking the outermost root then turns a video sweep into a walk
+ * of the whole user profile: hundreds of thousands of files that are not videos,
+ * and junction loops that never terminate.
+ *
+ * So a root above the home folder is not honoured as itself; it becomes the home
+ * folder. The sweep can be narrower than what you have opened, never wider.
+ */
+function sweepRoots() {
+  // Everything resolved to one form first. Comparing a resolved path against an
+  // unresolved one makes each look like it is inside the other, and the pair
+  // then cancels out -- which emptied the sweep entirely.
+  const raw = state.homeOf ? state.homeOf() : '';
+  const home = raw ? path.resolve(raw) : '';
+  const bounded = [];
+  const add = (dir) => {
+    if (!bounded.some((r) => r.toLowerCase() === dir.toLowerCase())) bounded.push(dir);
+  };
+  for (const root of state.rootsOf().filter(Boolean).map((r) => path.resolve(r))) {
+    // Above the library: stand at the library instead.
+    if (home && inside(home, root) && !inside(root, home)) add(home);
+    else add(root);
+  }
+  if (home && !bounded.length) add(home);
+  // Then the usual: a root inside another would walk the same tree twice.
+  return bounded.filter((r) => !bounded.some((other) => other !== r && inside(r, other)));
+}
+
+/** Every downloaded video under the folders the sweep covers. */
+async function walkForWork() {
   const work = [];
   const onDisk = new Set();
-  const skip = new Set(['node_modules', '$recycle.bin', 'system volume information']);
   const seen = new Set();
+  const visited = new Set();
 
-  async function walk(dir) {
+  async function walk(dir, depth) {
     let entries;
     try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
       const full = path.join(dir, e.name);
       if (e.isDirectory()) {
-        if (e.name.startsWith('.') || skip.has(e.name.toLowerCase())) continue;
-        await walk(full);
+        if (depth >= 12 || skipDir(e.name)) continue;
+        // A junction pointing back up its own tree would otherwise recurse for
+        // ever, which is exactly what walking the user profile did.
+        const real = path.resolve(full).toLowerCase();
+        if (visited.has(real)) continue;
+        visited.add(real);
+        await walk(full, depth + 1);
       } else if (/\.(mp4|m4v|mov|mkv|webm)$/i.test(e.name)) {
         let stat;
         try { stat = await fsp.stat(full); } catch { continue; }
@@ -498,7 +554,12 @@ async function walkForWork() {
     }
   }
 
-  for (const root of outer) await walk(root);
+  for (const root of sweepRoots()) {
+    const real = path.resolve(root).toLowerCase();
+    if (visited.has(real)) continue;
+    visited.add(real);
+    await walk(root, 0);
+  }
   state.onDisk = onDisk;
   state.counted = { downloaded: onDisk.size, at: Date.now() };
   return prioritise(work);
@@ -712,6 +773,7 @@ function status() {
     remaining: state.walking ? null : state.queue.length,
     performers: state.centroids.size,
     suggestions: state.suggestions.size,
+    covering: sweepRoots(),
     model: engine.available().model,
     rebuilding: state.rebuilding,
   };

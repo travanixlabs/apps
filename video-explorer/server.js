@@ -1429,6 +1429,9 @@ async function main() {
     // install has an empty `roots`, and a sweep over nothing would report a
     // library of nothing.
     roots: () => [...config.roots, config.homeDir].filter(Boolean),
+    // A folder opened above the library -- C:\Users\User, say -- authorises
+    // reading but must not widen the sweep to the whole profile.
+    home: () => config.homeDir || ONEDRIVE_ROOT || '',
   });
   if (face.ok) {
     log(`familiar faces: ${face.profiled} videos profiled, models at ${face.modelDir}`);

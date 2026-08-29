@@ -401,6 +401,14 @@ A video takes three to five seconds. Two and a half thousand of them is a few
 evenings of having the app open, and it survives being interrupted: the index is
 the progress record, so a close resumes rather than restarts.
 
+The sweep covers your **home folder**, plus any folder you have opened that is
+not inside it — never anything above it. Opening a folder authorises reading it,
+and one browse can easily leave `C:\Users\User` on that list; honouring that as
+the outermost root turns a video sweep into a walk of the whole user profile,
+through junctions like `AppData\Local\Application Data` that point at their own
+ancestors and never terminate. Depth is capped at 12 and every resolved path is
+visited once — the same guards the folder scanner uses.
+
 ### It never downloads anything
 
 Only files already on this machine are ever profiled — the same cloud test the
