@@ -311,6 +311,98 @@ metadata and has no local record, any embedded tags and rating are adopted into
 the sidecar. That is the return leg: tag on this machine, write into the files,
 and another machine picks them up the first time it looks at them.
 
+## Familiar faces
+
+Who is probably in this video, from the ones you have already named.
+
+A performer you have credited in twenty videos is described by those twenty
+videos. Average their faces and you have her, far more reliably than any single
+frame of any one of them. That average is what an unnamed video is compared
+against — and the comparison is a **ranking**, not a threshold: a name that beats
+every other name by a clear margin is worth showing, and a raw similarity number
+on its own is worth nothing.
+
+**Nothing here ever writes a label.** It suggests; you decide.
+
+### Where it shows up
+
+- **Under the player** — a *Looks like* strip with the face it matched, the name,
+  and one click to add it. Shown on credited videos too: agreement is a
+  confirmation, and disagreement is the most useful thing this can tell you.
+- **In the label dialog** — the same chips beside the Models box. Clicking one
+  types the name into the box rather than saving it, so **Add** and **Replace**
+  still mean exactly what they say.
+- **Advanced filters → Suggested models** — *has a suggestion*, *agrees with the
+  label*, *disagrees*, *nothing recognised*. **Disagrees** is the one to hunt
+  with: it finds mislabels and uncredited second performers.
+- **The toolbar pill** — `1,204 / 2,735 profiled`, with the performer count and
+  the file being read on hover. Click it to pause the sweep, click again to
+  resume.
+
+### How the backfill runs
+
+While the app is open, one video at a time, and only while nothing else is
+happening. A request arriving abandons the current harvest mid-frame rather than
+finishing it, so browsing never waits behind a profile. Uncredited videos are
+done first — a suggestion is worth most where there is no answer already.
+
+A video takes three to five seconds. Two and a half thousand of them is a few
+evenings of having the app open, and it survives being interrupted: the index is
+the progress record, so a close resumes rather than restarts.
+
+### It never downloads anything
+
+Only files already on this machine are ever profiled — the same cloud test the
+rest of the app uses. And because the profile is keyed by **size + modified
+time**, exactly as the ratings sidecar is, **freeing a file up to the cloud keeps
+everything already known about it**. Dehydration changes neither size nor mtime,
+so the vectors, the face pictures, and the suggestions all survive it — the same
+way the sprite sheets and probed metadata already do.
+
+### What it is under the hood
+
+`ffmpeg` samples a frame every ten seconds (at most sixty), **YuNet** finds the
+faces, each is warped onto the standard five-point template, and **ArcFace
+w600k_r50** turns it into a 512-number vector. The faces within one video are
+clustered, so a video with two people in it can suggest two names — and the male
+co-star simply becomes his own cluster and matches nobody.
+
+Measured on 258 held-out videos across 28 performers, every video taking a turn
+as the unknown one:
+
+| | top-1 | top-3 | truth | wrong |
+|---|---|---|---|---|
+| SFace | 89.9% | 94.2% | 0.77 | 0.49 |
+| **ArcFace** | **96.1%** | **96.5%** | 0.74 | **0.18** |
+
+Guessing at random would score 3.6% / 10.7%. ArcFace is the default for the last
+column as much as the first: its wrong answers sit at 0.18 where SFace's sit at
+0.49, and a library full of performers the index has never seen needs that gap.
+It is the difference between staying quiet and inventing a name.
+
+Confidence is shown as a band — *strong*, *likely*, *possible* — and both a score
+floor and a margin over the runner-up have to pass. A high score with a close
+second is two performers who look alike, and naming either would be a guess.
+
+### Setup
+
+Optional by construction. Without them the feature reports itself off in the log
+and the rest of the app is untouched.
+
+```
+npm install                                  # onnxruntime-node
+%LOCALAPPDATA%\video-explorer\face-models\   # yunet.onnx + arcface.onnx (or sface.onnx)
+```
+
+The models live outside the repo and outside the build on purpose: 174MB of
+weights are not source, and they survive a rebuild where a bundled copy would be
+re-copied every time. `VIDEO_EXPLORER_FACE_MODELS` overrides the location.
+
+The index records which recogniser built it. Swap the model and the old vectors
+are **discarded rather than mixed** — two models' vectors are not comparable, and
+re-profiling is hours of background work where a silently wrong suggestion is
+forever.
+
 ## Details under each preview
 
 Filename, then duration, resolution, frame rate, file size, bitrate, and codec,
@@ -405,6 +497,8 @@ everything rebuilds on demand.
 server.js            HTTP server, ffmpeg orchestration, file operations
 graph.js             Microsoft Graph: cloud thumbnails and streaming URLs
 library.js           ratings and tags, keyed by size + modified time
+faces.js             familiar faces: the index, the sweep, the suggestions
+face-engine.js       frames -> detect -> align -> embed (optional, needs onnxruntime)
 mobile/              the phone app — see mobile/README.md
 public/index.html    layout
 public/app.js        grid, hover scrubbing, actions
@@ -413,6 +507,8 @@ config.json          created on first run: last folder, settings, recent destina
 ```
 
 Sprite sheets and probed metadata live in `%LOCALAPPDATA%\video-explorer\cache`.
+The face index and the face pictures live beside them in `\faces` (about 10KB a
+video), and the ONNX models in `\face-models`.
 
 ## Notes
 

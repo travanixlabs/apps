@@ -70,6 +70,18 @@ function get(stat) {
   return data.records[keyFor(stat)] || null;
 }
 
+/**
+ * Every record, by key.
+ *
+ * The face index needs to look records up by key rather than by stat -- it holds
+ * keys, not the files they came from -- so it reads the map directly. Returned
+ * as-is: this is read-only by convention, and copying six thousand records on
+ * every rebuild would cost more than the convention is worth.
+ */
+function all() {
+  return data.records;
+}
+
 /** Always safe to spread onto a file entry, even with no record. */
 function decorate(stat) {
   const record = get(stat);
@@ -306,7 +318,7 @@ function stats() {
 }
 
 module.exports = {
-  init, keyFor, get, decorate, apply, rekey, flush,
+  init, keyFor, get, all, decorate, apply, rekey, flush,
   counts, tagCounts, modelCounts, studioCounts, productionCounts, stats, normaliseTags,
   favouriteModels, isFavouriteModel, setFavouriteModel,
 };

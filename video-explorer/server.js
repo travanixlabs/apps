@@ -23,6 +23,7 @@ try {
 }
 
 const library = require('./library');
+const faces = require('./faces');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -720,6 +721,9 @@ async function scanDirectory(dir, recursive, includeCloud) {
     // Free: the scan already holds the stat these are keyed by, so ratings and
     // tags arrive with the listing rather than costing a second round trip.
     ...library.decorate(video),
+    // Likewise for who the faces look like, so "has a suggestion" is a filter
+    // the listing can answer on its own.
+    ...faces.decorate(video),
   }));
 
   const cloudBelow = videos.reduce((n, v) => n + (v.cloudOnly ? 1 : 0), 0);
@@ -1015,6 +1019,10 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${HOST}:${PORT}`);
   const route = url.pathname;
 
+  // The background sweep stands aside while the app is being used. Its own
+  // status polling does not count as use, or it would starve itself.
+  if (!route.startsWith('/api/faces/')) faces.noteActivity();
+
   try {
     if (req.method === 'GET' && (route === '/' || route === '/index.html')) {
       return serveStatic(res, 'index.html');
@@ -1169,6 +1177,10 @@ const server = http.createServer(async (req, res) => {
             records[raw] = { error: err.message || String(err) };
           }
         }
+        // Naming someone changes who the averages are built from, so the
+        // suggestions are only as current as the labels behind them.
+        if (body.models !== undefined || body.addModels !== undefined
+            || body.removeModels !== undefined) faces.rebuild();
         return sendJson(res, 200, {
           records,
           tags: library.tagCounts(),
@@ -1212,6 +1224,36 @@ const server = http.createServer(async (req, res) => {
       } catch (err) {
         return sendJson(res, 200, { available: true, signedIn: false, error: err.message });
       }
+    }
+
+    // ------------------------------------------------------- familiar faces
+
+    // How far the backfill has got. Polled by the UI, and deliberately exempt
+    // from the activity clock so asking does not pause the answering.
+    if (req.method === 'GET' && route === '/api/faces/status') {
+      return sendJson(res, 200, faces.status());
+    }
+
+    // Pausing is a preference, not a setting worth persisting: the sweep should
+    // start again next launch, since that is what "backfill while open" means.
+    if (req.method === 'POST' && route === '/api/faces/enabled') {
+      const body = await readBody(req);
+      return sendJson(res, 200, faces.setEnabled(body.enabled !== false));
+    }
+
+    // The face a suggestion was made from, so a name can be checked against a
+    // picture rather than taken on trust.
+    if (req.method === 'GET' && route === '/api/faces/face') {
+      const target = authoriseOrThrow(url.searchParams.get('path') || '');
+      const stat = await fsp.stat(target);
+      const png = await faces.faceImage(stat, Number(url.searchParams.get('person') || 0));
+      if (!png) return sendJson(res, 404, { error: 'no face stored for this video' });
+      res.writeHead(200, {
+        'Content-Type': 'image/png',
+        'Content-Length': png.length,
+        'Cache-Control': 'private, max-age=86400',
+      });
+      return res.end(png);
     }
 
     if (req.method === 'GET' && route === '/api/thumb') {
@@ -1349,6 +1391,20 @@ async function main() {
   await applyHomeDir();
   const lib = await library.init(ONEDRIVE_ROOT);
   log(`ratings and tags: ${lib.count} records at ${lib.file}`);
+
+  // Familiar faces is optional by construction: without onnxruntime or the
+  // models it reports why and the rest of the app is untouched.
+  const face = faces.init({
+    cacheDir: path.join(CACHE_DIR, '..', 'faces'),
+    library,
+    roots: () => config.roots,
+  });
+  if (face.ok) {
+    log(`familiar faces: ${face.profiled} videos profiled, models at ${face.modelDir}`);
+    faces.start();
+  } else {
+    log(`familiar faces: off (${face.reason})`);
+  }
   metaIndex = loadJsonSync(META_FILE, {});
   log(`${Object.keys(metaIndex).length} cached metadata entries`);
   await checkFfmpeg();
@@ -1368,5 +1424,15 @@ server.on('error', (err) => {
   }
   throw err;
 });
+
+// The face index is written lazily; a close would otherwise cost whatever the
+// sweep managed since the last save.
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, async () => {
+    await faces.flush();
+    process.exit(0);
+  });
+}
+process.on('exit', () => { faces.flush(); });
 
 main();

@@ -74,6 +74,10 @@ function newAdvFilter() {
     favourite: 'all',     // 'all' | 'yes' | 'no'
     link: 'all',          // 'all' | 'yes' | 'no' — whether a source url is stored
     cloud: 'all',         // 'all' | 'downloaded' | 'cloud'
+    // Whether a face was recognised in this video, and whether it agrees with
+    // the name already on it. "Disagrees" is the one worth hunting: it is where
+    // a label is wrong, or where a second performer was never credited.
+    suggested: 'all',     // 'all' | 'yes' | 'no' | 'agrees' | 'disagrees'
   };
 }
 
@@ -128,7 +132,8 @@ function resetView() {
 
 function advActive(adv = state.adv) {
   return Boolean(adv.text) || adv.cloud !== 'all' || adv.link !== 'all'
-    || adv.favourite !== 'all' || FACETS.some((f) => adv[f].size > 0);
+    || adv.favourite !== 'all' || adv.suggested !== 'all'
+    || FACETS.some((f) => adv[f].size > 0);
 }
 
 // ----------------------------------------------------------------- utilities
@@ -538,6 +543,8 @@ function matchesAdvanced(file, adv) {
     if (adv.favourite === 'no' && has) return false;
   }
 
+  if (adv.suggested !== 'all' && !suggestionMatch(file, adv.suggested)) return false;
+
   if (adv.link === 'yes' && !file.url) return false;
   if (adv.link === 'no' && file.url) return false;
 
@@ -545,6 +552,24 @@ function matchesAdvanced(file, adv) {
   if (adv.cloud === 'cloud' && !file.cloudOnly) return false;
 
   return true;
+}
+
+/**
+ * A video against the suggested-models question.
+ *
+ * Deliberately independent of whether the video is already credited: a
+ * suggestion on a named video is a second opinion, and the two answers it can
+ * give -- the same name, or a different one -- are both worth listing.
+ */
+function suggestionMatch(file, want) {
+  const suggested = file.suggested || [];
+  if (want === 'yes') return suggested.length > 0;
+  if (want === 'no') return suggested.length === 0;
+  if (!suggested.length) return false;
+  const named = new Set((file.models || []).map((m) => m.toLowerCase()));
+  if (!named.size) return want === 'disagrees'; // nothing to agree with
+  const agrees = suggested.some((sug) => named.has(sug.name.toLowerCase()));
+  return want === 'agrees' ? agrees : !agrees;
 }
 
 function matchesQuery(file, terms) {
@@ -1025,6 +1050,25 @@ function renderAdvanced() {
     }));
   }
 
+  // Only offered once something has been profiled: an empty answer would look
+  // like a broken filter rather than a sweep that has not reached this video.
+  const suggest = $('#advSuggested');
+  suggest.innerHTML = '';
+  for (const [value, label, hint] of [
+    ['all', 'everything', ''],
+    ['yes', 'has a suggestion', 'a face here matches a performer you have named elsewhere'],
+    ['agrees', 'agrees with the label', 'the suggestion is a name already on this video'],
+    ['disagrees', 'disagrees', 'the suggestion is someone other than who is credited'],
+    ['no', 'nothing recognised', ''],
+  ]) {
+    const chip = chipToggle(label, advDraft.suggested === value, () => {
+      advDraft.suggested = value;
+      renderAdvanced();
+    });
+    if (hint) chip.title = hint;
+    suggest.appendChild(chip);
+  }
+
   // Same shape as Availability directly below it: one of three, not a cycle,
   // because "has a link" and "has none" already cover the whole listing.
   const link = $('#advLink');
@@ -1368,7 +1412,11 @@ function refreshCardRecord(file) {
   }
   // The player shows the same row, so an edit made in either place has to land
   // in both — otherwise the footer keeps showing the rating you just changed.
-  if (state.playing && state.playing.path === file.path) buildPlayerRecord(file);
+  if (state.playing && state.playing.path === file.path) {
+    buildPlayerRecord(file);
+    // A name added from the strip turns that chip into a tick.
+    buildPlayerSuggestions(file);
+  }
 }
 
 /** The card's rating and label row, repeated in the player footer. */
@@ -1379,6 +1427,187 @@ function buildPlayerRecord(file) {
   // player was opened with.
   const current = state.files.find((f) => f.path === file.path) || file;
   holder.replaceChildren(buildRecordRow(current));
+}
+
+// ------------------------------------------------------------ familiar faces
+
+/**
+ * Who the faces in a video look like.
+ *
+ * The server ranks each video against the average face of every performer named
+ * in at least a few others, and sends the winners with the listing. Nothing here
+ * writes a label on its own: a suggestion is a button, and pressing it is the
+ * decision.
+ */
+const BAND_LABEL = {
+  strong: 'strong match',
+  likely: 'likely',
+  maybe: 'possible',
+};
+
+/** One suggestion: the face it came from, the name, and how sure it is. */
+function buildFaceChip(file, sug, { onPick, showFace = true } = {}) {
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.className = `face-chip band-${sug.band}`;
+  const already = (file.models || []).some((m) => m.toLowerCase() === sug.name.toLowerCase());
+  if (already) chip.classList.add('confirmed');
+
+  if (showFace) {
+    const img = document.createElement('img');
+    img.className = 'face-thumb';
+    img.alt = '';
+    img.loading = 'lazy';
+    img.src = `/api/faces/face?path=${encodeURIComponent(file.path)}&person=${sug.person || 0}`;
+    // No stored crop is not an error worth showing; the name still stands.
+    img.addEventListener('error', () => img.remove());
+    chip.appendChild(img);
+  }
+
+  const name = document.createElement('span');
+  name.className = 'face-name';
+  name.textContent = sug.name;
+  chip.appendChild(name);
+
+  const mark = document.createElement('span');
+  mark.className = 'face-band';
+  mark.textContent = already ? '\u2713' : '+';
+  chip.appendChild(mark);
+
+  chip.title = already
+    ? `Already credited \u2014 the face agrees (${sug.score.toFixed(2)}, ${BAND_LABEL[sug.band]})`
+    : `${BAND_LABEL[sug.band]} \u00b7 ${sug.score.toFixed(2)}, ${sug.margin.toFixed(2)} clear of `
+      + `${sug.runnerUp} \u00b7 from ${sug.videos} videos \u2014 click to add`;
+  chip.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    if (!already) onPick(sug.name);
+  });
+  return chip;
+}
+
+/**
+ * The suggestion strip under the player.
+ *
+ * Shown for a credited video as well as an uncredited one: a face that agrees
+ * with the name is a confirmation, and one that disagrees is the most useful
+ * thing this feature can tell you.
+ */
+function buildPlayerSuggestions(file) {
+  const host = $('#playerSuggest');
+  if (!host) return;
+  const current = state.files.find((f) => f.path === file.path) || file;
+  const suggested = current.suggested || [];
+  host.replaceChildren();
+  host.hidden = !suggested.length;
+  if (!suggested.length) return;
+
+  const label = document.createElement('span');
+  label.className = 'face-lead';
+  label.textContent = 'Looks like';
+  host.appendChild(label);
+  for (const sug of suggested) {
+    host.appendChild(buildFaceChip(current, sug, {
+      onPick: (name) => editRecords([current.path], { addModels: [name] })
+        .then(() => buildPlayerSuggestions(current)),
+    }));
+  }
+}
+
+/**
+ * The same suggestions inside the label dialog, where the names are actually
+ * typed. Across a selection they are pooled: one chip per name, adding it to the
+ * box rather than to the files, so Add and Replace still mean what they say.
+ */
+function renderDialogSuggestions(files) {
+  const host = $('#modelFaces');
+  if (!host) return;
+  host.replaceChildren();
+  const single = files.length === 1;
+  const pooled = new Map();
+  for (const file of files) {
+    for (const sug of file.suggested || []) {
+      const seen = pooled.get(sug.name);
+      if (!seen || sug.score > seen.sug.score) pooled.set(sug.name, { file, sug });
+    }
+  }
+  host.hidden = !pooled.size;
+  if (!pooled.size) return;
+
+  const label = document.createElement('span');
+  label.className = 'face-lead';
+  label.textContent = single ? 'Looks like' : `Looks like \u00b7 across ${files.length}`;
+  host.appendChild(label);
+  for (const { file, sug } of [...pooled.values()].sort((a, b) => b.sug.score - a.sug.score)) {
+    host.appendChild(buildFaceChip(single ? file : { ...file, models: [] }, sug, {
+      showFace: single,
+      onPick: (name) => {
+        const box = $('#modelInput');
+        const have = box.value.split(',').map((t) => t.trim()).filter(Boolean);
+        if (!have.some((t) => t.toLowerCase() === name.toLowerCase())) have.push(name);
+        box.value = have.join(', ');
+        renderTagSuggestions();
+      },
+    }));
+  }
+}
+
+/**
+ * How far the backfill has got, in the toolbar.
+ *
+ * Polled rather than pushed: the sweep runs for hours and a websocket for one
+ * number would be a lot of machinery for a line of text. Clicking it pauses.
+ */
+let faceStatus = null;
+async function pollFaceStatus() {
+  try {
+    faceStatus = await api('/api/faces/status');
+  } catch {
+    faceStatus = null;
+  }
+  renderFacePill();
+}
+
+function renderFacePill() {
+  const pill = $('#facesPill');
+  const text = $('#facesText');
+  if (!pill || !text) return;
+  if (!faceStatus || !faceStatus.available) {
+    pill.hidden = true;
+    return;
+  }
+  pill.hidden = false;
+  const { profiled, downloaded, performers, current, enabled, walking } = faceStatus;
+  const done = downloaded && profiled >= downloaded;
+  pill.classList.toggle('working', Boolean(enabled && current));
+  pill.classList.toggle('paused', !enabled);
+  pill.classList.toggle('done', Boolean(done));
+  text.textContent = downloaded
+    ? `${profiled.toLocaleString()} / ${downloaded.toLocaleString()} profiled`
+    : `${profiled.toLocaleString()} profiled`;
+  pill.title = [
+    `Familiar faces \u2014 ${profiled.toLocaleString()} of `
+      + `${(downloaded || profiled).toLocaleString()} downloaded videos profiled`,
+    `${performers} performers have enough videos to recognise`,
+    walking ? 'looking for new files\u2026' : null,
+    current ? `reading ${current}` : null,
+    enabled ? 'Click to pause' : 'Paused \u2014 click to resume',
+  ].filter(Boolean).join('\n');
+}
+
+async function toggleFaceSweep() {
+  if (!faceStatus) return;
+  try {
+    faceStatus = await api('/api/faces/enabled', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !faceStatus.enabled }),
+    });
+    renderFacePill();
+    toast(faceStatus.enabled ? 'Face profiling resumed' : 'Face profiling paused');
+  } catch (err) {
+    toast(err.message, 'err');
+  }
 }
 
 function buildStars(current, onPick, { compact = false } = {}) {
@@ -1560,6 +1789,7 @@ function openTagDialog(files) {
 
   syncTagVocab();
   renderTagSuggestions();
+  renderDialogSuggestions(files);
   $('#tagModal').hidden = false;
 
   // The dialog opens at the top. Focusing the tag box scrolls it into view, and
@@ -2255,6 +2485,7 @@ function playFile(file, seq = null) {
   state.playingAnchor = null; // this one is in the listing until told otherwise
   state.playingCard = seq;
   buildPlayerActions(file);
+  buildPlayerSuggestions(file);
   $('#playerTitle').textContent = file.name;
   const info = state.meta.get(file.path) || {};
   $('#playerMeta').textContent = [
@@ -3380,11 +3611,15 @@ function wireEvents() {
   for (const btn of document.querySelectorAll('[data-clear]')) {
     btn.addEventListener('click', () => {
       const what = btn.dataset.clear;
-      if (what === 'cloud' || what === 'link') advDraft[what] = 'all';
+      if (what === 'cloud' || what === 'link' || what === 'suggested') advDraft[what] = 'all';
       else advDraft[what === 'rating' ? 'ratings' : what].clear();
       renderAdvanced();
     });
   }
+
+  $('#facesPill').addEventListener('click', toggleFaceSweep);
+  pollFaceStatus();
+  setInterval(pollFaceStatus, 5000);
 
   // settings
   $('#groupBtn').addEventListener('click', toggleGrouped);

@@ -108,6 +108,10 @@
     </label>
 
     <button id="buildAllBtn" class="btn">Build all previews</button>
+    <button id="facesPill" class="faces-pill" hidden
+            title="Familiar faces: how many downloaded videos have been profiled">
+      <span class="faces-dot"></span><span id="facesText">faces</span>
+    </button>
     <span id="status" class="status"></span>
   </div>
 
@@ -193,6 +197,7 @@
       </div>
       <div id="playerRecord" class="player-record"
            title="Press 1–5 to rate this video, 0 to clear"></div>
+      <div id="playerSuggest" class="player-suggest" hidden></div>
       <div id="playerActions" class="quickbar quickbar-footer"></div>
       <span class="info-host">
         <button id="playerInfo" class="qbtn" aria-label="File details" aria-describedby="playerInfoPop">
@@ -272,6 +277,14 @@
 
       <div class="adv-block">
         <div class="adv-label">
+          Suggested models
+          <button class="linkish" data-clear="suggested">clear</button>
+        </div>
+        <div id="advSuggested" class="chip-row"></div>
+      </div>
+
+      <div class="adv-block">
+        <div class="adv-label">
           Tags
           <span class="adv-mode">
             <label><input type="radio" name="tagMode" value="all" checked> all</label>
@@ -335,6 +348,7 @@
         <input id="modelInput" type="text" class="tag-input" spellcheck="false"
                placeholder="performer names, comma separated" list="modelVocab" autocomplete="off">
         <datalist id="modelVocab"></datalist>
+        <div id="modelFaces" class="face-suggest" hidden></div>
         <div id="modelSuggest" class="tag-suggest"></div>
       </section>
 

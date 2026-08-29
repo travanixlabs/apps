@@ -7,3 +7,7 @@ tools/manifests/
 config.json
 # The mobile web app is its own repository with its own remote.
 mobile/
+# onnxruntime, pulled in for familiar faces. 280MB of native binaries for every
+# platform; build.ps1 copies what it needs into the app. `npm install` restores it.
+node_modules/
+package-lock.json

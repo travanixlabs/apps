@@ -1334,3 +1334,111 @@ body.dragging .card { cursor: grabbing; }
 .toast.ok { border-left-color: var(--ok); }
 .toast.err { border-left-color: var(--danger); }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+
+/* ---------------------------------------------------------- familiar faces */
+
+/* How far the background profiling has got, in the toolbar. Quiet by default:
+   it is a progress reading, not a control, until you want to pause it. */
+.faces-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elev-2);
+  color: var(--text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.faces-pill:hover { border-color: var(--accent); color: var(--text); }
+.faces-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+/* Reading a file right now. The pulse is the only thing on screen that says
+   work is happening, so it is slow enough not to nag. */
+.faces-pill.working { color: #7fb5ff; border-color: #2f4a6d; }
+.faces-pill.working .faces-dot { animation: faces-pulse 1.8s ease-in-out infinite; }
+@keyframes faces-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.faces-pill.paused { color: var(--text-faint); opacity: 0.6; }
+.faces-pill.paused .faces-dot { background: none; box-shadow: inset 0 0 0 1px currentColor; }
+.faces-pill.done { color: #7fd1a3; border-color: #2f5a44; }
+
+/* A suggested performer: the face it came from, the name, and one click to
+   accept it. Sized off the chip rules so it sits in the same rhythm as the
+   labels it is proposing. */
+.face-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px 2px 3px;
+  border: 1px solid #4a5f7a;
+  border-radius: 999px;
+  background: #1c2634;
+  color: #cfe2ff;
+  font-size: 12px;
+  cursor: pointer;
+  max-width: 220px;
+}
+.face-chip:hover { border-color: var(--accent); background: #22334a; }
+.face-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: none;
+  background: #0e141c;
+}
+.face-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.face-band { color: var(--text-faint); font-size: 11px; flex: none; }
+
+/* Confidence, as border weight rather than another word to read. */
+.face-chip.band-strong { border-color: #3f7d5c; background: #16281f; color: #b6e8ca; }
+.face-chip.band-strong:hover { border-color: #57a97b; }
+.face-chip.band-maybe { border-style: dashed; opacity: 0.85; }
+
+/* Already credited: the face agrees with the name, so there is nothing to do
+   and the chip stops offering. */
+.face-chip.confirmed { cursor: default; opacity: 0.75; }
+.face-chip.confirmed:hover { border-color: #3f7d5c; background: #16281f; }
+.face-chip.confirmed .face-band { color: #7fd1a3; }
+
+.face-lead {
+  color: var(--text-faint);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  flex: none;
+}
+
+/* The player footer is the one that carries a second row. Wrapping is scoped to
+   it so the other dialogs' footers keep their single line. */
+#playerModal .modal-foot { flex-wrap: wrap; }
+
+/* Under the player, on its own line so it never squeezes the rating row. */
+.player-suggest {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1 1 100%;
+  order: 10;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding-top: 2px;
+}
+
+/* In the label dialog, between the box and its vocabulary suggestions. */
+.face-suggest {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-top: 7px;
+}
