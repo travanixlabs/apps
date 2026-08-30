@@ -1472,6 +1472,9 @@ async function main() {
 
   const lib = await library.init(ONEDRIVE_ROOT);
   log(`ratings and tags: ${lib.count} records at ${lib.file}`);
+  // An unreadable sidecar is the one startup condition worth shouting about:
+  // everything still works except the thing you would not notice was broken.
+  if (lib.readOnly) log(`LABELS READ-ONLY: ${lib.readOnly} — edits refused until this reads`);
 
   // Familiar faces is optional by construction: without onnxruntime or the
   // models it reports why and the rest of the app is untouched.

@@ -282,16 +282,49 @@ atom, which rewrites the whole file — 76 MB of disk for a 20-byte tag, and for
 cloud placeholder a full download followed by a full re-upload. At 92% cloud,
 that is not a viable default.
 
-So edits land in `.video-explorer\library.json` at the OneDrive sync root. That
-location is deliberate: unlike the preview cache — regenerable bulk, kept out of
-OneDrive on purpose — this file is a few hundred KB of irreplaceable hand-entered
-judgement, and syncing it is what makes ratings appear on every device running
-the app.
+So edits land in `.video-explorer\library.json` at the OneDrive sync root, and
+syncing it is what makes ratings appear on every device running the app. The
+previews and face profiles now sit beside it, but they are not the same kind of
+thing: those can be rebuilt given time and the videos, and this cannot be
+rebuilt at all. Two megabytes of hand-entered judgement over about six thousand
+videos.
 
 Records are keyed by **size + modified time**, not by path, so a rename or a move
 keeps its rating and tags attached, whether done in the app or in Explorer.
 Dehydration changes neither value, so a cloud file's tags survive Storage Sense
 reclaiming its bytes.
+
+### Not losing them
+
+Two accidental wipes — a Replace-mode selection larger than it looked — are why
+there is anything here at all. Four defences, none of which asks you to remember
+to do anything.
+
+**A copy a day.** Startup writes `library.json` into `.video-explorer\backups\`
+if nothing there is from today, named for the moment it was taken. Fourteen are
+kept, which is about 30 MB and a fortnight of history. The phone takes the same
+copy into the same folder, so a day when the PC never came on is still covered.
+
+**A copy before a collapse.** Any write that would drop more than a tenth of the
+records copies the outgoing file first. A tenth of six thousand is six hundred —
+far more than an editing session deletes on purpose, and exactly the shape of a
+mistake. The backup is of what is on disk, not of what is in memory: by the time
+a bad write is detected, memory already holds the damage.
+
+**A write that cannot half-happen.** The new version is written alongside and
+renamed over the old one, so a crash or a pulled cable mid-write leaves the
+previous file whole rather than truncated. If OneDrive has a handle open and
+refuses the rename, it falls back to writing in place.
+
+**Read failures are not empty libraries.** The distinction the code now makes is
+between a sidecar that is *absent* and one that is merely *unreadable*. Absent
+means a new library and starting empty is right. Unreadable — a half-synced copy,
+a lock, a truncated file — means the records exist and this process cannot see
+them, and starting empty there is indistinguishable from starting correct until
+the first edit replaces six thousand records with one. So an unreadable file
+leaves labels **read-only**: browsing works, editing says why it will not, and a
+restart once the file reads again picks up where it was. The phone does the same,
+and retries by itself when you come back to it.
 
 ### Writing them into the files
 

@@ -36,6 +36,25 @@ let FILE = '';
 let data = { version: 1, records: {} };
 let timer = null;
 
+// How many daily snapshots to keep. At about 2MB each that is 30MB to hold a
+// fortnight of history for the one thing here that cannot be regenerated from
+// anything.
+const KEEP_BACKUPS = 14;
+
+// A write that loses this share of the records is treated as a mistake and the
+// outgoing file backed up before it lands. A tenth of six thousand records is
+// six hundred: far more than any editing session legitimately deletes, and
+// exactly what a Replace-mode slip looks like from in here.
+const BIG_DROP = 0.1;
+
+// The record count last written, so the next write can notice a collapse.
+let lastWritten = 0;
+
+// Why writing is refused, or '' when it is fine. Set when the file exists but
+// could not be read: an unreadable sidecar must not be silently replaced by the
+// empty one this module would otherwise start from.
+let readOnly = '';
+
 /**
  * Lives in OneDrive by design: a couple of megabytes of irreplaceable
  * hand-entered judgement, and putting it in the sync root is what makes ratings
@@ -52,18 +71,107 @@ function resolveFile(oneDriveRoot) {
   return path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'video-explorer', 'library.json');
 }
 
+/**
+ * Loads the sidecar, and decides whether it is safe to write.
+ *
+ * The distinction that matters is between a sidecar that is *absent* and one
+ * that is merely *unreadable*. Absent means a new library: starting empty is
+ * correct, and the first rating creates the file. Unreadable -- a half-synced
+ * copy, a lock held by OneDrive, a truncated write -- means the records are
+ * still there and this process simply cannot see them. Starting empty then is
+ * indistinguishable from starting correct, right up until the first edit
+ * replaces six thousand records with one.
+ *
+ * So an unreadable file leaves the module read-only. Browsing works; editing
+ * says why it cannot. Restarting once the file reads again is the fix, and
+ * nothing is lost in the meantime.
+ */
 async function init(oneDriveRoot) {
   FILE = resolveFile(oneDriveRoot);
+  readOnly = '';
+  let raw = null;
   try {
-    const parsed = JSON.parse(await fsp.readFile(FILE, 'utf8'));
-    if (parsed && parsed.records) data = parsed;
-  } catch {
+    raw = await fsp.readFile(FILE, 'utf8');
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      readOnly = `${path.basename(FILE)} could not be read (${err.code || err.message})`;
+    }
     data = { version: 1, records: {} };
+  }
+  if (raw !== null) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.records) data = parsed;
+      else readOnly = `${path.basename(FILE)} has no records in it`;
+    } catch (err) {
+      readOnly = `${path.basename(FILE)} is not valid JSON (${err.message})`;
+    }
   }
   // A file written before favourites existed has no list; the rest of the module
   // may then assume there is one.
   if (!Array.isArray(data.favourites)) data.favourites = [];
-  return { file: FILE, count: Object.keys(data.records).length };
+  lastWritten = Object.keys(data.records).length;
+  // Today's copy, taken before this session can change anything.
+  if (!readOnly && raw !== null) await dailyBackup(raw);
+  return { file: FILE, count: lastWritten, readOnly };
+}
+
+/** Whether edits will be accepted, and why not when they will not. */
+function status() {
+  return { file: FILE, readOnly, records: lastWritten };
+}
+
+const backupDir = () => path.join(path.dirname(FILE), 'backups');
+
+const stamp = () => new Date().toISOString().replace(/[:.]/g, '-');
+
+async function backupNames() {
+  try {
+    const names = await fsp.readdir(backupDir());
+    // An ISO timestamp sorts chronologically as text, which is the whole reason
+    // for naming them that way.
+    return names.filter((n) => /^library-.+\.json$/.test(n)).sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Copies the sidecar as it currently stands into `backups/`.
+ *
+ * Always handed the bytes that are on disk rather than `data` -- by the time a
+ * dangerous write is noticed, `data` is already the version being protected
+ * against. Failures are swallowed: a backup that cannot be taken must not stop
+ * the edit that prompted it.
+ */
+async function snapshot(bytes) {
+  try {
+    const dir = backupDir();
+    await fsp.mkdir(dir, { recursive: true });
+    await fsp.writeFile(path.join(dir, `library-${stamp()}.json`), bytes);
+    const names = await backupNames();
+    for (const old of names.slice(0, Math.max(0, names.length - KEEP_BACKUPS))) {
+      await fsp.unlink(path.join(dir, old)).catch(() => {});
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * One snapshot a day, taken at startup.
+ *
+ * The cheap insurance: whatever a session does, there is a copy from before it
+ * began. Days are counted in UTC, which in Sydney turns over mid-morning -- it
+ * makes the filename slightly surprising and the interval exactly a day, and
+ * the interval is the part that matters.
+ */
+async function dailyBackup(raw) {
+  const today = new Date().toISOString().slice(0, 10);
+  const names = await backupNames();
+  if (names.some((n) => n.slice(8, 18) === today)) return false;
+  return snapshot(raw);
 }
 
 function keyFor(stat) {
@@ -107,13 +215,46 @@ function decorate(stat) {
   };
 }
 
+/**
+ * The one place the sidecar is written.
+ *
+ * Two guards around an otherwise ordinary write. A sudden collapse in the
+ * record count gets the outgoing file copied into `backups/` first -- both
+ * accidental Replace-mode wipes looked exactly like this from here, and by the
+ * time either was noticed the previous contents were already gone. And the new
+ * version lands through a temporary file and a rename, so a crash or a pulled
+ * cable mid-write leaves the old file whole rather than a truncated one. If the
+ * rename is refused -- OneDrive does occasionally hold a handle open -- it
+ * falls back to writing in place, which is what this always used to do.
+ */
+async function writeNow() {
+  if (readOnly) return { file: FILE, records: 0, readOnly };
+  const body = JSON.stringify(data, null, 1);
+  const count = Object.keys(data.records).length;
+
+  if (lastWritten && count < lastWritten * (1 - BIG_DROP)) {
+    const was = await fsp.readFile(FILE).catch(() => null);
+    if (was) await snapshot(was);
+  }
+
+  await fsp.mkdir(path.dirname(FILE), { recursive: true });
+  const temp = `${FILE}.writing`;
+  try {
+    await fsp.writeFile(temp, body);
+    await fsp.rename(temp, FILE);
+  } catch {
+    await fsp.unlink(temp).catch(() => {});
+    await fsp.writeFile(FILE, body);
+  }
+  lastWritten = count;
+  return { file: FILE, records: count };
+}
+
 function save() {
   clearTimeout(timer);
-  timer = setTimeout(async () => {
-    try {
-      await fsp.mkdir(path.dirname(FILE), { recursive: true });
-      await fsp.writeFile(FILE, JSON.stringify(data, null, 1));
-    } catch { /* a read-only or offline sync folder must not break editing */ }
+  timer = setTimeout(() => {
+    // A read-only or offline sync folder must not break editing.
+    writeNow().catch(() => {});
   }, 400);
 }
 
@@ -123,9 +264,20 @@ function save() {
  */
 async function flush() {
   clearTimeout(timer);
-  await fsp.mkdir(path.dirname(FILE), { recursive: true });
-  await fsp.writeFile(FILE, JSON.stringify(data, null, 1));
-  return { file: FILE, records: Object.keys(data.records).length };
+  return writeNow();
+}
+
+/**
+ * Refuses an edit this module cannot safely persist, and says why.
+ *
+ * 503 rather than 500: the file is expected back, and the message says what to
+ * do about it.
+ */
+function refuseIfReadOnly() {
+  if (!readOnly) return;
+  const err = new Error(`Labels are read-only: ${readOnly}. Restart once it reads again.`);
+  err.statusCode = 503;
+  throw err;
 }
 
 /** Case-insensitive dedupe, but the casing you typed is what gets stored. */
@@ -146,6 +298,7 @@ function normaliseTags(tags) {
  * already has.
  */
 function apply(stat, name, patch) {
+  refuseIfReadOnly();
   const key = keyFor(stat);
   const current = data.records[key] || { rating: 0, tags: [], models: [], name };
   const next = { ...current, name: name || current.name, updated: Date.now() };
@@ -213,6 +366,7 @@ function apply(stat, name, patch) {
  * per file, when its tags are written into it and the size grows.
  */
 function rekey(oldStat, newStat, name) {
+  if (readOnly) return;
   const from = keyFor(oldStat);
   const to = keyFor(newStat);
   if (from === to) return;
@@ -293,6 +447,7 @@ function isFavouriteModel(name) {
 
 /** Marks or unmarks one performer, and returns the whole list as it now stands. */
 function setFavouriteModel(name, on) {
+  refuseIfReadOnly();
   const clean = String(name || '').trim().replace(/\s+/g, ' ').slice(0, 120);
   if (!clean) return favouriteModels();
   const key = clean.toLowerCase();
@@ -315,6 +470,7 @@ function stats() {
     tagged: records.filter((r) => (r.tags || []).length).length,
     linked: records.filter((r) => r.url).length,
     favourites: (data.favourites || []).length,
+    readOnly,
     studios: records.filter((r) => r.studio).length,
     productions: records.filter((r) => r.production).length,
     named: records.filter((r) => (r.models || []).length).length,
@@ -322,7 +478,7 @@ function stats() {
 }
 
 module.exports = {
-  init, keyFor, get, all, decorate, apply, rekey, flush,
+  init, keyFor, get, all, decorate, apply, rekey, flush, status, snapshot,
   counts, tagCounts, modelCounts, studioCounts, productionCounts, stats, normaliseTags,
   favouriteModels, isFavouriteModel, setFavouriteModel,
 };
