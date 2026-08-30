@@ -30,6 +30,8 @@ const os = require('os');
 
 const engine = require('./face-engine');
 
+const log = (msg) => console.log(`[video-explorer] familiar faces: ${msg}`);
+
 // 2: three faces a frame instead of two, and a clustering threshold that stops
 // splitting one woman into two people. Older entries are re-profiled rather than
 // carried, since the grouping is what a suggestion is built on.
@@ -110,14 +112,29 @@ const state = {
   library: null,
   rootsOf: () => [],
   homeOf: () => '',
-  dirty: false,
-  saveTimer: null,
+  loading: false,
 };
 
 // --------------------------------------------------------------------- store
 
 const keyFor = (stat) => `${stat.size}:${Math.round(stat.mtimeMs)}`;
 const fileNameFor = (key) => key.replace(':', '_');
+const keyFromFileName = (name) => name.replace(/\.json$/, '').replace('_', ':');
+
+/**
+ * One small file per video, rather than one big index.
+ *
+ * The index was rewritten whole after every video: 3.9ms and a growing few
+ * megabytes, five hundred times an hour. Over a full sweep that is about 25GB
+ * of writing to store 12MB, and it is what makes this impossible to keep in a
+ * synced folder -- OneDrive would re-upload the whole thing after every video.
+ *
+ * Per video it is 0.1ms and 3.6KB, written once and never touched again. That
+ * saves fourteen seconds across a seven-hour sweep, which is nothing; what it
+ * actually buys is a folder that can be synced, that two machines can both add
+ * to without conflicting, and that cannot lose everything to one bad write.
+ */
+const ENTRIES = 'v';
 
 function init({ cacheDir, library, roots, home }) {
   state.dir = cacheDir || path.join(
@@ -126,60 +143,142 @@ function init({ cacheDir, library, roots, home }) {
   state.library = library;
   state.rootsOf = roots;
   state.homeOf = home || (() => '');
+  // The models stay on the machine even though the profiles no longer do: 200MB
+  // of weights are a download, not the user's data, and syncing them to every
+  // device to save one download would be the waste the cache was once accused
+  // of being. So this is not derived from where the store lives.
   const modelDir = process.env.VIDEO_EXPLORER_FACE_MODELS
-    || path.join(path.dirname(state.dir), 'face-models');
+    || path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'video-explorer', 'face-models');
 
   const ready = engine.init(modelDir);
+  state.index = { version: VERSION, model: ready.model || '', videos: {} };
+
+  // Vectors from two different recognisers are not comparable, so a store built
+  // by the other one is not read. Re-profiling is hours of background work; a
+  // silently wrong suggestion is worse.
+  let meta = null;
+  try {
+    meta = JSON.parse(fs.readFileSync(path.join(state.dir, 'meta.json'), 'utf8'));
+  } catch { /* first run, or still the single-file shape */ }
+
+  migrateFromSingleFile(ready.model);
 
   try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(state.dir, 'index.json'), 'utf8'));
-    // Vectors from two different recognisers are not comparable, so an index
-    // built by the other one is discarded rather than mixed. Re-profiling is
-    // hours of background work; a silently wrong suggestion is worse.
-    const usable = parsed && parsed.videos && parsed.version === VERSION
-      && parsed.model === ready.model;
-    if (usable) state.index = parsed;
-    else if (parsed && parsed.videos) state.rebuilding = parsed.model || 'an older model';
-  } catch { /* no index yet, or one written by an older shape */ }
-  state.index.model = ready.model || state.index.model;
+    meta = meta || JSON.parse(fs.readFileSync(path.join(state.dir, 'meta.json'), 'utf8'));
+  } catch { /* nothing migrated either */ }
+
+  if (meta && (meta.version !== VERSION || meta.model !== ready.model)) {
+    state.rebuilding = meta.model || 'an older model';
+  } else {
+    // Read in the background. Thousands of small files is about two seconds,
+    // and the app opening two seconds later to have suggestions ready two
+    // seconds sooner is a bad trade -- the sweep cannot start until the app is
+    // up anyway. Suggestions appear a moment after the window does.
+    state.loading = true;
+    loadEntries().then(() => {
+      state.loading = false;
+      rebuild();
+    }).catch(() => { state.loading = false; });
+  }
+  writeMeta(ready.model);
 
   rebuild();
   return { ...ready, profiled: Object.keys(state.index.videos).length, modelDir };
 }
 
+function writeMeta(model) {
+  try {
+    fs.mkdirSync(path.join(state.dir, ENTRIES), { recursive: true });
+    fs.writeFileSync(path.join(state.dir, 'meta.json'),
+      JSON.stringify({ version: VERSION, model: model || '' }));
+  } catch { /* read-only disk: the store simply will not persist */ }
+}
+
+/**
+ * The old single index, split up, once.
+ *
+ * Nobody should have to re-read three and a half thousand videos because the
+ * file layout changed. The original is kept beside the new folder rather than
+ * deleted -- it costs a few megabytes and it is the only copy of that work.
+ */
+function migrateFromSingleFile(model) {
+  const single = path.join(state.dir, 'index.json');
+  const dir = path.join(state.dir, ENTRIES);
+  if (fs.existsSync(dir) || !fs.existsSync(single)) return;
+  let parsed;
+  try { parsed = JSON.parse(fs.readFileSync(single, 'utf8')); } catch { return; }
+  if (!parsed || !parsed.videos) return;
+
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    let moved = 0;
+    for (const [key, entry] of Object.entries(parsed.videos)) {
+      fs.writeFileSync(path.join(dir, `${fileNameFor(key)}.json`), JSON.stringify(entry));
+      moved += 1;
+    }
+    fs.writeFileSync(path.join(state.dir, 'meta.json'),
+      JSON.stringify({ version: parsed.version || VERSION, model: parsed.model || model || '' }));
+    fs.renameSync(single, path.join(state.dir, 'index.json.migrated'));
+    log(`split ${moved} profiles out of index.json`);
+  } catch { /* leave the single file alone and start empty rather than half-done */ }
+}
+
+/**
+ * Every stored profile, read back.
+ *
+ * In parallel, in batches: several thousand sequential reads is a second and a
+ * half of waiting on the disk one file at a time, where sixty-four at once is a
+ * fraction of that. The batch is bounded because a few thousand open file
+ * handles at once is its own kind of rude.
+ */
+async function loadEntries() {
+  const dir = path.join(state.dir, ENTRIES);
+  let names;
+  try { names = await fsp.readdir(dir); } catch { return; }
+  const wanted = names.filter((n) => n.endsWith('.json'));
+  const BATCH = 64;
+  for (let i = 0; i < wanted.length; i += BATCH) {
+    await Promise.all(wanted.slice(i, i + BATCH).map(async (name) => {
+      try {
+        state.index.videos[keyFromFileName(name)] =
+          JSON.parse(await fsp.readFile(path.join(dir, name), 'utf8'));
+      } catch { /* one unreadable profile is not worth failing the rest for */ }
+    }));
+  }
+}
+
 /**
  * Vectors are stored as plain arrays at four decimals.
  *
- * A 128-number embedding is meaningless past that, and the difference over a few
- * thousand videos is a 4MB file rather than a 20MB one.
+ * A 512-number embedding is meaningless past that, and the difference over a few
+ * thousand videos is a 12MB store rather than a 60MB one.
  */
 const packVector = (v) => Array.from(v, (x) => Math.round(x * 10000) / 10000);
 const unpackVector = (a) => engine.normalise(Float32Array.from(a));
 
-function saveSoon() {
-  state.dirty = true;
-  clearTimeout(state.saveTimer);
-  state.saveTimer = setTimeout(async () => {
-    try {
-      await fsp.mkdir(state.dir, { recursive: true });
-      await fsp.writeFile(
-        path.join(state.dir, 'index.json'), JSON.stringify(state.index),
-      );
-      state.dirty = false;
-    } catch { /* a full or read-only disk must not break browsing */ }
-  }, 2000);
+/** One profile, written the moment it exists. */
+async function writeEntry(key, entry) {
+  try {
+    const dir = path.join(state.dir, ENTRIES);
+    await fsp.mkdir(dir, { recursive: true });
+    await fsp.writeFile(path.join(dir, `${fileNameFor(key)}.json`), JSON.stringify(entry));
+  } catch { /* a full or read-only disk must not break browsing */ }
 }
 
-/** Written on the way out, so a session's work is never lost to a close. */
-async function flush() {
-  clearTimeout(state.saveTimer);
-  if (!state.dirty) return;
+async function dropEntry(key) {
+  delete state.index.videos[key];
   try {
-    await fsp.mkdir(state.dir, { recursive: true });
-    await fsp.writeFile(path.join(state.dir, 'index.json'), JSON.stringify(state.index));
-    state.dirty = false;
-  } catch { /* nothing to be done at exit */ }
+    await fsp.unlink(path.join(state.dir, ENTRIES, `${fileNameFor(key)}.json`));
+  } catch { /* never written, or already gone */ }
 }
+
+/**
+ * Nothing is held back any more, so there is nothing to flush.
+ *
+ * Kept because the server calls it on the way out, and because a store that
+ * needs no closing ceremony is worth being explicit about.
+ */
+async function flush() {}
 
 // ----------------------------------------------------------------- centroids
 
@@ -503,7 +602,7 @@ async function profile(file, stat, opts = {}) {
     gen: HARVEST_GEN,
   };
   state.index.videos[key] = entry;
-  saveSoon();
+  await writeEntry(key, entry);
 
   // One picture per person, so a suggestion can show the face it came from.
   if (people.length) {
@@ -718,6 +817,9 @@ async function loop() {
   state.running = true;
   try {
     while (state.enabled && engine.available().ok) {
+      // Nothing may be queued until the store is fully read: a video whose
+      // profile has not loaded yet looks unread, and would be read again.
+      if (state.loading) { await wait(250); continue; }
       if (busy()) { await wait(400); continue; }
 
       // Re-counted on a timer as well as when the queue runs dry. The library
@@ -757,7 +859,7 @@ async function loop() {
           // Abandoned midway rather than genuinely empty: drop it so it is read
           // again properly. Never for a re-read -- that would throw away a
           // working profile in exchange for an interrupted one.
-          if (busy() && !next.redo) delete state.index.videos[next.key];
+          if (busy() && !next.redo) await dropEntry(next.key);
         } else {
           // A solo credit joins someone's average, which moves every score. An
           // unnamed video moves nothing but its own, so it is scored alone --
@@ -819,9 +921,10 @@ function status() {
     // What it is doing right now, in one word, so the UI does not have to
     // reconstruct it from four booleans.
     doing: !state.enabled ? 'paused'
-      : state.walking ? 'counting'
-        : state.current ? 'reading'
-          : state.running ? 'waiting' : 'stopped',
+      : state.loading ? 'loading'
+        : state.walking ? 'counting'
+          : state.current ? 'reading'
+            : state.running ? 'waiting' : 'stopped',
     lastRead: state.lastRead,
     done: state.done,
     // Videos an hour, from this session's own work. Nothing to calibrate and it

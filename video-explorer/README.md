@@ -613,9 +613,33 @@ public/styles.css    dark theme
 config.json          created on first run: last folder, settings, recent destinations
 ```
 
-Sprite sheets and probed metadata live in `%LOCALAPPDATA%\video-explorer\cache`.
-The face index and the face pictures live beside them in `\faces` (about 10KB a
-video), and the ONNX models in `\face-models`.
+Everything this app knows about a library lives in one place, in the sync root:
+
+```
+OneDrive\.video-explorer\
+  library.json      ratings, tags, models, studio, production, links
+  cache\            preview strips and probed metadata (~17KB a video)
+  faces\v\          one face profile per video (~4KB), written once
+  faces\thumbs\     the face pictures behind a suggestion (~26KB)
+```
+
+Around 600MB once fully populated, against a library measured in terabytes — and
+a second machine inherits the lot rather than spending a night rebuilding it.
+None of it is regenerable in the sense that word usually implies: rebuilding a
+preview strip decodes the video again, and for one since freed up to the cloud,
+downloads it first.
+
+The ONNX models stay on the machine, in `%LOCALAPPDATA%\video-explorer\face-models`
+— 200MB of weights are a download, not your data.
+
+Face profiles are **one small file per video** rather than one index. The index
+was rewritten whole after every video: about 25GB of writing across a full sweep
+to store 12MB of vectors, which in a synced folder means 12MB re-uploaded every
+seven seconds. Per file it is 4KB, written once. That saves fourteen seconds of a
+seven-hour sweep, which is nothing; what it buys is a folder that can be synced,
+that two machines can both add to without conflicting, and that cannot lose
+everything to one bad write. An existing index is split on first launch and kept
+as `index.json.migrated` rather than deleted.
 
 ## Notes
 

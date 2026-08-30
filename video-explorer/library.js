@@ -37,10 +37,14 @@ let data = { version: 1, records: {} };
 let timer = null;
 
 /**
- * Lives in OneDrive by design — unlike the preview cache, which is regenerable
- * bulk. This file is a few hundred KB of irreplaceable hand-entered judgement,
- * and putting it in the sync root is what makes ratings show up on every device
- * running the app.
+ * Lives in OneDrive by design: a couple of megabytes of irreplaceable
+ * hand-entered judgement, and putting it in the sync root is what makes ratings
+ * show up on every device running the app.
+ *
+ * The preview cache and the face profiles sit beside it now, in the same
+ * .video-explorer folder. They were once kept local as regenerable bulk, which
+ * undersold them — regenerating a preview means decoding the video again, and
+ * for one since freed up to the cloud, downloading it first.
  */
 function resolveFile(oneDriveRoot) {
   if (process.env.VIDEO_EXPLORER_LIBRARY) return process.env.VIDEO_EXPLORER_LIBRARY;

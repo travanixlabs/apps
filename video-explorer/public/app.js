@@ -1863,6 +1863,7 @@ function renderFacePill() {
   // it. The fraction is the answer to a different one.
   text.replaceChildren();
   const said = {
+    loading: 'opening the face index…',
     counting: 'counting the library…',
     reading: 'reading…',
     waiting: 'waiting for you to pause',
@@ -1889,7 +1890,8 @@ function renderFacePill() {
 
   pill.title = [
     doing === 'reading' ? `Reading ${current}`
-      : doing === 'counting' ? 'Counting the library…'
+      : doing === 'loading' ? 'Reading back what has already been profiled…'
+        : doing === 'counting' ? 'Counting the library…'
         : doing === 'waiting' ? 'Ready — it reads a video whenever you pause for a moment'
           : doing === 'paused' ? 'Paused'
             : 'Not running',

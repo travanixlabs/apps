@@ -31,11 +31,28 @@ const PUBLIC_DIR = path.join(APP_DIR, 'public');
 // this at its per-user data folder, so it never writes inside Program files.
 const CONFIG_FILE = process.env.VIDEO_EXPLORER_CONFIG || path.join(APP_DIR, 'config.json');
 
-// Cache lives outside the app folder: this app may sit in OneDrive, and
-// syncing thousands of regenerable sprite sheets would be pure waste.
-const CACHE_DIR = process.env.VIDEO_EXPLORER_CACHE
-  || path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'video-explorer', 'cache');
-const META_FILE = path.join(CACHE_DIR, 'meta.json');
+/**
+ * Previews and face profiles live in OneDrive, beside the labels.
+ *
+ * They used to be deliberately local, on the reasoning that regenerable bulk is
+ * not worth syncing. That reasoning was wrong about the word "regenerable".
+ * Rebuilding a preview strip means decoding the video again -- and for a video
+ * since freed up to the cloud, downloading it first. A face profile is seven
+ * seconds of ffmpeg and inference. Neither is recoverable from nothing; both are
+ * simply cheaper to copy than to make.
+ *
+ * Set beside library.json rather than in a folder of its own so everything this
+ * app knows about a library is in one place, and a second machine inherits the
+ * lot. Around 600MB once fully populated, against a library measured in
+ * terabytes. VIDEO_EXPLORER_CACHE still overrides it.
+ */
+function defaultCacheDir(oneDriveRoot) {
+  if (process.env.VIDEO_EXPLORER_CACHE) return process.env.VIDEO_EXPLORER_CACHE;
+  if (oneDriveRoot) return path.join(oneDriveRoot, '.video-explorer', 'cache');
+  return path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'video-explorer', 'cache');
+}
+let CACHE_DIR = defaultCacheDir(process.env.OneDrive || '');
+let META_FILE = path.join(CACHE_DIR, 'meta.json');
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.PORT) || 4321;
@@ -102,11 +119,33 @@ function saveConfigSoon() {
 }
 
 let metaTimer = null;
+let metaDirty = false;
+
+/**
+ * The probed-metadata index, written whole.
+ *
+ * It is the one file here that is not write-once, so in a synced folder its
+ * cadence matters: a second of debounce meant a rewrite -- and a re-upload --
+ * every time a page of thumbnails settled. Twenty seconds coalesces a browsing
+ * session into one write, and the close flushes whatever is left. The cost of
+ * losing twenty seconds of it to a hard kill is a few ffprobe calls.
+ */
 function saveMetaSoon() {
-  clearTimeout(metaTimer);
+  metaDirty = true;
+  if (metaTimer) return;
   metaTimer = setTimeout(() => {
+    metaTimer = null;
+    metaDirty = false;
     fsp.writeFile(META_FILE, JSON.stringify(metaIndex)).catch(() => {});
-  }, 1000);
+  }, 20000);
+}
+
+function flushMeta() {
+  if (!metaDirty) return;
+  clearTimeout(metaTimer);
+  metaTimer = null;
+  metaDirty = false;
+  try { fs.writeFileSync(META_FILE, JSON.stringify(metaIndex)); } catch { /* going down */ }
 }
 
 /** Bounded-concurrency runner so we never fork 200 ffmpeg processes at once. */
@@ -1426,13 +1465,18 @@ async function main() {
   config.sort = 'rating';
   config.sortDir = 'desc';
   await applyHomeDir();
+  // The home folder is only known after the account resolves, and everything
+  // cached hangs off it.
+  CACHE_DIR = defaultCacheDir(ONEDRIVE_ROOT);
+  META_FILE = path.join(CACHE_DIR, 'meta.json');
+
   const lib = await library.init(ONEDRIVE_ROOT);
   log(`ratings and tags: ${lib.count} records at ${lib.file}`);
 
   // Familiar faces is optional by construction: without onnxruntime or the
   // models it reports why and the rest of the app is untouched.
   const face = faces.init({
-    cacheDir: path.join(CACHE_DIR, '..', 'faces'),
+    cacheDir: path.join(path.dirname(CACHE_DIR), 'faces'),
     library,
     // The home folder counts even when nothing has been opened yet: a fresh
     // install has an empty `roots`, and a sweep over nothing would report a
@@ -1443,7 +1487,11 @@ async function main() {
     home: () => config.homeDir || ONEDRIVE_ROOT || '',
   });
   if (face.ok) {
-    log(`familiar faces: ${face.profiled} videos profiled, models at ${face.modelDir}`);
+    // The store is read in the background, so the count here is what had landed
+    // by now rather than what is there -- say where it is instead.
+    log(`familiar faces: ${face.model}, store at `
+      + `${path.join(path.dirname(CACHE_DIR), 'faces')}`);
+    log(`familiar faces: models at ${face.modelDir}`);
     faces.start();
   } else {
     log(`familiar faces: off (${face.reason})`);
@@ -1472,10 +1520,11 @@ server.on('error', (err) => {
 // sweep managed since the last save.
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, async () => {
+    flushMeta();
     await faces.flush();
     process.exit(0);
   });
 }
-process.on('exit', () => { faces.flush(); });
+process.on('exit', () => { flushMeta(); faces.flush(); });
 
 main();
