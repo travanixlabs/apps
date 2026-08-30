@@ -69,6 +69,7 @@ const ENV_HOME = process.env.OneDrive
 const DEFAULT_CONFIG = {
   roots: [],          // folders the user has pointed at (authorises reads)
   rootsSeen: {},      // lowercased root -> when it was last opened, so it can expire
+  cacheNamesV2: false, // whether cached previews have been renamed to derivable names
   homeFollowsAccount: true, // resolve home from the signed-in OneDrive account
   homeDir: '',        // opened on launch, and by the 🏠 button
   // Folder names to show at the default folder, by name rather than path so the
@@ -575,14 +576,99 @@ function tileDims() {
   return { tileW, tileH: 2 * Math.round((tileW * 9 / 16) / 2) };
 }
 
+/**
+ * A cache name anything holding the file's size and modified time can work out.
+ *
+ * The old name was a sha1 over `path | size | mtime | salt`, and the path in it
+ * is the one thing a phone never learns -- records are keyed by size and mtime
+ * precisely so no path has to travel. That made 8,500 cached preview strips
+ * sitting in the sync root unaddressable from the phone: readable, but
+ * unfindable, so it seeks the video itself over mobile data instead of
+ * fetching 17KB holding all ten frames.
+ *
+ * Size and mtime is the key every other store here already uses, and the geometry
+ * stays in the name so changing the tile width still invalidates what it should.
+ * Old names are renamed across as they are met -- see legacyCachePath.
+ */
+function cacheName(stat, salt) {
+  return `${stat.size}_${Math.round(stat.mtimeMs)}-${salt}.jpg`;
+}
+
+function spriteSalt() {
+  const frames = Math.max(2, Math.min(24, Number(config.frames) || 10));
+  // "s" = even-division spacing; the midpoint-spaced sprites were "sprite-v2".
+  return `s${frames}x${tileDims().tileW}`;
+}
+
+const thumbSalt = () => `t${tileDims().tileW}`;
+
 function thumbCachePath(file, stat) {
-  return path.join(CACHE_DIR, cacheKey(file, stat, `thumb:${tileDims().tileW}`) + '.jpg');
+  return path.join(CACHE_DIR, cacheName(stat, thumbSalt()));
 }
 
 function spriteCachePath(file, stat) {
-  const frames = Math.max(2, Math.min(24, Number(config.frames) || 10));
-  // "v2" = even-division spacing; invalidates midpoint-spaced sprites.
-  return path.join(CACHE_DIR, cacheKey(file, stat, `sprite-v2:${frames}:${tileDims().tileW}`) + '.jpg');
+  return path.join(CACHE_DIR, cacheName(stat, spriteSalt()));
+}
+
+/**
+ * Where this artefact would have been found before the rename, so an existing
+ * one can be moved across rather than rebuilt.
+ *
+ * Rebuilding is not cheap: a strip is ten seeks and ten encodes, and for a video
+ * since freed up to the cloud it is a download first. There are 8,500 of them.
+ */
+function legacyCachePath(file, stat, which) {
+  const salt = which === 'sprite'
+    ? `sprite-v2:${Math.max(2, Math.min(24, Number(config.frames) || 10))}:${tileDims().tileW}`
+    : `thumb:${tileDims().tileW}`;
+  return path.join(CACHE_DIR, cacheKey(file, stat, salt) + '.jpg');
+}
+
+/**
+ * Moves one artefact onto its new name, if that is where it still is.
+ *
+ * Lazy by design: every strip the app draws converts itself, which covers the
+ * folders actually in use within a session or two. `migrateCacheNames` sweeps up
+ * the rest in the background.
+ */
+async function adoptLegacyCache(file, stat, which) {
+  const now = which === 'sprite' ? spriteCachePath(file, stat) : thumbCachePath(file, stat);
+  if (await exists(now)) return now;
+  const was = legacyCachePath(file, stat, which);
+  if (!(await exists(was))) return now;
+  try {
+    await fsp.rename(was, now);
+    // The sidecar carries how many frames actually rendered, which is not always
+    // what was asked for -- a very short video yields fewer.
+    if (which === 'sprite' && await exists(was + '.json')) {
+      await fsp.rename(was + '.json', now + '.json');
+    }
+  } catch { /* a locked or half-synced file simply gets rebuilt */ }
+  return now;
+}
+
+/**
+ * The geometry behind the names, so a reader that is not this process can build
+ * one. Rewritten whenever it would differ, which is when the tile width or the
+ * frame count changes.
+ */
+async function writeCacheManifest() {
+  const { tileW, tileH } = tileDims();
+  const body = JSON.stringify({
+    version: 2,
+    frames: Math.max(2, Math.min(24, Number(config.frames) || 10)),
+    tileW,
+    tileH,
+    // Spelled out rather than left to be inferred: `<size>_<mtime>-<salt>.jpg`.
+    sprite: spriteSalt(),
+    thumb: thumbSalt(),
+  });
+  try {
+    const at = path.join(CACHE_DIR, 'manifest.json');
+    if (await fsp.readFile(at, 'utf8').catch(() => '') === body) return;
+    await fsp.mkdir(CACHE_DIR, { recursive: true });
+    await fsp.writeFile(at, body);
+  } catch { /* an offline sync folder is not worth an error */ }
 }
 
 /**
@@ -610,7 +696,7 @@ async function ensureSprite(file, stat) {
   const frames = Math.max(2, Math.min(24, Number(config.frames) || 10));
   const { tileW, tileH } = tileDims();
 
-  const out = spriteCachePath(file, stat);
+  const out = await adoptLegacyCache(file, stat, 'sprite');
   const key = path.basename(out, '.jpg');
   const sidecar = out + '.json';
 
@@ -697,7 +783,7 @@ async function ensureSprite(file, stat) {
  */
 async function ensureThumb(file, stat) {
   const { tileW, tileH } = tileDims();
-  const out = thumbCachePath(file, stat);
+  const out = await adoptLegacyCache(file, stat, 'thumb');
 
   if (await exists(out)) return out;
 
@@ -862,6 +948,44 @@ async function listSubfolders(dir, videos) {
 
   folders.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   return folders;
+}
+
+/**
+ * Renames every cached strip and poster onto its derivable name, once.
+ *
+ * The lazy rename in adoptLegacyCache covers whatever the app draws, which
+ * converts the folders in use but leaves the rest addressable only from here --
+ * and the whole point of the new name is that something other than this process
+ * can find it. So the roots are walked once, in the background, after the app is
+ * already up: a stat per video and a rename per hit, no decoding at all.
+ *
+ * Runs one time. `cacheNamesV2` in config records that it has.
+ */
+async function migrateCacheNames() {
+  if (config.cacheNamesV2) return { skipped: true };
+  const started = Date.now();
+  let seen = 0;
+  let moved = 0;
+
+  for (const root of collapseRoots(config.roots)) {
+    let videos = [];
+    try { videos = await collectVideos(root); } catch { continue; }
+    for (const video of videos) {
+      seen += 1;
+      const stat = { size: video.size, mtimeMs: video.mtimeMs };
+      for (const which of ['sprite', 'thumb']) {
+        const was = legacyCachePath(video.path, stat, which);
+        if (!(await exists(was))) continue;
+        await adoptLegacyCache(video.path, stat, which);
+        moved += 1;
+      }
+    }
+  }
+
+  config.cacheNamesV2 = true;
+  saveConfigSoon();
+  log(`cache names: ${moved} renamed across ${seen} videos in ${Date.now() - started}ms`);
+  return { seen, moved };
 }
 
 async function scanDirectory(dir, recursive, includeCloud) {
@@ -1213,6 +1337,9 @@ const server = http.createServer(async (req, res) => {
         // Emptying the path means "go back to following the account", not
         // "open on nothing" — so re-resolve rather than store a blank.
         if ('homeDir' in body || 'homeFollowsAccount' in body) await applyHomeDir();
+        // Tile width and frame count are both in the cache names, so a reader
+        // outside this process needs to be told when they move.
+        if ('tileWidth' in body || 'frames' in body) await writeCacheManifest();
         saveConfigSoon();
         return sendJson(res, 200, { ...config, homeAccount });
       }
@@ -1609,6 +1736,10 @@ async function main() {
 
   // Familiar faces is optional by construction: without onnxruntime or the
   // models it reports why and the rest of the app is untouched.
+  // The geometry behind the cache names, for anything reading them from the
+  // sync root rather than from here.
+  await writeCacheManifest();
+
   const face = faces.init({
     cacheDir: path.join(path.dirname(CACHE_DIR), 'faces'),
     library,
@@ -1633,6 +1764,9 @@ async function main() {
   metaIndex = loadJsonSync(META_FILE, {});
   log(`${Object.keys(metaIndex).length} cached metadata entries`);
   await checkFfmpeg();
+
+  // After the port is open: this is housekeeping, and nothing waits on it.
+  setTimeout(() => { migrateCacheNames().catch(() => {}); }, 3000);
 
   server.listen(PORT, HOST, () => {
     const url = `http://${HOST}:${PORT}`;

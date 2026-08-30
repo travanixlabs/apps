@@ -304,6 +304,57 @@ let digestTimer = null;
 let digestDirty = false;
 
 /**
+ * Every performer's lineup, precomputed.
+ *
+ * A lineup is "her other faces, most like the rest of her first", and the
+ * ordering comes from a medoid agreement over her whole set -- every one of her
+ * vectors against every other. That is cheap here and impossible anywhere else,
+ * since the vectors are the one thing deliberately not published. So the answer
+ * is: which crops, in which order, with how much each agrees.
+ *
+ * Only rebuilt when the averages themselves have moved, which is what changes an
+ * ordering. During a sweep the digest is rewritten every half minute and this is
+ * not, because nothing in it has changed.
+ */
+const LINEUPS = 'lineups.json';
+
+let lineupsDirty = true;
+
+async function writeLineups() {
+  if (!lineupsDirty || !state.dir) return false;
+  lineupsDirty = false;
+  const performers = {};
+  for (const name of state.centroids.keys()) {
+    const built = lineup(name, 24);
+    if (!built.faces.length) continue;
+    performers[name] = {
+      total: built.total,
+      odd: built.odd,
+      contributing: built.contributing,
+      // `key` addresses the crop: thumbs/<size>_<mtime>-0.png, person 0 being
+      // the dominant face, which is what a lineup is made of.
+      faces: built.faces.map((f) => ({
+        key: f.key, name: f.name, rating: f.rating, solo: f.solo, agrees: f.agrees,
+      })),
+    };
+  }
+  try {
+    await fsp.writeFile(path.join(state.dir, LINEUPS), JSON.stringify({
+      version: 1,
+      model: state.index.model || '',
+      updated: Date.now(),
+      // What counts as a face that does not look like the rest of her, so a
+      // reader can mark the odd ones the way the desktop panel does.
+      apart: SAME_PERSON,
+      performers,
+    }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * A sweep finishes a video every seven seconds, and this file sits in a synced
  * folder. Half a minute of coalescing turns a night of profiling into a
  * manageable number of uploads, and the worst case of being half a minute
@@ -326,23 +377,25 @@ async function writeDigest() {
 
   const videos = {};
   for (const key of Object.keys(state.index.videos)) {
-    // Trimmed to what a listing needs: the phone shows a name and a percentage
-    // and cannot open a lineup, so the margin, the runner-up and which face
-    // group it came from would all be weight for nothing.
+    // Trimmed to what a reader needs: a name, how sure, and which face group it
+    // came from -- that last one is how the crop behind the suggestion is
+    // addressed. The margin and the runner-up stay here, where the bands that
+    // were computed from them are all anyone else needs.
     videos[key] = (state.suggestions.get(key) || [])
-      .map((s) => ({ name: s.name, score: s.score, band: s.band }));
+      .map((s) => ({ name: s.name, score: s.score, band: s.band, person: s.person || 0 }));
   }
 
   try {
     await fsp.mkdir(state.dir, { recursive: true });
     await fsp.writeFile(path.join(state.dir, DIGEST), JSON.stringify({
-      version: 1,
+      version: 2,
       model: state.index.model || '',
       updated: Date.now(),
       profiled: Object.keys(videos).length,
       performers: state.centroids.size,
       videos,
     }));
+    await writeLineups();
     return true;
   } catch {
     return false;   // a read-only or offline folder is not worth an error
@@ -382,6 +435,8 @@ function rebuild() {
     if (acc.count < MIN_VIDEOS) state.centroids.delete(name);
     else acc.vec = engine.normalise(Float32Array.from(acc.sum));
   }
+  // The averages have moved, so every lineup's ordering is stale with them.
+  lineupsDirty = true;
   rescore();
 }
 

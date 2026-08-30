@@ -678,7 +678,17 @@ that two machines can both add to without conflicting, and that cannot lose
 everything to one bad write. An existing index is split on first launch and kept
 as `index.json.migrated` rather than deleted.
 
-`suggestions.json` is the one derived file here, and it exists for the phone. A
+Everything in `cache\` and `faces\` is named `<size>_<mtime>-<what>`, the same
+key the labels use. It used to be a sha1 over `path | size | mtime | salt`, and
+the path in it was the one thing a phone never learns — records are keyed by size
+and mtime precisely so no path has to travel. That made thousands of files in the
+sync root readable but unfindable from anywhere else. Existing files are renamed
+across, never rebuilt: lazily as the app draws them, and once in the background
+over the whole library at the next start. `cache\manifest.json` carries the
+geometry — frame count and tile width — since both are part of the name.
+
+`suggestions.json` and `lineups.json` are the derived files here, and they exist
+for the phone. A
 profile is a packed vector and the suggestions are not in it — they come from
 averaging every performer across the library and scoring each video against the
 lot, which a phone cannot do and has no business trying. The conclusion is tiny,
@@ -687,6 +697,14 @@ it is written out beside the profiles, half a minute behind the sweep, and the
 phone reads the answer rather than the evidence. A key with an empty list is a
 video that was read and matched nobody — a different fact from one that has not
 been read, and the filter needs both.
+
+`lineups.json` is the same trick for "is this her?": the ordering of a lineup
+comes from a medoid agreement over every one of her vectors against every other,
+which is cheap here and impossible anywhere the vectors are not published. So the
+conclusion travels — which crops, in which order, how much each agrees — and the
+crops themselves are already addressable as `thumbs\<size>_<mtime>-<face>.png`.
+It is rebuilt only when the averages move, which is what changes an ordering, so
+a sweep rewriting the suggestions every half minute does not rewrite this.
 
 ## What this app is allowed to read
 
