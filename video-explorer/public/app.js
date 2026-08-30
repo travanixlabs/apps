@@ -817,6 +817,10 @@ function touchedAt(file) {
 /** Which label a sort key reads, and what it reads out of it. */
 const LABEL_SORTS = {
   studio: (f) => (f.studio || '').trim(),
+  // One value per video, like the studio -- the series within the house, so
+  // sorting by it groups a production's shoots together and the numbering
+  // inside a group falls out of the numeric name tiebreak.
+  production: (f) => (f.production || '').trim(),
   models: (f) => firstAlphabetically(f.models),
   tags: (f) => firstAlphabetically(f.tags),
 };
@@ -844,6 +848,7 @@ const SORT_FIELDS = [
   { value: 'duration', label: 'Duration' },
   { value: 'rating', label: 'Rating' },
   { value: 'studio', label: 'Studio' },
+  { value: 'production', label: 'Production' },
   { value: 'models', label: 'Model' },
   { value: 'tags', label: 'Tag' },
   { value: 'relFolder', label: 'Folder' },

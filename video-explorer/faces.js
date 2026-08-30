@@ -273,12 +273,81 @@ async function dropEntry(key) {
 }
 
 /**
- * Nothing is held back any more, so there is nothing to flush.
- *
- * Kept because the server calls it on the way out, and because a store that
- * needs no closing ceremony is worth being explicit about.
+ * Nothing is held back any more, so there is nothing to flush -- except the
+ * digest, which is deliberately lazy about being written.
  */
-async function flush() {}
+async function flush() {
+  await writeDigest();
+}
+
+// ------------------------------------------------------------------- digest
+
+/**
+ * What has been profiled and what it suggests, in one small file the phone can
+ * read.
+ *
+ * The profiles themselves are a thousand files of packed vectors, and the
+ * suggestions are not in them: they come from averaging every performer across
+ * the library and scoring each video against the lot. A phone cannot do that
+ * work and has no business trying. But the *answer* is tiny -- a name, a score
+ * and a band per video -- so it is written out beside the profiles and the
+ * phone reads the answer instead of the evidence.
+ *
+ * A key with an empty list is a video that was read and matched nobody, which
+ * is a different fact from one that has not been read, and the filter needs to
+ * tell them apart.
+ */
+const DIGEST = 'suggestions.json';
+const DIGEST_DEBOUNCE_MS = 30000;
+
+let digestTimer = null;
+let digestDirty = false;
+
+/**
+ * A sweep finishes a video every seven seconds, and this file sits in a synced
+ * folder. Half a minute of coalescing turns a night of profiling into a
+ * manageable number of uploads, and the worst case of being half a minute
+ * behind is a suggestion appearing on the phone a moment late.
+ */
+function digestSoon() {
+  digestDirty = true;
+  if (digestTimer) return;
+  digestTimer = setTimeout(() => {
+    digestTimer = null;
+    writeDigest().catch(() => {});
+  }, DIGEST_DEBOUNCE_MS);
+}
+
+async function writeDigest() {
+  if (!digestDirty || !state.dir) return false;
+  digestDirty = false;
+  clearTimeout(digestTimer);
+  digestTimer = null;
+
+  const videos = {};
+  for (const key of Object.keys(state.index.videos)) {
+    // Trimmed to what a listing needs: the phone shows a name and a percentage
+    // and cannot open a lineup, so the margin, the runner-up and which face
+    // group it came from would all be weight for nothing.
+    videos[key] = (state.suggestions.get(key) || [])
+      .map((s) => ({ name: s.name, score: s.score, band: s.band }));
+  }
+
+  try {
+    await fsp.mkdir(state.dir, { recursive: true });
+    await fsp.writeFile(path.join(state.dir, DIGEST), JSON.stringify({
+      version: 1,
+      model: state.index.model || '',
+      updated: Date.now(),
+      profiled: Object.keys(videos).length,
+      performers: state.centroids.size,
+      videos,
+    }));
+    return true;
+  } catch {
+    return false;   // a read-only or offline folder is not worth an error
+  }
+}
 
 // ----------------------------------------------------------------- centroids
 
@@ -418,6 +487,7 @@ function scoreVideo(key, entry) {
 /** Every profiled video, when the averages themselves have moved. */
 function rescore() {
   state.suggestions.clear();
+  digestSoon();
   if (!state.centroids.size) return;
   for (const [key, entry] of Object.entries(state.index.videos)) scoreVideo(key, entry);
 }
@@ -955,7 +1025,7 @@ function status() {
 }
 
 module.exports = {
-  init, start, setEnabled, status, noteActivity, rootsChanged, decorate,
+  init, start, setEnabled, status, noteActivity, rootsChanged, decorate, writeDigest,
   suggestionsFor, rankFor,
   lineup, faceImageByKey, standing,
   // The reading order, for checking what a fresh install would do first.

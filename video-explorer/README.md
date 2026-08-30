@@ -167,12 +167,12 @@ timestamp in the source.
 Posters and sprites build lazily as tiles scroll into view. **Build all previews**
 warms the whole filtered set, 4 at a time.
 
-Cache lives in `%LOCALAPPDATA%\video-explorer\cache` — deliberately outside this
-folder, since the app itself sits in OneDrive and syncing thousands of
-regenerable JPEGs would be wasted bandwidth. Override with the
-`VIDEO_EXPLORER_CACHE` environment variable. Entries are keyed by path + size +
-modified time, so an edited file regenerates and an unchanged one is never
-re-encoded.
+Cache lives in `.video-explorer\cache`, beside the labels in the sync root, so a
+second machine inherits it rather than decoding everything again — and a preview
+for a video since freed up to the cloud does not mean downloading the video to
+rebuild it. Override with the `VIDEO_EXPLORER_CACHE` environment variable.
+Entries are keyed by path + size + modified time, so an edited file regenerates
+and an unchanged one is never re-encoded.
 
 ## Quick actions
 
@@ -553,7 +553,7 @@ the full path.
 
 - **Flatten subfolders** — collapse everything below into one grid (junction-loop safe, 12 levels deep)
 - **Filter** — matches video names, their subfolder, folder names, **tags** and **models**; space-separated terms must all match. **A search covers the whole subtree**: typing in a folder whose videos live in subfolders switches the scan to recursive and ticks **Flatten**, because filtering can only ever see what has been scanned — and a cloud library is exactly the one that sits in subfolders rather than in front of you. Clearing the search leaves the flatten on, rather than spending another scan to put you back where you could not find anything. Prefix a term with `#` or `tag:` to match tags only — `#hd` finds what you tagged, `hd` also finds what's named that way. Clicking a tag chip fills in the `#` form.
-- **Sort** — an icon in the top row, left of the filter funnel: name, date modified, size, duration, rating, or folder. Picking the field you are already on reverses it, and the icon flips so the direction reads without opening the menu. **Every launch starts on rating, highest first**, with everything unrated below it in name order — a session can sort however it likes and that choice is still written down, it just does not decide what you see when you next open the app (the same treatment `recursive` gets)
+- **Sort** — an icon in the top row, left of the filter funnel: name, date modified, size, duration, rating, studio, production, model, tag, or folder. The label sorts read the first value — one studio and one production code per video, the alphabetically first performer or tag where there are several — and the unlabelled go last whichever way the arrow points, so reversing brings the labelled tail up rather than a wall of blanks. Picking the field you are already on reverses it, and the icon flips so the direction reads without opening the menu. **Every launch starts on rating, highest first**, with everything unrated below it in name order — a session can sort however it likes and that choice is still written down, it just does not decide what you see when you next open the app (the same treatment `recursive` gets)
 - **Volume** — an icon right of the filter funnel, opening a slider: one master level every video opens at. The player's own slider writes back to it, so there is one number rather than a toolbar setting and a per-video one drifting apart. The icon carries the level — crossed out at zero, one wave up to half, two above it — and it is a preference, so a refresh does not reset it
 - **Card size** — grid tile width, 200–520px (defaults to the smallest)
 - **Frame dwell** — hover advance interval, 1–5s (defaults to 1s)
@@ -643,7 +643,9 @@ mobile/              the phone app — see mobile/README.md
 public/index.html    layout
 public/app.js        grid, hover scrubbing, actions
 public/styles.css    dark theme
-config.json          created on first run: last folder, settings, recent destinations
+config.json          dev runs only; the packaged app keeps its settings in
+                     %APPDATA%\Video Explorer — last folder, view settings,
+                     authorised folders
 ```
 
 Everything this app knows about a library lives in one place, in the sync root:
@@ -654,6 +656,8 @@ OneDrive\.video-explorer\
   cache\            preview strips and probed metadata (~17KB a video)
   faces\v\          one face profile per video (~4KB), written once
   faces\thumbs\     the face pictures behind a suggestion (~26KB)
+  faces\suggestions.json   the conclusions, for the phone to read
+  backups\          a copy of library.json a day, fourteen kept
 ```
 
 Around 600MB once fully populated, against a library measured in terabytes — and
@@ -673,6 +677,39 @@ seven-hour sweep, which is nothing; what it buys is a folder that can be synced,
 that two machines can both add to without conflicting, and that cannot lose
 everything to one bad write. An existing index is split on first launch and kept
 as `index.json.migrated` rather than deleted.
+
+`suggestions.json` is the one derived file here, and it exists for the phone. A
+profile is a packed vector and the suggestions are not in it — they come from
+averaging every performer across the library and scoring each video against the
+lot, which a phone cannot do and has no business trying. The conclusion is tiny,
+though: a name, a score and a band per video, keyed the way the labels are. So
+it is written out beside the profiles, half a minute behind the sweep, and the
+phone reads the answer rather than the evidence. A key with an empty list is a
+video that was read and matched nobody — a different fact from one that has not
+been read, and the filter needs both.
+
+## What this app is allowed to read
+
+Listing a folder authorises reads under it — that is how a video the app just
+listed can be played, thumbnailed and probed — and it is written down in
+`config.json` as a root. Nothing ever took one back, so opening your user folder
+once, to find something, left the app authorised across the whole profile from
+then on.
+
+Three rules now keep that list honest, applied at every startup:
+
+- **A folder above the sync root narrows to the sync root.** Listing does not
+  need the grant, so browsing is unchanged; what changes is that the grant stops
+  at your OneDrive instead of swallowing everything above it. The face sweep
+  already clamped its walk exactly here. Only ancestors are affected — a folder
+  on another drive is authorised as itself.
+- **A root inside another root is dropped.** Eight folders under the sync root
+  are one root's worth of permission written down eight times.
+- **A folder unopened in sixty days is forgotten**, as is one that no longer
+  exists. Reopening it grants it again in the same instant it always did.
+
+Each of those is logged when it happens, so the list can be read back rather
+than taken on trust.
 
 ## Notes
 

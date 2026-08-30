@@ -68,6 +68,7 @@ const ENV_HOME = process.env.OneDrive
 
 const DEFAULT_CONFIG = {
   roots: [],          // folders the user has pointed at (authorises reads)
+  rootsSeen: {},      // lowercased root -> when it was last opened, so it can expire
   homeFollowsAccount: true, // resolve home from the signed-in OneDrive account
   homeDir: '',        // opened on launch, and by the 🏠 button
   // Folder names to show at the default folder, by name rather than path so the
@@ -106,8 +107,21 @@ async function exists(p) {
   try { await fsp.access(p); return true; } catch { return false; }
 }
 
+/**
+ * Reads a JSON file, forgiving a byte-order mark.
+ *
+ * JSON.parse refuses one, and a UTF-8 BOM is what several perfectly ordinary
+ * Windows tools leave behind -- PowerShell's `Set-Content -Encoding utf8`
+ * among them. The failure is silent and total: the file parses as nothing, the
+ * fallback is returned, and every setting in it is quietly discarded while the
+ * app carries on looking fine.
+ */
 function loadJsonSync(file, fallback) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''));
+  } catch {
+    return fallback;
+  }
 }
 
 let saveTimer = null;
@@ -354,14 +368,128 @@ function authoriseOrThrow(target) {
   return path.resolve(target);
 }
 
+/**
+ * How long a root outlives the last time you looked at the folder.
+ *
+ * Listing a folder grants read access to everything under it, and nothing ever
+ * took that back. Two months of not opening a folder is a clear enough answer,
+ * and reopening it grants access again in the same instant it always did.
+ */
+const ROOT_DAYS = 60;
+
+const under = (child, parent) => {
+  const c = path.resolve(child).toLowerCase();
+  const r = path.resolve(parent).toLowerCase();
+  return c === r || c.startsWith(r + path.sep);
+};
+
+/**
+ * Narrows a folder to the home folder when it sits above it.
+ *
+ * Opening your user folder once — to find a download, to check something — used
+ * to authorise reads across the whole profile from then on, permanently, because
+ * a root is granted by listing and never withdrawn. Listing does not need the
+ * grant, so nothing about browsing changes; what changes is that the grant stops
+ * at the sync root instead of swallowing everything above it. The face sweep
+ * already clamps its walk exactly here, for exactly this reason.
+ *
+ * Only ancestors are affected. A folder on another drive, or anywhere else
+ * outside home, is authorised as itself.
+ */
+function clampRoot(dir) {
+  const resolved = path.resolve(dir);
+  const home = config.homeDir || ONEDRIVE_ROOT;
+  if (home && under(home, resolved) && !under(resolved, home)) return path.resolve(home);
+  return resolved;
+}
+
+/**
+ * Reduces the authorised list to the smallest set that grants the same access.
+ *
+ * A root inside another root grants nothing the outer one did not already —
+ * eight folders under the sync root are one root's worth of permission written
+ * down eight times, and each is a line somebody has to read to know what this
+ * app can touch. Shortest first, so an ancestor is always seen before the
+ * children it absorbs.
+ */
+function collapseRoots(roots) {
+  const seen = new Map();
+  for (const raw of roots) {
+    const resolved = clampRoot(raw);
+    seen.set(resolved.toLowerCase(), resolved);
+  }
+  const sorted = [...seen.values()].sort((a, b) => a.length - b.length);
+  const kept = [];
+  for (const root of sorted) {
+    if (!kept.some((keeper) => under(root, keeper))) kept.push(root);
+  }
+  return kept;
+}
+
+/**
+ * Startup housekeeping on the authorised list: clamp anything above home,
+ * forget folders that are gone, forget folders unopened in two months, and
+ * collapse what is left.
+ *
+ * The home folder and the folder the app is about to open are never dropped,
+ * whatever the timestamps say — one of them is where you are.
+ */
+async function pruneRoots() {
+  const before = config.roots.length;
+  const now = Date.now();
+  const seen = (config.rootsSeen && typeof config.rootsSeen === 'object') ? config.rootsSeen : {};
+  const home = config.homeDir || ONEDRIVE_ROOT || '';
+  const lastDir = config.lastDir ? clampRoot(config.lastDir) : '';
+  const kept = [];
+  const gone = [];
+  const stale = [];
+
+  // Narrowing is silent in collapseRoots because it happens on every add; at
+  // startup it is worth saying out loud, since it is the one change here that
+  // takes away access somebody once had.
+  const narrowed = config.roots.filter((r) => clampRoot(r).toLowerCase() !== path.resolve(r).toLowerCase());
+  if (narrowed.length) {
+    log(`narrowed ${narrowed.length} folder(s) above home to ${home}: ${narrowed.join(', ')}`);
+  }
+
+  for (const root of collapseRoots(config.roots)) {
+    const key = root.toLowerCase();
+    // Where you are, and where you are about to be.
+    const spared = (home && under(home, root) && under(root, home))
+      || (lastDir && under(lastDir, root));
+    if (!spared && !(await exists(root))) { gone.push(root); continue; }
+    // A root with no timestamp predates this bookkeeping; today is the honest
+    // answer, since the alternative is deleting on a date nobody recorded.
+    const last = Number(seen[key]) || now;
+    if (!spared && now - last > ROOT_DAYS * 86400000) { stale.push(root); continue; }
+    seen[key] = last;
+    kept.push(root);
+  }
+
+  // Timestamps for roots no longer held are just clutter in the file.
+  for (const key of Object.keys(seen)) {
+    if (!kept.some((root) => root.toLowerCase() === key)) delete seen[key];
+  }
+
+  config.roots = kept;
+  config.rootsSeen = seen;
+  if (gone.length) log(`forgot ${gone.length} folder(s) that no longer exist: ${gone.join(', ')}`);
+  if (stale.length) log(`forgot ${stale.length} folder(s) unopened for ${ROOT_DAYS} days: ${stale.join(', ')}`);
+  if (kept.length !== before) log(`authorised folders: ${before} -> ${kept.length}`);
+  if (kept.length !== before || JSON.stringify(config.rootsSeen) !== JSON.stringify(seen)) saveConfigSoon();
+  return { before, after: kept.length, gone, stale };
+}
+
 function rememberRoot(dir) {
   const resolved = path.resolve(dir);
-  if (!config.roots.some((r) => path.resolve(r).toLowerCase() === resolved.toLowerCase())) {
-    config.roots.push(resolved);
-    // New ground for the face sweep to count, and its denominator is wrong
-    // until it has.
-    faces.rootsChanged();
-  }
+  const root = clampRoot(resolved);
+  const had = config.roots.length;
+  config.roots = collapseRoots([...config.roots, root]);
+  if (!config.rootsSeen || typeof config.rootsSeen !== 'object') config.rootsSeen = {};
+  config.rootsSeen[root.toLowerCase()] = Date.now();
+  // Opening a folder inside one already authorised adds nothing to sweep; only
+  // genuinely new ground makes the denominator wrong.
+  if (config.roots.length !== had) faces.rootsChanged();
   config.lastDir = resolved;
   saveConfigSoon();
 }
@@ -1465,6 +1593,9 @@ async function main() {
   config.sort = 'rating';
   config.sortDir = 'desc';
   await applyHomeDir();
+  // Before anything is served: the authorised list is the answer to "what can
+  // this app read", and it should be as short as the truth allows.
+  await pruneRoots();
   // The home folder is only known after the account resolves, and everything
   // cached hangs off it.
   CACHE_DIR = defaultCacheDir(ONEDRIVE_ROOT);
