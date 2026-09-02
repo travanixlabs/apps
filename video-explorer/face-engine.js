@@ -5,8 +5,8 @@
  *
  * Three steps, none of which knows anything about this app: sample frames with
  * ffmpeg, find and square up the faces (YuNet), turn each one into a vector
- * (ArcFace, or SFace where that is all there is). Two vectors of the same person
- * point the same way, and cosine says how nearly.
+ * (ArcFace). Two vectors of the same person point the same way, and cosine says
+ * how nearly.
  *
  * The models are optional. If onnxruntime or the .onnx files are missing this
  * module reports itself unavailable and the app runs exactly as it did before —
@@ -53,53 +53,35 @@ let modelDir = '';
 let recogniser = null;
 
 /**
- * The two recognisers, best first.
+ * The recogniser.
  *
- * Measured over 258 hold-out videos, 28 performers: ArcFace named the right one
- * outright 96.1% of the time against SFace's 89.9%, and — the reason it wins the
- * default — its wrong answers sit at 0.18 where SFace's sit at 0.49. A library
- * full of performers the index has never seen needs that gap: it is the
- * difference between staying quiet and inventing a name.
- *
- * SFace is kept as the fallback. It is a quarter of the size and three times
- * faster, and 89.9% is not a bad day.
+ * SFace used to sit behind this as a smaller fallback and was dropped: measured
+ * over 258 hold-out videos and 28 performers it named the right person 89.9% of
+ * the time against ArcFace's 96.1%, but the number that decided it was the wrong
+ * answers — SFace scored those at 0.49 where ArcFace scores them at 0.18. A
+ * library full of performers the index has never seen needs that gap; it is the
+ * difference between staying quiet and inventing a name. Two models also meant
+ * two of everything downstream, since their vectors are not comparable and their
+ * bands could not share a scale.
  */
-const RECOGNISERS = [
-  {
-    name: 'arcface',
-    file: 'arcface.onnx',
-    input: 'input.1',
-    output: '683',
-    // Where one person ends and the next begins. Measured across 271 videos:
-    // two crops of the same face land around 0.48 and two different people at
-    // 0.10, so the line goes between rather than at SFace's 0.55 -- which split
-    // more than half of all solo videos into two of the same woman.
-    apart: 0.35,
-    // RGB, scaled to [-1, 1].
-    fill: (input, crop, plane) => {
-      for (let i = 0; i < plane; i += 1) {
-        input[i] = (crop[i * 3 + 0] - 127.5) / 127.5;
-        input[plane + i] = (crop[i * 3 + 1] - 127.5) / 127.5;
-        input[2 * plane + i] = (crop[i * 3 + 2] - 127.5) / 127.5;
-      }
-    },
+const ARCFACE = {
+  name: 'arcface',
+  file: 'arcface.onnx',
+  input: 'input.1',
+  output: '683',
+  // Where one person ends and the next begins. Measured across 271 videos: two
+  // crops of the same face land around 0.48 and two different people at 0.10,
+  // so the line goes between.
+  apart: 0.35,
+  // RGB, scaled to [-1, 1].
+  fill: (input, crop, plane) => {
+    for (let i = 0; i < plane; i += 1) {
+      input[i] = (crop[i * 3 + 0] - 127.5) / 127.5;
+      input[plane + i] = (crop[i * 3 + 1] - 127.5) / 127.5;
+      input[2 * plane + i] = (crop[i * 3 + 2] - 127.5) / 127.5;
+    }
   },
-  {
-    name: 'sface',
-    file: 'sface.onnx',
-    input: 'data',
-    output: 'fc1',
-    apart: 0.55,
-    // BGR, unnormalised.
-    fill: (input, crop, plane) => {
-      for (let i = 0; i < plane; i += 1) {
-        input[i] = crop[i * 3 + 2];
-        input[plane + i] = crop[i * 3 + 1];
-        input[2 * plane + i] = crop[i * 3 + 0];
-      }
-    },
-  },
-];
+};
 
 /**
  * Loads onnxruntime and locates the models, once.
@@ -123,10 +105,9 @@ function init(dir) {
     unavailable = `yunet.onnx is missing from ${modelDir}`;
     return available();
   }
-  recogniser = RECOGNISERS.find((r) => fs.existsSync(path.join(modelDir, r.file))) || null;
+  recogniser = fs.existsSync(path.join(modelDir, ARCFACE.file)) ? ARCFACE : null;
   if (!recogniser) {
-    unavailable = `no recogniser in ${modelDir} `
-      + `(wanted one of ${RECOGNISERS.map((r) => r.file).join(', ')})`;
+    unavailable = `${ARCFACE.file} is missing from ${modelDir}`;
   }
   return available();
 }
@@ -330,10 +311,10 @@ function alignFace(rgb, width, height, face) {
 /**
  * One L2-normalised embedding for an aligned crop.
  *
- * The length depends on which recogniser is installed -- 512 for ArcFace, 128
- * for SFace -- which is why the index records the model it was built with: two
- * vectors from different models are not comparable, and mixing them silently
- * would be worse than rebuilding.
+ * 512 numbers, from ArcFace. The index still records which model built it: a
+ * different recogniser would produce vectors on a different scale that are not
+ * comparable with these, and mixing them silently would be worse than
+ * rebuilding.
  */
 async function embed(crop) {
   const s = await session(recogniser.name, recogniser.file);
@@ -348,9 +329,6 @@ async function embed(crop) {
     held.busy = false;
   }
 }
-
-/** Which recogniser the vectors in hand were made by. */
-const modelName = () => (recogniser ? recogniser.name : '');
 
 function normalise(v) {
   let norm = 0;
@@ -487,7 +465,7 @@ async function facesIn(file, { shouldStop = () => false, maxFaces = HARVEST.maxF
  * nothing.
  */
 function groupFaces(faces, threshold = null) {
-  const apart = threshold === null ? (recogniser ? recogniser.apart : 0.55) : threshold;
+  const apart = threshold === null ? ARCFACE.apart : threshold;
   const groups = [];
   for (const face of [...faces].sort((a, b) => b.size - a.size)) {
     let best = null;
@@ -564,6 +542,6 @@ function cropToPng(crop, size = CROP) {
 }
 
 module.exports = {
-  init, available, modelName, facesIn, groupFaces, embed, cosine, meanOf,
+  init, available, facesIn, groupFaces, embed, cosine, meanOf,
   normalise, cropToPng, CROP, CROP_BYTES, HARVEST,
 };

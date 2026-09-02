@@ -60,29 +60,22 @@ const MIN_GROUP = 2;
 const HARVEST_GEN = 2;
 
 /**
- * When a match is worth showing, per recogniser.
+ * When a match is worth showing.
  *
- * Measured on 258 hold-out videos rather than guessed, and the two models need
- * different lines because they do not use the same range. Under SFace a wrong
- * name still scores 0.49, so the score alone can never separate them and the gap
- * to the runner-up does the work. ArcFace pushes the wrong names down to 0.18,
- * which leaves room for the score to mean something on its own.
+ * Measured on 258 hold-out videos rather than guessed. These lines are ArcFace's
+ * range and nobody else's — they were keyed by model while SFace was a fallback,
+ * whose wrong answers scored 0.49 and left the score gate unable to separate
+ * anything on its own. ArcFace pushes wrong names down to 0.18, which is what
+ * lets a score floor mean something.
  *
  * Both gates always have to pass. A high score with a close runner-up is two
  * performers who look alike, and naming either would be a guess.
  */
-const BANDS = {
-  arcface: [
-    { band: 'strong', score: 0.55, margin: 0.15 },
-    { band: 'likely', score: 0.45, margin: 0.10 },
-    { band: 'maybe', score: 0.38, margin: 0.06 },
-  ],
-  sface: [
-    { band: 'strong', score: 0.70, margin: 0.12 },
-    { band: 'likely', score: 0.64, margin: 0.06 },
-    { band: 'maybe', score: 0.58, margin: 0.03 },
-  ],
-};
+const BANDS = [
+  { band: 'strong', score: 0.55, margin: 0.15 },
+  { band: 'likely', score: 0.45, margin: 0.10 },
+  { band: 'maybe', score: 0.38, margin: 0.06 },
+];
 
 const state = {
   dir: '',
@@ -490,7 +483,7 @@ function centroidWithout(acc, key) {
 }
 
 function bandFor(score, margin) {
-  for (const b of BANDS[engine.modelName()] || BANDS.sface) {
+  for (const b of BANDS) {
     if (score >= b.score && margin >= b.margin) return b.band;
   }
   return '';

@@ -487,11 +487,10 @@ It costs about seven seconds a video rather than four, on work that runs in the
 background, and memory settles around 450MB — 245MB of which is the model.
 The line between one person and the next is 0.35 for ArcFace, measured across
 271 videos: two crops of the same face land near 0.48 and two people near 0.10.
-SFace's 0.55 was wrong here, and split more than half of all solo videos into two
-of the same woman.
 
-Measured on 258 held-out videos across 28 performers, every video taking a turn
-as the unknown one:
+SFace was the other candidate and is no longer installed or supported. Measured
+on 258 held-out videos across 28 performers, every video taking a turn as the
+unknown one:
 
 | | top-1 | top-3 | truth | wrong |
 |---|---|---|---|---|
@@ -505,9 +504,12 @@ and the high seventies as the floor. What keeps the gap off the screen is the
 banding: a suggestion has to clear a margin as well as a score, and among those
 that did, 261 of 268 already-credited videos agreed with their label.
 
-ArcFace is the default for the last column as much as the first: its wrong answers sit at 0.18 where SFace's sit at
-0.49, and a library full of performers the index has never seen needs that gap.
-It is the difference between staying quiet and inventing a name.
+ArcFace won the last column as much as the first: its wrong answers sit at 0.18
+where SFace's sit at 0.49, and a library full of performers the index has never
+seen needs that gap. It is the difference between staying quiet and inventing a
+name. SFace's 0.55 line was wrong here too — it split more than half of all solo
+videos into two of the same woman — and carrying a second model meant a second
+band table on a scale that could not be shared, so it went.
 
 Confidence is shown as a band, and **both** a score floor and a margin over the
 runner-up have to pass:
@@ -531,7 +533,7 @@ and the rest of the app is untouched.
 
 ```
 npm install                                  # onnxruntime-node
-%LOCALAPPDATA%\video-explorer\face-models\   # yunet.onnx + arcface.onnx (or sface.onnx)
+%LOCALAPPDATA%\video-explorer\face-models\   # yunet.onnx + arcface.onnx
 ```
 
 The models live outside the repo and outside the build on purpose: 174MB of
