@@ -542,7 +542,7 @@ function rescore() {
 
 // -------------------------------------------------------------- the listing
 
-const EMPTY = Object.freeze({ suggested: [], profiled: false });
+const EMPTY = Object.freeze({ suggested: [], profiled: false, people: 0 });
 
 /**
  * Safe to spread onto any file entry.
@@ -555,7 +555,15 @@ function decorate(stat) {
   const key = keyFor(stat);
   const entry = state.index.videos[key];
   if (!entry) return EMPTY;
-  return { suggested: state.suggestions.get(key) || [], profiled: true };
+  // How many distinct faces it yielded, not how many it matched. Read and
+  // faceless is a different fact from read and unrecognised -- there is nothing
+  // to credit on the first and something to credit on the second -- and only
+  // the listing can tell them apart across a whole folder.
+  return {
+    suggested: state.suggestions.get(key) || [],
+    profiled: true,
+    people: (entry.people || []).length,
+  };
 }
 
 function suggestionsFor(stat) {

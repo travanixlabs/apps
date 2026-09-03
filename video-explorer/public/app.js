@@ -572,11 +572,19 @@ function suggestionMatch(file, want) {
   const profiled = file.profiled === true;
   if (want === 'unprofiled') return !profiled;
   if (!profiled) return false;
+  // Read, and it gave the recogniser nothing to work with: shot from behind, in
+  // the dark, or with one face where two are needed to be sure of a group. The
+  // player has said this for a while and nothing could list them.
+  const faceless = !(file.people || 0);
+  if (want === 'faceless') return faceless;
   const suggested = file.suggested || [];
   const named = new Set((file.models || []).map((m) => m.toLowerCase()));
   const settled = suggested.length > 0
     && suggested.every((sug) => named.has(sug.name.toLowerCase()));
-  return want === 'match' ? settled : !settled;
+  // A faceless video is not an unnamed performer. It used to fall in here and
+  // made the one filter that means "there is work to do" mostly not that.
+  if (want === 'nomatch') return !faceless && !settled;
+  return settled;
 }
 
 function matchesQuery(file, terms) {
@@ -1073,8 +1081,13 @@ function renderAdvanced() {
       + '— nothing left to do'],
     ['nomatch', 'profiled without matching model',
       'read for faces, and someone recognised in it is not named on it — a missing '
-      + 'performer, a wrong one, or nobody recognised at all'],
-    ['unprofiled', 'not profiled', 'not read for faces yet, or it holds no usable face'],
+      + 'performer, a wrong one, or nobody recognised at all. Videos that held no '
+      + 'usable face are not in here; there is nothing to credit on those'],
+    ['faceless', 'no usable face',
+      'read for faces and none came out usable — shot from behind, too dark, or too '
+      + 'few faces to be sure they are one person. Nothing can be credited from it, '
+      + 'so re-reading it will not help'],
+    ['unprofiled', 'not profiled', 'not read for faces yet'],
   ]) {
     const chip = chipToggle(label, advDraft.suggested === value, () => {
       advDraft.suggested = value;
