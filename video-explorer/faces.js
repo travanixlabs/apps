@@ -368,6 +368,12 @@ async function writeDigest() {
   clearTimeout(digestTimer);
   digestTimer = null;
 
+  // Read and gave the recogniser nothing to work with. The phone cannot derive
+  // this: an empty suggestion list means "read, matched nobody", and that is a
+  // different fact from "read, no usable face" -- one has work to do and the
+  // other never will. Published as its own list rather than folded into the
+  // videos map, so a reader expecting version 2 keeps working.
+  const faceless = [];
   const videos = {};
   for (const key of Object.keys(state.index.videos)) {
     // Trimmed to what a reader needs: a name, how sure, and which face group it
@@ -376,6 +382,7 @@ async function writeDigest() {
     // were computed from them are all anyone else needs.
     videos[key] = (state.suggestions.get(key) || [])
       .map((s) => ({ name: s.name, score: s.score, band: s.band, person: s.person || 0 }));
+    if (!((state.index.videos[key].people || []).length)) faceless.push(key);
   }
 
   try {
@@ -387,6 +394,7 @@ async function writeDigest() {
       profiled: Object.keys(videos).length,
       performers: state.centroids.size,
       videos,
+      faceless,
     }));
     await writeLineups();
     return true;
