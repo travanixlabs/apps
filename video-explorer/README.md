@@ -439,7 +439,15 @@ suggested everywhere else she genuinely appears.
 
 Refused names are dropped from the ranking rather than ranked and hidden, so a
 name you have turned down is not the runner-up that some third name's margin is
-measured against. They are then listed after the chips, struck through, and
+measured against.
+
+That has a visible consequence worth expecting: **refusing the top name can
+promote the runner-up into her place.** One video here suggested Han Tang alone;
+refusing her did not leave it quiet, it left it suggesting Li Wenwen, who had
+been second and now clears the bar with nothing above her. This is the intended
+behaviour and the reason removal beats hiding — you said not her, so the next
+best guess is a real answer rather than a leftover. Each refusal is remembered,
+so the list shortens as you work through it. They are then listed after the chips, struck through, and
 clicking one puts her back — a refusal you cannot see is indistinguishable from
 a recogniser with nothing to say, and there would be no way back from one made
 by mistake.

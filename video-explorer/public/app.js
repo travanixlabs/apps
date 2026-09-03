@@ -1389,6 +1389,14 @@ async function editRecords(paths, patch) {
       file.rating = record.rating;
       file.tags = record.tags;
       file.models = record.models;
+      // Names turned down on this video. Without copying it the refusal would
+      // be stored and invisible: the strip reads this to list what it is not
+      // suggesting, and to offer each one back.
+      if (record.notModels !== undefined) file.notModels = record.notModels;
+      // And the ranking, when the reply carried a new one -- refusing a name
+      // changes what this video suggests, and the chip would otherwise stay.
+      if (record.suggested !== undefined) file.suggested = record.suggested;
+      if (record.people !== undefined) file.people = record.people;
       file.studio = record.studio;
       file.production = record.production;
       file.url = record.url;

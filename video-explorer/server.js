@@ -1482,12 +1482,18 @@ const server = http.createServer(async (req, res) => {
         if (body.models !== undefined || body.addModels !== undefined
             || body.removeModels !== undefined) faces.rebuild();
         // Turning a name down changes one video's ranking and nobody's average,
-        // so it re-scores that video instead of the whole library.
+        // so it re-scores that video instead of the whole library -- and then
+        // says what the ranking became. Without that the client would keep
+        // drawing the suggestion it has just refused, since its copy of the
+        // listing is only as current as the last reply.
         if (body.notModels !== undefined || body.addNotModels !== undefined
             || body.removeNotModels !== undefined) {
           for (const raw of paths) {
+            if (records[raw] && records[raw].error) continue;
             try {
-              faces.rescoreOne(await fsp.stat(authoriseOrThrow(raw)));
+              const stat = await fsp.stat(authoriseOrThrow(raw));
+              faces.rescoreOne(stat);
+              records[raw] = { ...records[raw], ...faces.decorate(stat) };
             } catch { /* the record answered above; a missing file is its problem */ }
           }
         }
