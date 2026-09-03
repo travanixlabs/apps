@@ -81,7 +81,11 @@ function newAdvFilter() {
     // faces are all named, or read and something in it is not. The three cover
     // the listing between them and do not overlap, which the earlier
     // has-a-suggestion / agrees pair did not.
-    suggested: 'all',     // 'all' | 'match' | 'nomatch' | 'unprofiled'
+    suggested: 'all',     // 'all' | 'match' | 'nomatch' | 'faceless' | 'unprofiled'
+    // How many names came out of it, which is a different question from where
+    // it stands: two suggestions on a video credited to one performer is the
+    // shape of a missing co-star, and one is the shape of a plain confirmation.
+    suggestedCount: 'all', // 'all' | 'one' | 'many'
   };
 }
 
@@ -137,6 +141,7 @@ function resetView() {
 function advActive(adv = state.adv) {
   return Boolean(adv.text) || adv.cloud !== 'all' || adv.link !== 'all'
     || adv.favourite !== 'all' || adv.suggested !== 'all'
+    || adv.suggestedCount !== 'all'
     || FACETS.some((f) => adv[f].size > 0);
 }
 
@@ -548,6 +553,9 @@ function matchesAdvanced(file, adv) {
   }
 
   if (adv.suggested !== 'all' && !suggestionMatch(file, adv.suggested)) return false;
+  if (adv.suggestedCount !== 'all' && !suggestedCountMatch(file, adv.suggestedCount)) {
+    return false;
+  }
 
   if (adv.link === 'yes' && !file.url) return false;
   if (adv.link === 'no' && file.url) return false;
@@ -588,6 +596,21 @@ function suggestionMatch(file, want) {
   // made the one filter that means "there is work to do" mostly not that.
   if (want === 'nomatch') return !faceless && !settled;
   return settled;
+}
+
+/**
+ * How many performers the faces in a video were matched to.
+ *
+ * One name is the ordinary case. Two or more means the faces clustered into
+ * several people and each cluster found somebody -- which is where a co-star
+ * goes missing from the credits, and the reason this is worth asking separately
+ * from whether the names are already on it.
+ */
+function suggestedCountMatch(file, want) {
+  const count = (file.suggested || []).length;
+  if (want === 'one') return count === 1;
+  if (want === 'many') return count > 1;
+  return true;
 }
 
 function matchesQuery(file, terms) {
@@ -1113,6 +1136,28 @@ function renderAdvanced() {
     });
     if (hint) chip.title = hint;
     suggest.appendChild(chip);
+  }
+
+  // The second row narrows the first rather than replacing it: "profiled
+  // without matching model" and "multiple models suggested" together is the
+  // uncredited co-star, which neither row can ask for on its own.
+  const howMany = $('#advSuggestedCount');
+  howMany.innerHTML = '';
+  for (const [value, label, hint] of [
+    ['all', 'everything', ''],
+    ['one', 'one model suggested',
+      'the faces in it were matched to exactly one performer — the ordinary case'],
+    ['many', 'multiple models suggested',
+      'the faces clustered into several people and each of them found a name. With '
+      + '"profiled without matching model" above, this is where a co-star is '
+      + 'missing from the credits'],
+  ]) {
+    const chip = chipToggle(label, advDraft.suggestedCount === value, () => {
+      advDraft.suggestedCount = value;
+      renderAdvanced();
+    });
+    if (hint) chip.title = hint;
+    howMany.appendChild(chip);
   }
 
   // Same shape as Availability directly below it: one of three, not a cycle,
@@ -4146,7 +4191,11 @@ function wireEvents() {
   for (const btn of document.querySelectorAll('[data-clear]')) {
     btn.addEventListener('click', () => {
       const what = btn.dataset.clear;
-      if (what === 'cloud' || what === 'link' || what === 'suggested') advDraft[what] = 'all';
+      // One label, one clear, so the section's second row goes with it.
+      if (what === 'suggested') {
+        advDraft.suggested = 'all';
+        advDraft.suggestedCount = 'all';
+      } else if (what === 'cloud' || what === 'link') advDraft[what] = 'all';
       else advDraft[what === 'rating' ? 'ratings' : what].clear();
       renderAdvanced();
     });

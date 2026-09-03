@@ -371,13 +371,23 @@ on its own is worth nothing.
 - **In the label dialog** — the same chips beside the Models box. Clicking one
   types the name into the box rather than saving it, so **Add** and **Replace**
   still mean exactly what they say.
-- **Advanced filters → Suggested models** — *profiled with matching model*,
+- **Advanced filters → Suggested models**, in two rows, directly under
+  *Favourite model* — the other question about who is in a video.
+
+  The first row is where a video stands: *profiled with matching model*,
   *profiled without matching model*, *no usable face*, *not profiled*. Four
   states that cover the listing and do not overlap. The second one is the work.
   *No usable face* used to be inside it: 273 of the 2,735 videos here were read
   and yielded nothing to compare, which is not a performer waiting to be
   credited, and re-reading them will not help. Splitting them out took that
   filter from 1,228 to 955, all of which are a name that could be added.
+
+  The second row is how many names came out: *one model suggested*, or
+  *multiple*. A different question, and the rows narrow each other — which is
+  the reason they are separate. *Profiled without matching model* **and**
+  *multiple models suggested* is the uncredited co-star: the faces clustered
+  into several people, each cluster found a name, and at least one of those
+  names is not on the video. Neither row can ask for that alone.
 - **Grouped by performer** — the heart in the toolbar has three positions:
   ungrouped, by credited performer, then by *suggested* performer. Each section
   says how many of that performer's videos have been read: `83 videos · 9

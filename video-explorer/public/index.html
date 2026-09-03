@@ -281,11 +281,6 @@
       </label>
 
       <div class="adv-block">
-        <div class="adv-label">Favourite model</div>
-        <div id="advFav" class="chip-row"></div>
-      </div>
-
-      <div class="adv-block">
         <div class="adv-label">
           Rating
           <button class="linkish" data-clear="rating">clear</button>
@@ -326,11 +321,19 @@
       </div>
 
       <div class="adv-block">
+        <div class="adv-label">Favourite model</div>
+        <div id="advFav" class="chip-row"></div>
+      </div>
+
+      <!-- Two rows, two questions, and they narrow each other: where a video
+           stands with the face index, and how many names came out of it. -->
+      <div class="adv-block">
         <div class="adv-label">
           Suggested models
           <button class="linkish" data-clear="suggested">clear</button>
         </div>
         <div id="advSuggested" class="chip-row"></div>
+        <div id="advSuggestedCount" class="chip-row"></div>
       </div>
 
       <div class="adv-block">
