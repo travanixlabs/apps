@@ -233,7 +233,12 @@
     </div>
   </div>
   <p id="faceHoverVerdict" class="face-hover-verdict"></p>
-  <button id="faceHoverMore" type="button" class="face-hover-more"></button>
+  <!-- Accepting is the chip's own click; turning her down needs somewhere to
+       live, and the card is where you are already looking at the evidence. -->
+  <div class="face-hover-acts">
+    <button id="faceHoverNo" type="button" class="btn btn-ghost face-hover-no"></button>
+    <button id="faceHoverMore" type="button" class="face-hover-more"></button>
+  </div>
 </div>
 
 <div id="faceModal" class="modal" hidden>

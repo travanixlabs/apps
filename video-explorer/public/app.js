@@ -1668,6 +1668,10 @@ async function openFaceHover(anchor, file, sug) {
     : `${pct}% alike, ${gap} clear of ${sug.runnerUp} — ${BAND_LABEL[sug.band]}`;
   verdict.className = `face-hover-verdict band-${sug.band}`;
   $('#faceHoverMore').textContent = `See all of ${sug.name}'s faces`;
+  const no = $('#faceHoverNo');
+  no.textContent = `Not ${sug.name}`;
+  no.title = `Stop suggesting ${sug.name} for this video. Remembered with the `
+    + 'labels, so re-reading the file will not bring her back';
 
   card.hidden = false;
   placeFaceHover(anchor);
@@ -1720,6 +1724,56 @@ function placeFaceHover(anchor) {
   card.style.top = `${Math.round(above < pad ? at.bottom + 8 : above)}px`;
 }
 
+/**
+ * Turning a suggestion down, and putting it back.
+ *
+ * Stored with the labels rather than with the index, because that is what it
+ * is: your answer, not a measurement. The index is discarded and rebuilt
+ * whenever the recogniser or the sampling changes, and a rejection has to
+ * outlive that -- otherwise the same wrong name returns every few weeks and
+ * refusing it becomes a chore rather than a decision.
+ */
+async function refuseSuggestion(file, name) {
+  await editRecords([file.path], { addNotModels: [name] });
+  toast(`${name} will not be suggested for this video`, 'ok');
+  if (state.playing) buildPlayerSuggestions(state.playing);
+}
+
+async function unrefuseSuggestion(file, name) {
+  await editRecords([file.path], { removeNotModels: [name] });
+  toast(`${name} can be suggested again`, 'ok');
+  if (state.playing) buildPlayerSuggestions(state.playing);
+}
+
+/**
+ * The names this video has turned down, after the ones it is offered.
+ *
+ * Shown because a rejection is otherwise invisible: a suggestion that stops
+ * appearing looks exactly like a recogniser with nothing to say, and there
+ * would be no way back from one made by mistake. Clicking a name restores it.
+ */
+function appendRefused(host, file, refused) {
+  if (!refused.length) return;
+  const row = document.createElement('span');
+  row.className = 'face-refused';
+  const lead = document.createElement('span');
+  lead.textContent = 'not';
+  row.appendChild(lead);
+  for (const name of refused) {
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.textContent = name;
+    back.title = `Turned down here \u2014 click to let ${name} be suggested again`;
+    back.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      unrefuseSuggestion(file, name);
+    });
+    row.appendChild(back);
+  }
+  host.appendChild(row);
+}
+
 function closeFaceHover() {
   clearTimeout(hover.in);
   hover.token = null;
@@ -1749,9 +1803,14 @@ function buildPlayerSuggestions(file) {
   // face found, read and nobody matched -- and showing nothing for all of them
   // reads as the feature being broken. The answer is fetched per video because
   // it costs a ranking; the strip says so while it is coming.
+  // Turned down here. Listed in both states, because a video whose only
+  // suggestion was refused now looks like one the recogniser could not read.
+  const refused = current.notModels || [];
+
   if (!suggested.length) {
     say(host, 'face-lead', current.profiled ? 'Checking…' : 'Not read for faces yet');
     if (current.profiled) explainNothing(host, current);
+    appendRefused(host, current, refused);
     return;
   }
 
@@ -1778,6 +1837,7 @@ function buildPlayerSuggestions(file) {
       },
     }));
   }
+  appendRefused(host, current, refused);
 }
 
 /** A label in the strip, and the element back so it can be replaced. */
@@ -4223,6 +4283,12 @@ function wireEvents() {
   hoverCard.addEventListener('mouseenter', () => clearTimeout(hover.out));
   hoverCard.addEventListener('mouseleave', () => {
     hover.out = setTimeout(closeFaceHover, HOVER_OUT_MS);
+  });
+  $('#faceHoverNo').addEventListener('click', () => {
+    if (!hover.held) return;
+    const { file, sug } = hover.held;
+    closeFaceHover();
+    refuseSuggestion(file, sug.name);
   });
   $('#faceHoverMore').addEventListener('click', () => {
     if (!hover.held) return;

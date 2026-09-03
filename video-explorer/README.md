@@ -423,6 +423,27 @@ what is on the video, so those chips also say when she is already credited.
 chip's own click added the name while the face inside it opened a dialog, two
 actions in one control, and the smaller one was the one wanted more often.
 
+**And turning her down is the other half of accepting.** The card carries a
+*Not ‹name›* button beside the lineup link, because a suggestion has two honest
+answers and only one of them used to be reachable. It is deliberately not a
+second target on the chip: a 22px refuse button beside a 22px accept button is
+how you credit the wrong person by accident, and the card is where the evidence
+already is.
+
+A refusal is kept **with the labels, not with the index** — `notModels` on the
+record, keyed by size and mtime like everything else. The index is discarded
+and rebuilt whenever the recogniser or the sampling changes, so a refusal held
+there would evaporate and the same wrong name would come back every few weeks.
+It is also per video rather than a global veto: refusing her here leaves her
+suggested everywhere else she genuinely appears.
+
+Refused names are dropped from the ranking rather than ranked and hidden, so a
+name you have turned down is not the runner-up that some third name's margin is
+measured against. They are then listed after the chips, struck through, and
+clicking one puts her back — a refusal you cannot see is indistinguishable from
+a recogniser with nothing to say, and there would be no way back from one made
+by mistake.
+
 The full lineup is still there, at the card's footer — her whole set rather than
 six of it, captioned with where each came from, and *See her N videos* to go
 through the rest. It is somewhere to go on purpose now rather than the only way

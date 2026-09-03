@@ -1464,6 +1464,33 @@ body.dragging .card { cursor: grabbing; }
 
 .face-verdict.band-near { color: var(--text-faint); }
 
+/* What this video has turned down. Quiet, after the suggestions, and every one
+   of them puts itself back when clicked -- a rejection you cannot see is
+   indistinguishable from the recogniser having nothing to say. */
+.face-refused {
+  color: var(--text-faint);
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.face-refused button {
+  background: none;
+  border: 1px dashed var(--border-strong);
+  border-radius: 999px;
+  color: var(--text-faint);
+  font: inherit;
+  padding: 1px 7px;
+  cursor: pointer;
+  text-decoration: line-through;
+}
+.face-refused button:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  text-decoration: none;
+}
+
 .face-lead {
   color: var(--text-faint);
   font-size: 11px;
@@ -1572,8 +1599,26 @@ body.dragging .card { cursor: grabbing; }
 .face-hover-verdict.band-strong { color: #7fd1a3; }
 .face-hover-verdict.band-maybe, .face-hover-verdict.band-near { color: var(--text-faint); }
 
+.face-hover-acts {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+/* Turning a name down is a decision, so it looks like a button. It is not a
+   danger colour: rejecting a wrong guess is the ordinary other half of
+   accepting a right one, not a destructive act. */
+.face-hover-no {
+  padding: 4px 9px;
+  font-size: 11px;
+  flex: none;
+}
+.face-hover-no:hover { border-color: #b4645c; color: #f0a9a2; }
+
 .face-hover-more {
-  margin-top: 6px;
+  margin-top: 0;
   padding: 0;
   border: 0;
   background: none;

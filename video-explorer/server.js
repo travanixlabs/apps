@@ -1481,6 +1481,16 @@ const server = http.createServer(async (req, res) => {
         // suggestions are only as current as the labels behind them.
         if (body.models !== undefined || body.addModels !== undefined
             || body.removeModels !== undefined) faces.rebuild();
+        // Turning a name down changes one video's ranking and nobody's average,
+        // so it re-scores that video instead of the whole library.
+        if (body.notModels !== undefined || body.addNotModels !== undefined
+            || body.removeNotModels !== undefined) {
+          for (const raw of paths) {
+            try {
+              faces.rescoreOne(await fsp.stat(authoriseOrThrow(raw)));
+            } catch { /* the record answered above; a missing file is its problem */ }
+          }
+        }
         return sendJson(res, 200, {
           records,
           tags: library.tagCounts(),

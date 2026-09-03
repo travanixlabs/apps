@@ -28,9 +28,14 @@ const os = require('os');
 // The studio is a single value, not a list: a video comes from one production
 // house. Kept out of tags for the same reason models are — one allowed answer is
 // a different shape of fact from "any number of these apply".
-const EMPTY = { rating: 0, tags: [], models: [], studio: '', production: '', url: '' };
+const EMPTY = {
+  rating: 0, tags: [], models: [], studio: '', production: '', url: '', notModels: [],
+};
 
-const LIST_FIELDS = ['tags', 'models'];
+// notModels is the answer to a suggestion: not who is in this video, but who
+// the recogniser was told is not. It behaves like the other lists -- add,
+// remove, replace -- so it costs nothing to carry here.
+const LIST_FIELDS = ['tags', 'models', 'notModels'];
 
 let FILE = '';
 let data = { version: 1, records: {} };
@@ -202,6 +207,9 @@ function decorate(stat) {
     rating: record.rating || 0,
     tags: record.tags || [],
     models: record.models || [],
+    // Names turned down on this video, so the strip can show what it is not
+    // suggesting and let you put one back.
+    notModels: record.notModels || [],
     // The production house, one per video.
     studio: record.studio || '',
     // The reference's letter code — the series within that house.
@@ -340,8 +348,11 @@ function apply(stat, name, patch) {
     }
   }
 
-  // An empty record is noise in a file that syncs; drop it instead.
+  // An empty record is noise in a file that syncs; drop it instead. A rejection
+  // counts as content: "not her" is a decision, and dropping the record would
+  // hand the same suggestion straight back.
   if (!next.rating && !(next.tags || []).length && !(next.models || []).length
+    && !(next.notModels || []).length
     && !next.studio && !next.production && !next.url) {
     delete data.records[key];
     save();
@@ -354,11 +365,23 @@ function apply(stat, name, patch) {
     rating: next.rating || 0,
     tags: next.tags || [],
     models: next.models || [],
+    notModels: next.notModels || [],
     studio: next.studio || '',
     production: next.production || '',
     url: next.url || '',
     updated: next.updated,
   };
+}
+
+/**
+ * Names turned down on one video, by its library key.
+ *
+ * By key rather than by stat because the face index works in keys and never
+ * holds the stat -- and the key is the whole point of the scheme: it survives a
+ * rename, a move, and a file being freed up to the cloud.
+ */
+function notModelsByKey(key) {
+  return ((data.records[key] || {}).notModels || []).map((n) => n.toLowerCase());
 }
 
 /**
@@ -479,6 +502,7 @@ function stats() {
 
 module.exports = {
   init, keyFor, get, all, decorate, apply, rekey, flush, status, snapshot,
+  notModelsByKey,
   counts, tagCounts, modelCounts, studioCounts, productionCounts, stats, normaliseTags,
   favouriteModels, isFavouriteModel, setFavouriteModel,
 };

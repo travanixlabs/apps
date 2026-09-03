@@ -498,10 +498,16 @@ function bandFor(score, margin) {
  */
 function scoreVideo(key, entry) {
   const out = [];
+  // Turned down on this video. Not a candidate at all rather than a candidate
+  // that loses: leaving her in would make her the runner-up the margin is
+  // measured against, and a name you have rejected should not be deciding
+  // whether somebody else is confident enough to suggest.
+  const refused = new Set(state.library ? state.library.notModelsByKey(key) : []);
   for (const [personIndex, person] of (entry.people || []).entries()) {
     const vec = unpackVector(person.vec);
     const ranked = [];
     for (const [name, acc] of state.centroids) {
+      if (refused.has(name.toLowerCase())) continue;
       const against = centroidWithout(acc, key);
       if (!against) continue;
       ranked.push({ name, score: engine.cosine(vec, against), videos: acc.count });
@@ -530,6 +536,21 @@ function scoreVideo(key, entry) {
   if (out.length) state.suggestions.set(key, out);
   else state.suggestions.delete(key);
   return out;
+}
+
+/**
+ * One video, when what it refuses changes.
+ *
+ * Rejecting a name does not move any average -- her face was never in this
+ * video's credits, so it was never in her centroid -- so there is nothing to
+ * rebuild. Only this video's own ranking is different.
+ */
+function rescoreOne(stat) {
+  const key = keyFor(stat);
+  const entry = state.index.videos[key];
+  if (!entry) return [];
+  digestSoon();
+  return scoreVideo(key, entry);
 }
 
 /** Every profiled video, when the averages themselves have moved. */
@@ -583,7 +604,10 @@ function rankFor(stat, person = 0) {
   if (!entry || !(entry.people || [])[person]) return [];
   const vec = unpackVector(entry.people[person].vec);
   const ranked = [];
+  const refused = new Set(state.library
+    ? state.library.notModelsByKey(keyFor(stat)) : []);
   for (const [name, acc] of state.centroids) {
+    if (refused.has(name.toLowerCase())) continue;
     const against = centroidWithout(acc, keyFor(stat));
     if (!against) continue;
     ranked.push({ name, score: Math.round(engine.cosine(vec, against) * 1000) / 1000 });
@@ -1082,6 +1106,7 @@ function status() {
 
 module.exports = {
   init, start, setEnabled, status, noteActivity, rootsChanged, decorate, writeDigest,
+  rescoreOne,
   suggestionsFor, rankFor,
   lineup, faceImageByKey, standing,
   // The reading order, for checking what a fresh install would do first.
