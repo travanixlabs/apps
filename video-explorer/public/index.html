@@ -218,6 +218,24 @@
 </div>
 
 <!-- Is this her? The suggested face, against faces from her other videos. -->
+<!-- The comparison, on hover. It follows the pointer around the suggestion
+     strip rather than waiting to be opened, because "is this her" is the
+     question every suggestion raises and a click was a toll on asking it. -->
+<div id="faceHover" class="face-hover" hidden>
+  <div class="face-hover-body">
+    <figure class="face-hover-this">
+      <img id="faceHoverThis" alt="">
+      <figcaption>this video</figcaption>
+    </figure>
+    <div class="face-hover-hers">
+      <div id="faceHoverLabel" class="face-side-label"></div>
+      <div id="faceHoverGrid" class="face-hover-grid"></div>
+    </div>
+  </div>
+  <p id="faceHoverVerdict" class="face-hover-verdict"></p>
+  <button id="faceHoverMore" type="button" class="face-hover-more"></button>
+</div>
+
 <div id="faceModal" class="modal" hidden>
   <div class="modal-card face-card">
     <header class="modal-head">

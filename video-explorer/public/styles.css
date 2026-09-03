@@ -1495,15 +1495,90 @@ body.dragging .card { cursor: grabbing; }
 
 /* ------------------------------------------------- the lineup: is this her? */
 
-/* The face inside a chip, once it is a button of its own. */
+/* The face inside a chip. Part of the chip, not a target of its own: the whole
+   chip credits her, and comparing happens on hover without being asked for. */
 .face-look {
   display: inline-flex;
   border-radius: 50%;
-  cursor: zoom-in;
   flex: none;
-  outline-offset: 1px;
 }
-.face-look:hover { outline: 2px solid var(--accent); }
+
+/* ------------------------------------------------ the comparison, on hover */
+
+/* Placed against a chip in script, so only the look of it lives here. It has to
+   clear every dialog: the suggestion strip lives inside the player (90) and the
+   label dialog raises one too, so anything lower renders behind the thing it
+   belongs to. Toasts at 120 still win. */
+.face-hover {
+  position: fixed;
+  z-index: 110;
+  width: 340px;
+  padding: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--menu);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.55);
+}
+
+.face-hover-body { display: flex; gap: 10px; align-items: flex-start; }
+
+/* One face large enough to judge, which is the whole point of the card. */
+.face-hover-this { margin: 0; flex: none; width: 96px; }
+.face-hover-this img {
+  width: 96px;
+  height: 96px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-strong);
+  display: block;
+}
+.face-hover-this figcaption {
+  color: var(--text-faint);
+  font-size: 10px;
+  text-align: center;
+  padding-top: 3px;
+}
+
+.face-hover-hers { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+/* Three across of hers against one of his: enough to see a resemblance hold or
+   break, without the card growing into the thing it replaced. */
+.face-hover-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+}
+.face-hover-grid img {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  display: block;
+}
+.face-hover-grid img.face-odd-thumb { opacity: 0.45; border-style: dashed; }
+
+.face-hover-verdict {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.face-hover-verdict.band-strong { color: #7fd1a3; }
+.face-hover-verdict.band-maybe, .face-hover-verdict.band-near { color: var(--text-faint); }
+
+.face-hover-more {
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+}
+.face-hover-more:hover { text-decoration: underline; }
 
 .face-card { width: min(760px, 94vw); }
 

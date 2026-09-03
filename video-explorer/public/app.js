@@ -1470,12 +1470,11 @@ function buildFaceChip(file, sug, { onPick, showFace = true } = {}) {
   if (already) chip.classList.add('confirmed');
 
   if (showFace) {
-    // The face is a button in its own right: pressing the chip accepts the
-    // name, pressing the face asks to be shown why. Accepting stays the whole
-    // chip so the main action is not a 22px target.
+    // Part of the chip rather than a button inside it. Comparing used to cost a
+    // click on a 22px circle; it now costs nothing, so the chip has one action
+    // and the face is decoration that happens to also be the evidence.
     const look = document.createElement('span');
     look.className = 'face-look';
-    look.title = `See ${sug.name}'s other faces before deciding`;
     const img = document.createElement('img');
     img.className = 'face-thumb';
     img.alt = '';
@@ -1484,11 +1483,6 @@ function buildFaceChip(file, sug, { onPick, showFace = true } = {}) {
     // No stored crop is not an error worth showing; the name still stands.
     img.addEventListener('error', () => look.remove());
     look.appendChild(img);
-    look.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      ev.preventDefault();
-      openFaceLineup(file, sug, onPick);
-    });
     chip.appendChild(look);
   }
 
@@ -1513,7 +1507,7 @@ function buildFaceChip(file, sug, { onPick, showFace = true } = {}) {
   chip.title = [
     `${Math.round(sug.score * 100)}% like ${sug.name}'s average face, `
       + `across the ${sug.videos} videos she is named in`,
-    showFace ? 'Click her face to compare against her other videos' : null,
+    'Hover to compare her other faces',
     `${Math.round(sug.margin * 100)} points clear of the next name (${sug.runnerUp}) `
       + `\u2014 ${BAND_LABEL[sug.band]}`,
     already ? 'Already credited on this video' : 'Click to add her',
@@ -1523,7 +1517,138 @@ function buildFaceChip(file, sug, { onPick, showFace = true } = {}) {
     ev.preventDefault();
     if (!already) onPick(sug.name);
   });
+  attachFaceHover(chip, file, sug);
   return chip;
+}
+
+/**
+ * Her other faces, on hover, for every suggestion there is.
+ *
+ * A name beside a 22px thumbnail asks to be taken on trust, and asking for the
+ * comparison used to mean finding and clicking that thumbnail. Reversing it is
+ * the point: the card comes up on its own, for one suggestion or four, and at
+ * 90% as readily as at 38% — a confident wrong answer is exactly the one worth
+ * looking at. Clicking now only ever credits her.
+ */
+const HOVER_IN_MS = 170;
+const HOVER_OUT_MS = 160;
+const HOVER_CROPS = 6;
+const HOVER_STALE_MS = 60000;
+
+// One request per performer rather than per chip: the same name appears on
+// video after video and her faces do not change between two of them. Short-
+// lived, because the sweep is writing new profiles the whole time.
+const herFaces = new Map();
+
+function herLineup(name) {
+  const held = herFaces.get(name);
+  if (held && Date.now() - held.at < HOVER_STALE_MS) return held.p;
+  const p = api(`/api/faces/lineup?model=${encodeURIComponent(name)}&limit=12`)
+    .catch(() => { herFaces.delete(name); return null; });
+  herFaces.set(name, { at: Date.now(), p });
+  return p;
+}
+
+const hover = { in: 0, out: 0, token: null, held: null };
+
+function attachFaceHover(chip, file, sug) {
+  chip.addEventListener('mouseenter', () => {
+    clearTimeout(hover.out);
+    clearTimeout(hover.in);
+    // A pause before showing, or brushing along the strip on the way to
+    // something else flashes four cards and fires four requests.
+    hover.in = setTimeout(() => openFaceHover(chip, file, sug), HOVER_IN_MS);
+  });
+  chip.addEventListener('mouseleave', () => {
+    clearTimeout(hover.in);
+    hover.out = setTimeout(closeFaceHover, HOVER_OUT_MS);
+  });
+  // Keyboard gets it at once: tabbing onto a chip is already deliberate.
+  chip.addEventListener('focus', () => {
+    clearTimeout(hover.out);
+    openFaceHover(chip, file, sug);
+  });
+  chip.addEventListener('blur', () => { hover.out = setTimeout(closeFaceHover, HOVER_OUT_MS); });
+}
+
+async function openFaceHover(anchor, file, sug) {
+  const card = $('#faceHover');
+  if (!card) return;
+  // Anything already in flight is for a chip the pointer has since left.
+  const token = {};
+  hover.token = token;
+  hover.held = { file, sug };
+
+  $('#faceHoverThis').src =
+    `/api/faces/face?path=${encodeURIComponent(file.path)}&person=${sug.person || 0}`;
+  $('#faceHoverLabel').textContent = `${sug.name} · loading her faces…`;
+  $('#faceHoverGrid').replaceChildren();
+
+  const pct = Math.round(sug.score * 100);
+  const gap = Math.round(sug.margin * 100);
+  const verdict = $('#faceHoverVerdict');
+  verdict.textContent = sug.band === 'near'
+    ? `${pct}% alike — below the bar to suggest, so judge it yourself`
+    : `${pct}% alike, ${gap} clear of ${sug.runnerUp} — ${BAND_LABEL[sug.band]}`;
+  verdict.className = `face-hover-verdict band-${sug.band}`;
+  $('#faceHoverMore').textContent = `See all of ${sug.name}'s faces`;
+
+  card.hidden = false;
+  placeFaceHover(anchor);
+
+  const data = await herLineup(sug.name);
+  if (hover.token !== token) return;
+  if (!data) { $('#faceHoverLabel').textContent = `Could not read ${sug.name}'s faces`; return; }
+
+  // This video is the question, not part of the answer.
+  const others = (data.faces || []).filter((f) => f.key !== keyOf(file)).slice(0, HOVER_CROPS);
+  $('#faceHoverLabel').textContent = others.length
+    ? `${sug.name} · ${others.length} of her ${data.total} read`
+    : `No stored faces for ${sug.name} yet`;
+
+  const grid = $('#faceHoverGrid');
+  grid.replaceChildren();
+  for (const other of others) {
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.alt = '';
+    // Dimmed rather than dropped, for the reason the big lineup marks them: it
+    // counts towards her average whether or not it flatters the picture.
+    if (other.agrees !== null && other.agrees < 0.3) img.className = 'face-odd-thumb';
+    img.src = `/api/faces/crop?key=${encodeURIComponent(other.key)}&person=0`;
+    img.addEventListener('error', () => img.remove());
+    grid.appendChild(img);
+  }
+  // The grid was empty when this was first placed, so it is a different height
+  // now and 'above the chip' means somewhere else.
+  placeFaceHover(anchor);
+}
+
+/**
+ * Against the chip, above it where there is room.
+ *
+ * The suggestion strip sits low in the player, so above is usually right and
+ * below is the fallback rather than the default.
+ */
+function placeFaceHover(anchor) {
+  const card = $('#faceHover');
+  const at = anchor.getBoundingClientRect();
+  const box = card.getBoundingClientRect();
+  const pad = 8;
+  const left = Math.max(pad, Math.min(
+    at.left + (at.width / 2) - (box.width / 2),
+    window.innerWidth - box.width - pad,
+  ));
+  const above = at.top - box.height - 8;
+  card.style.left = `${Math.round(left)}px`;
+  card.style.top = `${Math.round(above < pad ? at.bottom + 8 : above)}px`;
+}
+
+function closeFaceHover() {
+  clearTimeout(hover.in);
+  hover.token = null;
+  const card = $('#faceHover');
+  if (card) card.hidden = true;
 }
 
 /**
@@ -1538,6 +1663,9 @@ function buildPlayerSuggestions(file) {
   if (!host) return;
   const current = state.files.find((f) => f.path === file.path) || file;
   const suggested = current.suggested || [];
+  // These chips are about to be replaced, and a card left open would be
+  // anchored to one that no longer exists.
+  closeFaceHover();
   host.replaceChildren();
   host.hidden = false;
 
@@ -1628,6 +1756,11 @@ async function explainNothing(host, file) {
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'face-chip band-near';
+    // A name can be credited already and still be the closest face: the bar is
+    // about how sure the recognition is, not about what is on the video. Now
+    // that the chip is the thing that adds her, it has to say which.
+    const already = (file.models || []).some((m) => m.toLowerCase() === near.name.toLowerCase());
+    if (already) chip.classList.add('confirmed');
     const name = document.createElement('span');
     name.className = 'face-name';
     name.textContent = near.name;
@@ -1636,6 +1769,10 @@ async function explainNothing(host, file) {
     pct.className = 'face-pct';
     pct.textContent = `${Math.round(near.score * 100)}%`;
     chip.appendChild(pct);
+    const mark = document.createElement('span');
+    mark.className = 'face-band';
+    mark.textContent = already ? '✓' : '+';
+    chip.appendChild(mark);
     chip.title = [
       `${Math.round(near.score * 100)}% like ${near.name} — below the bar, so not suggested`,
       near.margin
@@ -1643,22 +1780,31 @@ async function explainNothing(host, file) {
           + `${Math.round(near.margin * 100) === 1 ? '' : 's'} clear of the next name; `
           + 'a suggestion needs a real gap as well as a score'
         : null,
-      'Click to compare the faces anyway',
+      already
+        ? 'Already credited on this video · hover to compare the faces'
+        : 'Hover to compare the faces · click to add her',
     ].filter(Boolean).join('\n');
+    // Below the bar is a statement about confidence, not about what you are
+    // allowed to do. If the faces agree, crediting her is the same single click
+    // it is on a suggestion that cleared the bar.
+    const sug = {
+      name: near.name,
+      score: near.score,
+      margin: near.margin,
+      band: 'near',
+      person: 0,
+      videos: 0,
+      runnerUp: '—',
+    };
     chip.addEventListener('click', (ev) => {
       ev.stopPropagation();
       ev.preventDefault();
-      openFaceLineup(file, {
-        name: near.name,
-        score: near.score,
-        margin: near.margin,
-        band: 'near',
-        person: 0,
-        videos: 0,
-        runnerUp: '—',
-      }, (picked) => editRecords([file.path], { addModels: [picked] })
-        .then(() => { if (state.playing) buildPlayerSuggestions(state.playing); }));
+      if (already) return;
+      closeFaceHover();
+      editRecords([file.path], { addModels: [near.name] })
+        .then(() => { if (state.playing) buildPlayerSuggestions(state.playing); });
     });
+    attachFaceHover(chip, file, sug);
     host.appendChild(chip);
   }
 }
@@ -3965,6 +4111,22 @@ function wireEvents() {
     $('#playerModal').hidden = true;
     $('#tagModal').hidden = true;
     filterByLabel('models', sug.name);
+  });
+
+  // Crossing into the card must not dismiss it: its footer is a real target.
+  const hoverCard = $('#faceHover');
+  hoverCard.addEventListener('mouseenter', () => clearTimeout(hover.out));
+  hoverCard.addEventListener('mouseleave', () => {
+    hover.out = setTimeout(closeFaceHover, HOVER_OUT_MS);
+  });
+  $('#faceHoverMore').addEventListener('click', () => {
+    if (!hover.held) return;
+    const { file, sug } = hover.held;
+    closeFaceHover();
+    // The full lineup still holds her whole set and the way to her videos. It
+    // is now somewhere you go on purpose, not the only way to compare.
+    openFaceLineup(file, sug, (picked) => editRecords([file.path], { addModels: [picked] })
+      .then(() => { if (state.playing) buildPlayerSuggestions(state.playing); }));
   });
 
   $('#faceModal').addEventListener('click', (ev) => {
