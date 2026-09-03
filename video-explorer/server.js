@@ -86,7 +86,10 @@ const DEFAULT_CONFIG = {
   volume: 1,          // master playback volume, 0..1 — a preference, not a view
   foldersCollapsed: false,
   recursive: false,   // explorer-style by default: one folder level at a time
-  grouped: false,     // the grid split into a section per performer
+  // '' | 'models' | 'suggested': the grid split into a section per performer,
+  // by who is credited or by who the faces look like. `true` from an older
+  // build still means 'models'.
+  grouped: '',
 
   scrubWithMouse: false,
   // Highest rated first: your own judgement beats any property of the file.

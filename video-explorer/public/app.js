@@ -36,7 +36,10 @@ const state = {
   pending: new Map(),  // path -> in-flight poster/sprite promise
   failed: new Set(),
   picker: null,        // { dir, onConfirm, title }
-  grouped: false,      // the grid split into one section per performer
+  // '' | 'models' | 'suggested' -- off, by who is credited, by who the faces
+  // look like. Empty rather than false because everything downstream asks
+  // whether it is grouped far more often than it asks how.
+  grouped: '',
   groups: [],          // [{ key, name, files }] when grouped, favourites first
   slots: [],           // the grouped layout flattened: a heading or a card
   favourites: [],      // performer names marked a favourite, library-wide
@@ -113,13 +116,13 @@ function picked(facet, want) {
  * puts these back; card size, preview engine and the default folder are
  * preferences and survive it.
  */
-const VIEW_DEFAULTS = { sort: 'rating', sortDir: 'desc', recursive: false, grouped: false };
+const VIEW_DEFAULTS = { sort: 'rating', sortDir: 'desc', recursive: false, grouped: '' };
 const RESET_KEY = 've-reset-home';
 
 /** Drops filters, search and sort back to the defaults, saving as it goes. */
 function resetView() {
   Object.assign(state.config, VIEW_DEFAULTS);
-  state.grouped = false;
+  state.grouped = '';
   syncGroupButton();
   saveConfig({ ...VIEW_DEFAULTS });
   state.adv = newAdvFilter();
@@ -716,12 +719,17 @@ const STAR_POINTS = [0, 0, 0, 10, 100, 1000];
  * Favourites lead, then alphabetical. Ordering by how many videos each has would
  * move a section every time the filter changed.
  */
-function buildModelGroups(list) {
+function buildModelGroups(list, mode = 'models') {
   const groups = new Map();
   const unnamed = [];
+  const suggested = mode === 'suggested';
 
   for (const file of list) {
-    const names = (file.models || []).map((n) => String(n).trim()).filter(Boolean);
+    // The credited names, or the ones the recogniser put forward. Same shape of
+    // view over a different question: who is in this, against who might be.
+    const names = (suggested
+      ? (file.suggested || []).map((s) => s.name)
+      : (file.models || [])).map((n) => String(n).trim()).filter(Boolean);
     if (!names.length) { unnamed.push(file); continue; }
     const rating = Math.max(0, Math.min(5, Math.round(Number(file.rating) || 0)));
     for (const name of names) {
@@ -749,7 +757,17 @@ function buildModelGroups(list) {
       || b.good - a.good
       || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
   });
-  if (unnamed.length) out.push({ key: '', name: '', files: unnamed, unnamed: true });
+  if (unnamed.length) {
+    out.push({
+      key: '',
+      name: '',
+      files: unnamed,
+      unnamed: true,
+      // Not the same absence: one is nobody credited, the other is nobody the
+      // recogniser could put a name to -- including every video it has not read.
+      label: suggested ? 'Nobody suggested' : 'Nobody named',
+    });
+  }
   return out;
 }
 
@@ -760,7 +778,7 @@ function buildModelGroups(list) {
  * videos would render in one go.
  */
 function buildSlots() {
-  state.groups = state.grouped ? buildModelGroups(state.view) : [];
+  state.groups = state.grouped ? buildModelGroups(state.view, state.grouped) : [];
   state.slots = [];
   state.cards = [];
   if (!state.grouped) return;
@@ -3218,7 +3236,7 @@ function buildGroupHead(group) {
 
   const name = document.createElement('span');
   name.className = 'group-name';
-  name.textContent = group.unnamed ? 'Nobody named' : group.name;
+  name.textContent = group.unnamed ? (group.label || 'Nobody named') : group.name;
   head.appendChild(name);
 
   if (!group.unnamed) {
@@ -3253,10 +3271,20 @@ function buildGroupHead(group) {
     // Straight to the flat listing for this one performer, the way a pill on a
     // card behaves: the grouped view is for finding someone, not for working
     // through them.
+    //
+    // Grouped by suggestion it lands somewhere else on purpose -- what is
+    // actually credited to her, rather than what looks like her -- and there is
+    // no filter for the latter to send it to. So it says which, instead of
+    // reading as "only this section" and quietly showing a different set.
+    const guessed = state.grouped === 'suggested';
     const only = document.createElement('button');
     only.type = 'button';
     only.className = 'linkish group-only';
-    only.textContent = 'only this one';
+    only.textContent = guessed ? 'her credited videos' : 'only this one';
+    if (guessed) {
+      only.title = `Everything credited to ${group.name}, which is not the same `
+        + 'set as the videos that look like her';
+    }
     only.addEventListener('click', (ev) => {
       ev.stopPropagation();
       filterByLabel('models', group.name);
@@ -3830,28 +3858,43 @@ async function dropOnto(paths, destPath, copy, label) {
  * search and the sort all still apply, and every video in it is still there —
  * just once per person named in it.
  */
+const GROUP_MODES = ['', 'models', 'suggested'];
+
 async function toggleGrouped() {
-  state.grouped = !state.grouped;
+  // Off, credited, suggested, off. The plain listing is the way back from
+  // either, so neither grouping is more than one press from the default.
+  state.grouped = GROUP_MODES[(GROUP_MODES.indexOf(state.grouped) + 1) % GROUP_MODES.length];
   syncGroupButton();
   await saveConfig({ grouped: state.grouped });
   render();
-  if (state.grouped) {
-    const named = state.groups.filter((g) => !g.unnamed).length;
-    const marked = state.groups.filter((g) => !g.unnamed && isFavouriteModel(g.name)).length;
+  if (!state.grouped) return;
+  const named = state.groups.filter((g) => !g.unnamed).length;
+  const marked = state.groups.filter((g) => !g.unnamed && isFavouriteModel(g.name)).length;
+  if (state.grouped === 'suggested') {
     toast(named
-      ? `${named} performer${named === 1 ? '' : 's'}, best rated first`
-        + (marked ? ` — ${marked} marked` : '')
-      : 'Nobody named in this listing', 'ok');
+      ? `${named} performer${named === 1 ? '' : 's'} the faces look like, best rated first`
+      : 'Nobody suggested in this listing', 'ok');
+    return;
   }
+  toast(named
+    ? `${named} performer${named === 1 ? '' : 's'}, best rated first`
+      + (marked ? ` — ${marked} marked` : '')
+    : 'Nobody named in this listing', 'ok');
 }
 
 function syncGroupButton() {
   const btn = $('#groupBtn');
   if (!btn) return;
-  btn.classList.toggle('on', state.grouped);
-  btn.title = state.grouped
-    ? 'Grouped by performer — click for the plain listing'
-    : 'Favourite models — group this listing by performer';
+  btn.classList.toggle('on', Boolean(state.grouped));
+  // Two different groupings behind one button, so the state has to be
+  // legible without pressing it: the heart changes colour as well as filling.
+  btn.classList.toggle('by-suggested', state.grouped === 'suggested');
+  btn.title = {
+    '': 'Ungrouped — click to group this listing by credited performer',
+    models: 'Grouped by credited performer — click to group by suggested performer',
+    suggested: 'Grouped by suggested performer, from the face index '
+      + '— click for the plain listing',
+  }[state.grouped];
 }
 
 // ---------------------------------------------------------------- selection
@@ -4402,7 +4445,7 @@ async function init() {
   } catch {
     state.config = {
       previewMode: 'live', frames: 10, dwellMs: 1000, tileWidth: 640, cardWidth: 520,
-      pageSize: 24, recursive: false, grouped: false, sortDir: 'desc', sort: 'rating',
+      pageSize: 24, recursive: false, grouped: '', sortDir: 'desc', sort: 'rating',
     };
   }
 
@@ -4425,7 +4468,9 @@ async function init() {
     || state.config.homeDir || state.config.lastDir || '';
   $('#dirInput').value = start;
   $('#recursiveToggle').checked = state.config.recursive === true;
-  state.grouped = state.config.grouped === true;
+  // `true` is what this was before there were two groupings.
+  state.grouped = state.config.grouped === true ? 'models'
+    : (GROUP_MODES.includes(state.config.grouped) ? state.config.grouped : '');
   syncGroupButton();
   $('#sortSelect').value = state.config.sort || 'name';
   syncSortButton();

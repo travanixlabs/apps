@@ -905,6 +905,11 @@ main { padding: 16px; }
 
 /* The toolbar toggle, lit while the grid is grouped. */
 #groupBtn.on { color: #e0506f; border-color: #e0506f; }
+/* Grouped by the face index rather than by what is credited: the same view of a
+   different question, so it is the same button in another colour rather than a
+   second control beside it. Violet is the suggestion colour elsewhere. Must
+   follow .on -- same specificity, so source order settles it. */
+#groupBtn.on.by-suggested { color: #c3b6ec; border-color: #6b5ea8; }
 
 /* -------------------------------------------------------- ratings and tags */
 
