@@ -372,10 +372,19 @@ on its own is worth nothing.
   types the name into the box rather than saving it, so **Add** and **Replace**
   still mean exactly what they say.
 - **Advanced filters → Suggested models** — *profiled with matching model*,
-  *profiled without matching model*, *not profiled*. Three states that cover the
-  listing and do not overlap. The middle one is the work.
-- **Grouped by performer** — each section says how many of that performer's
-  videos have been read: `83 videos · 9 profiled`, turning green at the full set.
+  *profiled without matching model*, *no usable face*, *not profiled*. Four
+  states that cover the listing and do not overlap. The second one is the work.
+  *No usable face* used to be inside it: 273 of the 2,735 videos here were read
+  and yielded nothing to compare, which is not a performer waiting to be
+  credited, and re-reading them will not help. Splitting them out took that
+  filter from 1,228 to 955, all of which are a name that could be added.
+- **Grouped by performer** — the heart in the toolbar has three positions:
+  ungrouped, by credited performer, then by *suggested* performer. Each section
+  says how many of that performer's videos have been read: `83 videos · 9
+  profiled`, turning green at the full set. Grouped by credit a section is work
+  already done; grouped by suggestion it is a claim to check, over the same
+  videos and the same filters — 103 sections against 373 here, since a performer
+  needs three credited videos before she can be averaged into a face at all.
 - **The toolbar pill** — `1,204 / 2,735 reading… · 31 cached`. It says what it
   is doing, because that is the question actually being asked of it: *reading…*
   with a pulsing dot while a file is open, *waiting for you to pause* with a
@@ -389,13 +398,25 @@ on its own is worth nothing.
 
 ### Is this her?
 
-A name beside a 22px thumbnail asks to be taken on trust. Click the face on a
-suggestion and the lineup opens: **this video's face on the left, hers from
-other videos on the right**, each captioned with where it came from. Same person
-or not is then a two-second judgement.
+A name beside a 22px thumbnail asks to be taken on trust. **Hover a suggestion**
+and the comparison comes up on its own: this video's face beside six of hers,
+how alike they are, and by how much she beat the runner-up. Same person or not
+is then a two-second judgement, and it costs nothing to ask.
 
-It also names the runner-up — on a close call, who else it nearly was tells you
-as much as who it was — and offers *See her N videos* to go through the rest.
+Every suggestion gets one — one name or four, at 90% exactly as readily as at
+38%. Confidence gates nothing here, because a confident wrong answer is the one
+most worth looking at. Below-the-bar names get it too, and can be credited in
+the same single click; the bar is about how sure the recogniser is, not about
+what is on the video, so those chips also say when she is already credited.
+
+**Clicking only ever credits her.** That was the other half of the toll: the
+chip's own click added the name while the face inside it opened a dialog, two
+actions in one control, and the smaller one was the one wanted more often.
+
+The full lineup is still there, at the card's footer — her whole set rather than
+six of it, captioned with where each came from, and *See her N videos* to go
+through the rest. It is somewhere to go on purpose now rather than the only way
+to see two faces side by side.
 
 Faces most like the rest of her come first. A video that yielded only two or
 three faces can have the male co-star as its biggest one, so his face ends up
