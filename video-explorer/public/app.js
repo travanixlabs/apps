@@ -133,6 +133,20 @@ const CHOICES = {
       return (f.suggested || []).some((s) => named.has(s.name.toLowerCase()));
     },
     rejected: (f) => (f.notModels || []).length > 0,
+    // A suggestion you have not answered yet. Refused names are already out of
+    // the ranking, so anything still offered and not credited is undecided.
+    //
+    // It needs a suggestion to be pending: a video with nothing offered is not
+    // awaiting a decision, it is empty, and sweeping the unprofiled and the
+    // faceless in here would turn a work queue into a junk drawer. That is why
+    // this is not simply "neither accepted nor rejected".
+    //
+    // Not exclusive with accepted, on purpose: two names offered, one credited
+    // and one not, is both -- and it is the co-star case worth finding.
+    pending: (f) => {
+      const named = new Set((f.models || []).map((m) => m.toLowerCase()));
+      return (f.suggested || []).some((s) => !named.has(s.name.toLowerCase()));
+    },
   },
 };
 
@@ -175,6 +189,10 @@ const CHOICE_ROWS = [
       + 'already there'],
     ['rejected', 'rejected',
       'a name has been turned down on it, so the recogniser stopped offering her'],
+    ['pending', 'pending',
+      'a name is still offered and not credited \u2014 a decision you have not made '
+      + 'yet. Videos with nothing suggested are not in here; there is nothing '
+      + 'pending on those'],
   ]],
   ['#advLink', 'link', [
     ['yes', 'has a link'],

@@ -391,8 +391,18 @@ on its own is worth nothing.
 
   The third row is what has been done about them: *accepted (incl. already
   matched)* — a suggested name that is credited, whether you took it or it was
-  already there — and *rejected*. Not two ends of one switch: a video can hold
-  a name you took and another you turned down, so both are independent.
+  already there — *rejected*, and *pending*. Not ends of one switch: a video
+  can hold a name you took and another you have not, so these overlap and each
+  is asked independently.
+
+  **Pending needs a suggestion to be pending.** It is a name still offered and
+  not credited, which is not the same as "neither accepted nor rejected" — that
+  reading would include every video the recogniser has nothing to say about,
+  and here that is 1,068 of 2,733. Pending is 310. One is a queue you can work
+  through; the other is mostly videos with no faces in them. Accepted and
+  pending together come to exactly the 1,665 videos that have a suggestion at
+  all, overlapping on the 25 that hold one credited name and one not — which is
+  the co-star again.
 
 **Every row in the dialog is now three-state**: click to include, again to
 exclude, again to clear. Rating, Studio, Production, Models and Tags always
