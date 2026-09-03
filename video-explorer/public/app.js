@@ -72,21 +72,137 @@ function newAdvFilter() {
     // Studio is absent on purpose — one studio per video makes all-of empty.
     mode: { tags: 'all', models: 'all' },
     ratings: new Map(),   // 0 means unrated
-    // Whether anyone in this video is a favourite. Not a facet of values like
-    // the others: there is one question to ask, and it has three answers.
-    favourite: 'all',     // 'all' | 'yes' | 'no'
-    link: 'all',          // 'all' | 'yes' | 'no' — whether a source url is stored
-    cloud: 'all',         // 'all' | 'downloaded' | 'cloud'
-    // Where a video stands with the face index: not read yet, read and its
-    // faces are all named, or read and something in it is not. The three cover
-    // the listing between them and do not overlap, which the earlier
-    // has-a-suggestion / agrees pair did not.
-    suggested: 'all',     // 'all' | 'match' | 'nomatch' | 'faceless' | 'unprofiled'
-    // How many names came out of it, which is a different question from where
-    // it stands: two suggestions on a video credited to one performer is the
-    // shape of a missing co-star, and one is the shape of a plain confirmation.
-    suggestedCount: 'all', // 'all' | 'one' | 'many'
+    // The rest were one-of-N pickers and are now maps like everything else, so
+    // every row in the dialog cycles include -> exclude -> off. "Exclude not
+    // profiled" is a thing you can want and could not previously say.
+    favourite: new Map(),       // yes | no
+    link: new Map(),            // yes | no  -- whether a source url is stored
+    cloud: new Map(),           // downloaded | cloud
+    // Where a video stands with the face index.
+    suggested: new Map(),       // match | nomatch | faceless | unprofiled
+    // How many names came out of it -- a different question from where it
+    // stands: two suggestions on a video credited to one performer is the
+    // shape of a missing co-star, one is a plain confirmation.
+    suggestedCount: new Map(),  // one | many
+    // And what has been done about them. Not exclusive: a video can hold a
+    // name you took and another you turned down.
+    suggestedAct: new Map(),    // accepted | rejected
   };
+}
+
+/**
+ * The one-question facets, each answer a predicate.
+ *
+ * These used to be single values with an 'all' meaning no constraint. As maps
+ * they behave exactly like tags and models do -- include some, exclude others,
+ * empty means no constraint -- so one matcher serves all of them and the dialog
+ * has no special cases left.
+ *
+ * Predicates rather than "derive the video's one value", because the last of
+ * them is not exclusive: accepted and rejected can both be true of a video.
+ */
+const CHOICES = {
+  favourite: {
+    yes: (f) => hasFavouriteModel(f),
+    no: (f) => !hasFavouriteModel(f),
+  },
+  link: {
+    yes: (f) => Boolean(f.url),
+    no: (f) => !f.url,
+  },
+  cloud: {
+    downloaded: (f) => !f.cloudOnly,
+    cloud: (f) => Boolean(f.cloudOnly),
+  },
+  suggested: {
+    match: (f) => suggestionMatch(f, 'match'),
+    nomatch: (f) => suggestionMatch(f, 'nomatch'),
+    faceless: (f) => suggestionMatch(f, 'faceless'),
+    unprofiled: (f) => suggestionMatch(f, 'unprofiled'),
+  },
+  suggestedCount: {
+    one: (f) => suggestedCountMatch(f, 'one'),
+    many: (f) => suggestedCountMatch(f, 'many'),
+  },
+  suggestedAct: {
+    // A suggested name that is credited. Whether you clicked it or it was
+    // already there is not recorded and does not matter -- the fact is that
+    // the recogniser and the credits agree about her.
+    accepted: (f) => {
+      const named = new Set((f.models || []).map((m) => m.toLowerCase()));
+      return (f.suggested || []).some((s) => named.has(s.name.toLowerCase()));
+    },
+    rejected: (f) => (f.notModels || []).length > 0,
+  },
+};
+
+const CHOICE_FACETS = Object.keys(CHOICES);
+
+/**
+ * Which row draws which facet, and what each answer is called.
+ *
+ * One table rather than six near-identical loops in the renderer: they differed
+ * only in their host element and their labels, and every difference between
+ * them was a chance for one to drift.
+ */
+const CHOICE_ROWS = [
+  ['#advFav', 'favourite', [
+    ['yes', 'a favourite is in it'],
+    ['no', 'nobody marked'],
+  ]],
+  ['#advSuggested', 'suggested', [
+    ['match', 'profiled with matching model',
+      'read for faces, and every performer recognised in it is already named on '
+      + 'it \u2014 nothing left to do'],
+    ['nomatch', 'profiled without matching model',
+      'read for faces, and someone recognised in it is not named on it. Videos '
+      + 'that held no usable face are not in here'],
+    ['faceless', 'no usable face',
+      'read for faces and none came out usable \u2014 shot from behind, too dark, '
+      + 'or too few faces to be sure they are one person'],
+    ['unprofiled', 'not profiled', 'not read for faces yet'],
+  ]],
+  ['#advSuggestedCount', 'suggestedCount', [
+    ['one', 'one model suggested',
+      'the faces in it were matched to exactly one performer'],
+    ['many', 'multiple models suggested',
+      'the faces clustered into several people and each found a name. With '
+      + '"profiled without matching model", this is the missing co-star'],
+  ]],
+  ['#advSuggestedAct', 'suggestedAct', [
+    ['accepted', 'accepted (incl. already matched)',
+      'a suggested name is credited on it \u2014 whether you took it or it was '
+      + 'already there'],
+    ['rejected', 'rejected',
+      'a name has been turned down on it, so the recogniser stopped offering her'],
+  ]],
+  ['#advLink', 'link', [
+    ['yes', 'has a link'],
+    ['no', 'no link'],
+  ]],
+  ['#advCloud', 'cloud', [
+    ['downloaded', 'downloaded only'],
+    ['cloud', 'cloud only \u2601'],
+  ]],
+];
+
+/**
+ * Included if it matches any included answer, and out if it matches an excluded
+ * one. Exclusion wins, the way it does for tags: "not this" means not this.
+ */
+function choiceMatch(picked, facet, file) {
+  if (!picked || !picked.size) return true;
+  const tests = CHOICES[facet];
+  let wanted = false;
+  let hit = false;
+  for (const [value, mode] of picked) {
+    const test = tests[value];
+    if (!test) continue;
+    const is = test(file);
+    if (mode === 'out' && is) return false;
+    if (mode === 'in') { wanted = true; if (is) hit = true; }
+  }
+  return !wanted || hit;
 }
 
 const FACETS = ['tags', 'models', 'studio', 'production', 'ratings'];
@@ -139,9 +255,8 @@ function resetView() {
 }
 
 function advActive(adv = state.adv) {
-  return Boolean(adv.text) || adv.cloud !== 'all' || adv.link !== 'all'
-    || adv.favourite !== 'all' || adv.suggested !== 'all'
-    || adv.suggestedCount !== 'all'
+  return Boolean(adv.text)
+    || CHOICE_FACETS.some((f) => adv[f].size > 0)
     || FACETS.some((f) => adv[f].size > 0);
 }
 
@@ -546,22 +661,9 @@ function matchesAdvanced(file, adv) {
     if (picked(adv.ratings, 'out').includes(rating)) return false;
   }
 
-  if (adv.favourite !== 'all') {
-    const has = hasFavouriteModel(file);
-    if (adv.favourite === 'yes' && !has) return false;
-    if (adv.favourite === 'no' && has) return false;
+  for (const facet of CHOICE_FACETS) {
+    if (!choiceMatch(adv[facet], facet, file)) return false;
   }
-
-  if (adv.suggested !== 'all' && !suggestionMatch(file, adv.suggested)) return false;
-  if (adv.suggestedCount !== 'all' && !suggestedCountMatch(file, adv.suggestedCount)) {
-    return false;
-  }
-
-  if (adv.link === 'yes' && !file.url) return false;
-  if (adv.link === 'no' && file.url) return false;
-
-  if (adv.cloud === 'downloaded' && file.cloudOnly) return false;
-  if (adv.cloud === 'cloud' && !file.cloudOnly) return false;
 
   return true;
 }
@@ -1067,15 +1169,13 @@ function toggleVolumeMenu(open) {
 let advDraft = newAdvFilter();
 
 function openAdvanced() {
-  advDraft = {
-    ...state.adv,
-    tags: new Map(state.adv.tags),
-    models: new Map(state.adv.models),
-    studio: new Map(state.adv.studio),
-    production: new Map(state.adv.production),
-    ratings: new Map(state.adv.ratings),
-    mode: { ...state.adv.mode },
-  };
+  // Every Map copied, not listed by hand. The draft has to be editable without
+  // touching the filter in force -- Cancel has to mean cancel -- and a list of
+  // facets to clone is a list that goes stale the moment a new one is added.
+  advDraft = { ...state.adv, mode: { ...state.adv.mode } };
+  for (const [key, value] of Object.entries(state.adv)) {
+    if (value instanceof Map) advDraft[key] = new Map(value);
+  }
   $('#advText').value = advDraft.text;
   for (const [field, name] of MODE_INPUTS) {
     for (const radio of document.querySelectorAll(`input[name="${name}"]`)) {
@@ -1099,88 +1199,23 @@ function renderAdvanced() {
     ));
   }
 
-  // Above the ratings, and the same shape as Source link: one of three rather
-  // than a cycle, since "someone in this is a favourite" and "nobody is" cover
-  // the whole listing between them.
-  const fav = $('#advFav');
-  fav.innerHTML = '';
-  for (const [value, label] of [['all', 'everything'], ['yes', 'a favourite is in it'], ['no', 'nobody marked']]) {
-    fav.appendChild(chipToggle(label, advDraft.favourite === value, () => {
-      advDraft.favourite = value;
-      renderAdvanced();
-    }));
+  // Every one of these cycles include -> exclude -> off, the same as the label
+  // rows above it. They were one-of-N pickers with an "everything" chip, which
+  // could not express "anything except not profiled" -- and that is a thing
+  // worth being able to say. Empty means no constraint, so nothing is lost.
+  for (const [host, facet, options] of CHOICE_ROWS) {
+    const row = $(host);
+    if (!row) continue;
+    row.innerHTML = '';
+    for (const [value, label, hint] of options) {
+      const chip = chipCycle(label, advDraft[facet].get(value), () => {
+        cycleIn(advDraft[facet], value);
+        renderAdvanced();
+      });
+      if (hint) chip.title = `${chip.title}\n${hint}`;
+      row.appendChild(chip);
+    }
   }
-
-  // Only offered once something has been profiled: an empty answer would look
-  // like a broken filter rather than a sweep that has not reached this video.
-  const suggest = $('#advSuggested');
-  suggest.innerHTML = '';
-  for (const [value, label, hint] of [
-    ['all', 'everything', ''],
-    ['match', 'profiled with matching model',
-      'read for faces, and every performer recognised in it is already named on it '
-      + '— nothing left to do'],
-    ['nomatch', 'profiled without matching model',
-      'read for faces, and someone recognised in it is not named on it — a missing '
-      + 'performer, a wrong one, or nobody recognised at all. Videos that held no '
-      + 'usable face are not in here; there is nothing to credit on those'],
-    ['faceless', 'no usable face',
-      'read for faces and none came out usable — shot from behind, too dark, or too '
-      + 'few faces to be sure they are one person. Nothing can be credited from it, '
-      + 'so re-reading it will not help'],
-    ['unprofiled', 'not profiled', 'not read for faces yet'],
-  ]) {
-    const chip = chipToggle(label, advDraft.suggested === value, () => {
-      advDraft.suggested = value;
-      renderAdvanced();
-    });
-    if (hint) chip.title = hint;
-    suggest.appendChild(chip);
-  }
-
-  // The second row narrows the first rather than replacing it: "profiled
-  // without matching model" and "multiple models suggested" together is the
-  // uncredited co-star, which neither row can ask for on its own.
-  const howMany = $('#advSuggestedCount');
-  howMany.innerHTML = '';
-  for (const [value, label, hint] of [
-    ['all', 'everything', ''],
-    ['one', 'one model suggested',
-      'the faces in it were matched to exactly one performer — the ordinary case'],
-    ['many', 'multiple models suggested',
-      'the faces clustered into several people and each of them found a name. With '
-      + '"profiled without matching model" above, this is where a co-star is '
-      + 'missing from the credits'],
-  ]) {
-    const chip = chipToggle(label, advDraft.suggestedCount === value, () => {
-      advDraft.suggestedCount = value;
-      renderAdvanced();
-    });
-    if (hint) chip.title = hint;
-    howMany.appendChild(chip);
-  }
-
-  // Same shape as Availability directly below it: one of three, not a cycle,
-  // because "has a link" and "has none" already cover the whole listing.
-  const link = $('#advLink');
-  link.innerHTML = '';
-  for (const [value, label] of [['all', 'everything'], ['yes', 'has a link'], ['no', 'no link']]) {
-    link.appendChild(chipToggle(label, advDraft.link === value, () => {
-      advDraft.link = value;
-      renderAdvanced();
-    }));
-  }
-
-  const cloud = $('#advCloud');
-  cloud.innerHTML = '';
-  for (const [value, label] of [['all', 'everything'], ['downloaded', 'downloaded only'], ['cloud', 'cloud only ☁']]) {
-    cloud.appendChild(chipToggle(label, advDraft.cloud === value, () => {
-      advDraft.cloud = value;
-      renderAdvanced();
-    }));
-  }
-
-
   for (const [field, el, empty, none] of [
     ['studio', '#advStudio', 'No studios yet — the import writes them.', 'no studio'],
     ['production', '#advProduction', 'No production codes yet — the import writes them.',
@@ -1239,11 +1274,15 @@ function updateAdvMatch() {
   say('models', 'model', 'models', ` (${advDraft.mode.models})`);
   say('tags', 'tag', 'tags', ` (${advDraft.mode.tags})`);
   say('ratings', 'rating');
-  if (advDraft.favourite === 'yes') bits.push('a favourite is in it');
-  if (advDraft.favourite === 'no') bits.push('nobody marked');
-  if (advDraft.link === 'yes') bits.push('linked');
-  if (advDraft.link === 'no') bits.push('unlinked');
-  if (advDraft.cloud !== 'all') bits.push(advDraft.cloud);
+  // The one-question rows, read from the same table the chips are drawn from,
+  // so a new answer shows up in the summary without being listed twice.
+  for (const [, facet, options] of CHOICE_ROWS) {
+    for (const [value, label] of options) {
+      const mode = advDraft[facet].get(value);
+      if (mode === 'in') bits.push(label);
+      if (mode === 'out') bits.push(`not ${label}`);
+    }
+  }
   if (advDraft.text) bits.push(`"${advDraft.text}"`);
   el.textContent = bits.join(' · ');
 }
@@ -1677,9 +1716,13 @@ async function openFaceHover(anchor, file, sug) {
   verdict.className = `face-hover-verdict band-${sug.band}`;
   $('#faceHoverMore').textContent = `See all of ${sug.name}'s faces`;
   const no = $('#faceHoverNo');
+  const credited = (file.models || []).some((m) => m.toLowerCase() === sug.name.toLowerCase());
   no.textContent = `Not ${sug.name}`;
-  no.title = `Stop suggesting ${sug.name} for this video. Remembered with the `
-    + 'labels, so re-reading the file will not bring her back';
+  no.title = credited
+    ? `${sug.name} is credited on this video. This says she is not in it: the `
+      + 'credit is removed and she stops being suggested here'
+    : `Stop suggesting ${sug.name} for this video. Remembered with the labels, `
+      + 'so re-reading the file will not bring her back';
 
   card.hidden = false;
   placeFaceHover(anchor);
@@ -1742,8 +1785,17 @@ function placeFaceHover(anchor) {
  * refusing it becomes a chore rather than a decision.
  */
 async function refuseSuggestion(file, name) {
-  await editRecords([file.path], { addNotModels: [name] });
-  toast(`${name} will not be suggested for this video`, 'ok');
+  // She can be credited AND the closest face -- a suggestion on a credited
+  // video is a confirmation, and "not her" contradicts it. Leaving both would
+  // be an incoherent record: named in the video and refused for it. So the
+  // credit goes with the refusal, since that is what the words mean.
+  const credited = (file.models || []).some((m) => m.toLowerCase() === name.toLowerCase());
+  await editRecords([file.path], credited
+    ? { addNotModels: [name], removeModels: [name] }
+    : { addNotModels: [name] });
+  toast(credited
+    ? `${name} uncredited, and will not be suggested for this video`
+    : `${name} will not be suggested for this video`, 'ok');
   if (state.playing) buildPlayerSuggestions(state.playing);
 }
 
@@ -4259,11 +4311,12 @@ function wireEvents() {
   for (const btn of document.querySelectorAll('[data-clear]')) {
     btn.addEventListener('click', () => {
       const what = btn.dataset.clear;
-      // One label, one clear, so the section's second row goes with it.
+      // One label, one clear, so all three of the section's rows go with it.
       if (what === 'suggested') {
-        advDraft.suggested = 'all';
-        advDraft.suggestedCount = 'all';
-      } else if (what === 'cloud' || what === 'link') advDraft[what] = 'all';
+        advDraft.suggested.clear();
+        advDraft.suggestedCount.clear();
+        advDraft.suggestedAct.clear();
+      } else if (CHOICE_FACETS.includes(what)) advDraft[what].clear();
       else advDraft[what === 'rating' ? 'ratings' : what].clear();
       renderAdvanced();
     });

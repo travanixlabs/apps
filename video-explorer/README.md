@@ -388,6 +388,19 @@ on its own is worth nothing.
   *multiple models suggested* is the uncredited co-star: the faces clustered
   into several people, each cluster found a name, and at least one of those
   names is not on the video. Neither row can ask for that alone.
+
+  The third row is what has been done about them: *accepted (incl. already
+  matched)* — a suggested name that is credited, whether you took it or it was
+  already there — and *rejected*. Not two ends of one switch: a video can hold
+  a name you took and another you turned down, so both are independent.
+
+**Every row in the dialog is now three-state**: click to include, again to
+exclude, again to clear. Rating, Studio, Production, Models and Tags always
+were; Favourite model, all three Suggested models rows, Source link and
+Availability were one-of-N pickers with an *everything* chip, which could not
+express *anything except not profiled*. Empty means no constraint, so nothing
+was lost in the change, and the six of them now run through one table and one
+matcher rather than six near-identical loops.
 - **Grouped by performer** — the heart in the toolbar has three positions:
   ungrouped, by credited performer, then by *suggested* performer. Each section
   says how many of that performer's videos have been read: `83 videos · 9
@@ -436,6 +449,12 @@ and rebuilt whenever the recogniser or the sampling changes, so a refusal held
 there would evaporate and the same wrong name would come back every few weeks.
 It is also per video rather than a global veto: refusing her here leaves her
 suggested everywhere else she genuinely appears.
+
+If she is **already credited** on the video, refusing her removes the credit as
+well. A suggestion on a credited video is a confirmation, so "not her"
+contradicts it, and keeping both would leave the record saying she is in the
+video and refused for it at the same time. The toast says both things
+happened.
 
 Refused names are dropped from the ranking rather than ranked and hidden, so a
 name you have turned down is not the runner-up that some third name's margin is
