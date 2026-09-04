@@ -7,89 +7,8 @@ const $ = (sel) => document.querySelector(sel);
 /** The only scrolling element — observers must measure against it, not the page. */
 const scrollRoot = document.getElementById('scrollArea');
 
-const state = {
-  config: {},
-  files: [],          // videos shown for the current folder
-  folders: [],        // immediate subfolders of the current folder
-  view: [],           // filtered + sorted
-  dir: '',
-  parent: null,
-  history: [],        // folders visited, oldest first
-  historyIndex: -1,   // where we currently sit in that list
-  totalBelow: 0,
-  cloudBelow: 0,
-  rendered: 0,        // how many of state.view are on screen (pagination)
-  meta: new Map(),    // path -> probed metadata, filled in per page
-  metaAsked: new Set(),
-  cloudOptIn: new Set(), // cloud files the user explicitly chose to fetch
-  cards: [],           // grouped: every card in reading order, for the player
-  playing: null,      // file open in the player modal
-  playingAnchor: null, // the slot it held, once a filter drops it from the view
-  // Which card it was opened from, grouped: the same video sits in a section per
-  // performer, so "the next one" depends on which copy you clicked.
-  playingCard: null,
-  selected: new Set(),
-  lastClickedIndex: -1,
-  rangeList: null,     // which list that index was into: a section, or the view
-  sprites: new Map(),  // path -> { url, frames }
-  thumbs: new Map(),   // path -> poster blob URL
-  pending: new Map(),  // path -> in-flight poster/sprite promise
-  failed: new Set(),
-  picker: null,        // { dir, onConfirm, title }
-  // '' | 'models' | 'suggested' -- off, by who is credited, by who the faces
-  // look like. Empty rather than false because everything downstream asks
-  // whether it is grouped far more often than it asks how.
-  grouped: '',
-  groups: [],          // [{ key, name, files }] when grouped, favourites first
-  slots: [],           // the grouped layout flattened: a heading or a card
-  favourites: [],      // performer names marked a favourite, library-wide
-  favSet: new Set(),   // the same, lower-cased, for asking about one video
-  tagVocab: [],        // [{ tag, count }] across the whole library
-  modelVocab: [],      // the same, for performer names
-  studioVocab: [],     // and for production houses, of which a video has one
-  productionVocab: [], // and for reference codes — MD, RS, MCY — likewise one
-  tagTargets: [],      // files the open label dialog will edit
-  adv: newAdvFilter(), // the advanced filter currently applied
-};
-
-/**
- * The advanced filter. Each facet is a Map of value → 'in' | 'out': clicking a
- * chip cycles include → exclude → gone. An empty map means "no constraint"
- * rather than "match nothing", so a fresh filter is transparent and the UI never
- * has to special-case "everything is unchecked".
- */
-function newAdvFilter() {
-  return {
-    text: '',
-    tags: new Map(),
-    models: new Map(),
-    studio: new Map(),
-    // The reference's letter code, one per video like the studio.
-    production: new Map(),
-    // Per facet, because "all of these tags" and "any of these performers" is a
-    // reasonable thing to ask for and one shared switch could not express it.
-    // Exclusions are always all-of: "not this" means not this either way.
-    // Studio is absent on purpose — one studio per video makes all-of empty.
-    mode: { tags: 'all', models: 'all' },
-    ratings: new Map(),   // 0 means unrated
-    // The rest were one-of-N pickers and are now maps like everything else, so
-    // every row in the dialog cycles include -> exclude -> off. "Exclude not
-    // profiled" is a thing you can want and could not previously say.
-    favourite: new Map(),       // yes | no
-    link: new Map(),            // yes | no  -- whether a source url is stored
-    cloud: new Map(),           // downloaded | cloud
-    // Where a video stands with the face index.
-    suggested: new Map(),       // match | nomatch | faceless | unprofiled
-    // How many names came out of it -- a different question from where it
-    // stands: two suggestions on a video credited to one performer is the
-    // shape of a missing co-star, one is a plain confirmation.
-    suggestedCount: new Map(),  // one | many
-    // And what has been done about them. Not exclusive: a video can hold a
-    // name you took and another you turned down.
-    suggestedAct: new Map(),    // accepted | rejected
-  };
-}
-
+// Declared before `state`, whose filter maps are built from it: a const read
+// above its own line throws, and the page would then define nothing at all.
 /**
  * The one-question facets, each answer a predicate.
  *
@@ -148,9 +67,99 @@ const CHOICES = {
       return (f.suggested || []).some((s) => !named.has(s.name.toLowerCase()));
     },
   },
+  duplicate: {
+    yes: (f) => Boolean(f.duplicate),
+    // Not "the only copy": a cloud video was never fingerprinted, so nothing
+    // is known about it either way. Only a video that was read and found
+    // unique can honestly answer no.
+    no: (f) => !f.duplicate && !f.cloudOnly,
+  },
 };
 
 const CHOICE_FACETS = Object.keys(CHOICES);
+
+const state = {
+  config: {},
+  files: [],          // videos shown for the current folder
+  folders: [],        // immediate subfolders of the current folder
+  view: [],           // filtered + sorted
+  dir: '',
+  parent: null,
+  history: [],        // folders visited, oldest first
+  historyIndex: -1,   // where we currently sit in that list
+  totalBelow: 0,
+  cloudBelow: 0,
+  rendered: 0,        // how many of state.view are on screen (pagination)
+  meta: new Map(),    // path -> probed metadata, filled in per page
+  metaAsked: new Set(),
+  cloudOptIn: new Set(), // cloud files the user explicitly chose to fetch
+  cards: [],           // grouped: every card in reading order, for the player
+  playing: null,      // file open in the player modal
+  playingAnchor: null, // the slot it held, once a filter drops it from the view
+  // Which card it was opened from, grouped: the same video sits in a section per
+  // performer, so "the next one" depends on which copy you clicked.
+  playingCard: null,
+  selected: new Set(),
+  lastClickedIndex: -1,
+  rangeList: null,     // which list that index was into: a section, or the view
+  sprites: new Map(),  // path -> { url, frames }
+  thumbs: new Map(),   // path -> poster blob URL
+  pending: new Map(),  // path -> in-flight poster/sprite promise
+  failed: new Set(),
+  picker: null,        // { dir, onConfirm, title }
+  // '' | 'models' | 'suggested' -- off, by who is credited, by who the faces
+  // look like. Empty rather than false because everything downstream asks
+  // whether it is grouped far more often than it asks how.
+  grouped: '',
+  groups: [],          // [{ key, name, files }] when grouped, favourites first
+  slots: [],           // the grouped layout flattened: a heading or a card
+  favourites: [],      // performer names marked a favourite, library-wide
+  favSet: new Set(),   // the same, lower-cased, for asking about one video
+  tagVocab: [],        // [{ tag, count }] across the whole library
+  modelVocab: [],      // the same, for performer names
+  studioVocab: [],     // and for production houses, of which a video has one
+  productionVocab: [], // and for reference codes — MD, RS, MCY — likewise one
+  tagTargets: [],      // files the open label dialog will edit
+  adv: newAdvFilter(), // the advanced filter currently applied
+};
+
+/**
+ * The advanced filter. Each facet is a Map of value → 'in' | 'out': clicking a
+ * chip cycles include → exclude → gone. An empty map means "no constraint"
+ * rather than "match nothing", so a fresh filter is transparent and the UI never
+ * has to special-case "everything is unchecked".
+ */
+function newAdvFilter() {
+  const adv = {
+    text: '',
+    tags: new Map(),
+    models: new Map(),
+    studio: new Map(),
+    // The reference's letter code, one per video like the studio.
+    production: new Map(),
+    // Per facet, because "all of these tags" and "any of these performers" is a
+    // reasonable thing to ask for and one shared switch could not express it.
+    // Exclusions are always all-of: "not this" means not this either way.
+    // Studio is absent on purpose — one studio per video makes all-of empty.
+    mode: { tags: 'all', models: 'all' },
+    ratings: new Map(),   // 0 means unrated
+  };
+  // The one-question facets -- favourite, source link, availability, where a
+  // video stands with the face index, how many names came out of it, what was
+  // done about them, whether it is one of several copies -- take their maps
+  // from the CHOICES table below rather than a line each here.
+  //
+  // They were listed in both places until a facet was added to the table and
+  // not to this list, and the dialog read `undefined.get(...)` the moment it
+  // tried to draw the row. Two lists that must agree are one list.
+  //
+  // All of them were one-of-N pickers once and are maps now, so every row
+  // cycles include -> exclude -> off. "Exclude not profiled" is a thing you can
+  // want and could not previously say.
+  for (const facet of CHOICE_FACETS) adv[facet] = new Map();
+  return adv;
+}
+
 
 /**
  * Which row draws which facet, and what each answer is called.
@@ -201,6 +210,15 @@ const CHOICE_ROWS = [
   ['#advCloud', 'cloud', [
     ['downloaded', 'downloaded only'],
     ['cloud', 'cloud only \u2601'],
+  ]],
+  ['#advDupe', 'duplicate', [
+    ['yes', 'one of several copies',
+      'the same video is in the library more than once. Matched on its '
+      + 'soundtrack and its picture, which is the only thing that can see it: '
+      + 'the names, sizes and byte hashes of two copies all differ'],
+    ['no', 'the only copy',
+      'read and found unique. Cloud videos are not in here, because nothing '
+      + 'has been read of them and neither answer would be true'],
   ]],
 ];
 
@@ -3634,6 +3652,17 @@ function buildCard(file, index, group = null, seq = null) {
     label.textContent = 'cloud-only';
     cloudMark.appendChild(label);
     preview.appendChild(cloudMark);
+  }
+
+  if (file.duplicate) {
+    // The count, not just a mark: "3 copies" says how much of a decision this
+    // is before anything has been opened.
+    const dupeBadge = document.createElement('span');
+    dupeBadge.className = 'badge badge-dupe';
+    dupeBadge.textContent = `${file.copies} copies`;
+    dupeBadge.title = 'The same video is in the library more than once.'
+      + ' Advanced filters, Duplicates, lists them.';
+    preview.appendChild(dupeBadge);
   }
 
   const frameBadge = document.createElement('span');

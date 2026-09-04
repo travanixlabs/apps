@@ -507,6 +507,16 @@ main { padding: 16px; }
 .badge-duration { right: 6px; bottom: 10px; }
 .badge-frame { left: 6px; bottom: 10px; opacity: 0; transition: opacity .16s; }
 .card:hover .badge-frame { opacity: 1; }
+/* One of several copies of the same video. Above the frame counter rather than
+   beside the duration, so nothing has to share a corner. Amber, because it is
+   a decision waiting rather than a fault. */
+.badge-dupe {
+  left: 6px;
+  bottom: 34px;
+  background: rgba(120, 78, 12, .86);
+  color: #ffd79a;
+  border: 1px solid rgba(214, 152, 60, .55);
+}
 
 /* Dead centre of the thumbnail: opens the player. Sits above the live video
    layer and is the one part of the tile that doesn't toggle selection. */

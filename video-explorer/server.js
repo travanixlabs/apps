@@ -24,6 +24,7 @@ try {
 
 const library = require('./library');
 const faces = require('./faces');
+const dupes = require('./dupes');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -1021,6 +1022,8 @@ async function scanDirectory(dir, recursive, includeCloud) {
     // Likewise for who the faces look like, so "has a suggestion" is a filter
     // the listing can answer on its own.
     ...faces.decorate(video),
+    // And whether this is one of several copies of the same video.
+    ...dupes.decorate(video),
   }));
 
   const cloudBelow = videos.reduce((n, v) => n + (v.cloudOnly ? 1 : 0), 0);
@@ -1546,6 +1549,21 @@ const server = http.createServer(async (req, res) => {
 
     // How far the backfill has got. Polled by the UI, and deliberately exempt
     // from the activity clock so asking does not pause the answering.
+    if (req.method === 'GET' && route === '/api/dupes/status') {
+      return sendJson(res, 200, dupes.status());
+    }
+
+    if (req.method === 'GET' && route === '/api/dupes/groups') {
+      const body = await dupes.loadDigest();
+      if (!body) {
+        return sendJson(res, 200, {
+          groups: [], confirmed: [], possible: [], fingerprinted: 0,
+          note: 'nothing matched yet -- run tools/find-dupes.js',
+        });
+      }
+      return sendJson(res, 200, body);
+    }
+
     if (req.method === 'GET' && route === '/api/faces/status') {
       return sendJson(res, 200, faces.status());
     }
@@ -1780,6 +1798,21 @@ async function main() {
   } else {
     log(`familiar faces: off (${face.reason})`);
   }
+  // Duplicates sit beside the face store for the same reason: a fingerprint is
+  // expensive to make and worth keeping. Only downloaded files are ever
+  // fingerprinted -- see dupes.js -- so this is silent on a library that lives
+  // entirely in the cloud.
+  dupes.init({
+    cacheDir: path.dirname(CACHE_DIR),
+    roots: () => [...config.roots, config.homeDir].filter(Boolean),
+    home: () => config.homeDir || ONEDRIVE_ROOT || '',
+  });
+  // The digest first and on its own: it is one small file and it is all a
+  // listing needs, where reading every fingerprint is thousands of files.
+  dupes.loadDigest()
+    .then(() => dupes.loadIndex())
+    .catch(() => { });
+
   metaIndex = loadJsonSync(META_FILE, {});
   log(`${Object.keys(metaIndex).length} cached metadata entries`);
   await checkFfmpeg();
