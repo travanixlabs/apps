@@ -601,32 +601,20 @@ function rescore() {
  * name at 0.141. Face-to-face is noisier than face-to-average, so the
  * recogniser's own bands do not apply here and this is its own measurement.
  *
- * 0.45 keeps 73% of the pairs that share a name while admitting 0.4% of the
- * pairs that do not. Lower loses precision fast: 0.35 admits five times as
- * many strangers.
+ * Set high on purpose. Over 250 videos drawn at random, by where the line is
+ * put:
+ *
+ *     0.60   84% of videos get a row   median 13 tiles   81.7% share a name
+ *     0.65   78%                       median 10         85.1%
+ *     0.70   68%                       median  8         89.7%
+ *     0.75   54%                       median  4         90.8%
+ *     0.80   33%                       median  2         93.8%
+ *
+ * 0.75 is the choice: about half the library gets a row, and what is in it is
+ * right nine times in ten. The rows are short, which is the price -- and with
+ * no cap on their length a performer's whole set is reachable by scrolling.
  */
-const SAME_WOMAN = 0.45;
-
-/**
- * And below this, there is no row worth drawing at all.
- *
- * Over 300 videos taken at random the answer is right 84.6% of the time, but
- * the mistakes are not spread evenly: the median row is entirely right, while
- * 8% of rows are wrong from end to end. Those rows announce themselves before
- * you read them -- their best match scrapes the floor at 0.46 or 0.52, where a
- * good row opens at 0.72 and up.
- *
- * So the question is asked once about the row rather than eight times about
- * the tiles: if the closest video in the whole library is not convincingly
- * her, say so instead of filling the space. Wholly wrong rows fall from 7.5%
- * to 4.7% and eighteen rows in three hundred are lost, most of them the ones
- * that were wrong.
- *
- * Requiring every tile to clear this instead scores about the same and
- * shortens the good rows to pay for it, which is a worse trade: the row is
- * read as a whole.
- */
-const WORTH_A_ROW = 0.58;
+const SAME_WOMAN = 0.75;
 
 // What the score is worth saying out loud. A strong match is at or above the
 // median of pairs that genuinely share a name.
@@ -693,7 +681,7 @@ function bandForSimilar(score) {
  * of thumbnails you can click. A profile outlives its file -- freed up to the
  * cloud, moved, deleted -- and a result you cannot open is not a result.
  */
-function similar(stat, limit = 12) {
+function similar(stat, limit = 12, offset = 0) {
   const key = keyFor(stat);
   const entry = state.index.videos[key];
   if (!entry) return { profiled: false, people: 0, total: 0, videos: [] };
@@ -715,22 +703,12 @@ function similar(stat, limit = 12) {
     }
   }
 
-  // Nothing in the library is convincingly her: no row, and the closest score
-  // so the player can say how close it came rather than going quiet.
+  // The closest anything came, whether or not it cleared the floor. With the
+  // floor this high about half of all videos have no row, and "closest was
+  // 71%" is the difference between a considered answer and an empty space.
   let lead = 0;
   for (let i = 0; i < v.keys.length; i += 1) {
     if (v.keys[i] !== key && best[i] > lead) lead = best[i];
-  }
-  if (lead < WORTH_A_ROW) {
-    return {
-      profiled: true,
-      people: mine.length,
-      total: 0,
-      located: state.pathByKey.size,
-      closest: Math.round(lead * 1000) / 1000,
-      unreachable: 0,
-      videos: [],
-    };
   }
 
   // Only to break ties. Nothing here matches on a name: two videos are alike
@@ -769,7 +747,13 @@ function similar(stat, limit = 12) {
     // otherwise a library half in the cloud looks like a library with no
     // matches in it.
     unreachable,
-    videos: rows.slice(0, Math.max(1, Math.min(48, limit))),
+    // A page of the row. The whole ranking is computed either way -- it is one
+    // pass over contiguous memory and costs less than the sort does -- but only
+    // a page of it is stated, so a performer with forty videos does not fetch
+    // forty thumbnails for a row nobody scrolls.
+    offset: Math.max(0, offset),
+    videos: rows.slice(Math.max(0, offset),
+      Math.max(0, offset) + Math.max(1, Math.min(48, limit))),
   };
 }
 

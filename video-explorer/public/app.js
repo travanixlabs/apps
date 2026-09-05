@@ -2069,36 +2069,52 @@ function buildPlayerSuggestions(file) {
  * was profiled for the recogniser; this is that index asked a different
  * question, and the answer takes about three milliseconds.
  */
-let similarToken = 0;
+const PAGE = 12;
+
+/**
+ * What the row is currently showing, so scrolling can extend it.
+ *
+ * Keyed by the video it belongs to as well as by a token: the token catches a
+ * fetch that lands after the player has moved on, and the path catches a
+ * scroll event arriving for a row that has since been replaced.
+ */
+const similar = { token: 0, path: '', shown: 0, total: 0, loading: false };
 
 async function buildPlayerSimilar(file) {
   const host = $('#playerSimilar');
   if (!host) return;
-  const mine = ++similarToken;
+  const mine = ++similar.token;
+  similar.path = file.path;
+  similar.shown = 0;
+  similar.total = 0;
+  similar.loading = true;
   host.replaceChildren();
   host.hidden = false;
-  say(host, 'face-lead', 'More of her');
+  host.scrollLeft = 0;
   const waiting = say(host, 'face-note', 'looking\u2026');
 
   let found;
   try {
-    found = await api(`/api/faces/similar?path=${encodeURIComponent(file.path)}&limit=14`);
+    found = await api(`/api/faces/similar?path=${encodeURIComponent(file.path)}`
+      + `&limit=${PAGE}`);
   } catch {
-    if (mine === similarToken) waiting.textContent = 'could not look';
+    similar.loading = false;
+    if (mine === similar.token) waiting.textContent = 'could not look';
     return;
   }
+  similar.loading = false;
   // The player moves on faster than a fetch returns when you hold the arrow
   // key down, and a row of somebody else's videos under this one is worse than
   // no row at all.
-  if (mine !== similarToken || !state.playing || state.playing.path !== file.path) return;
+  if (mine !== similar.token || !state.playing || state.playing.path !== file.path) return;
 
   host.replaceChildren();
   if (!found.profiled) { host.hidden = true; return; }
   if (!found.videos.length) {
     // Four different silences, and only one of them is a fact about the
     // library. Saying which is the difference between a feature that has
-    // nothing to show and a feature that looks broken.
-    say(host, 'face-lead', 'More of her');
+    // nothing to show and a feature that looks broken -- and with the bar set
+    // where it is, about half of all videos take this path.
     const note = say(host, 'face-note', !found.people
       ? 'no usable face to go on'
       : !found.located
@@ -2108,32 +2124,69 @@ async function buildPlayerSimilar(file) {
           ? `${found.unreachable} match${found.unreachable === 1 ? '' : 'es'}, `
             + 'none of them in a folder that has been opened'
           : found.closest
-            ? `nothing convincing \u2014 closest is ${Math.round(found.closest * 100)}%`
+            ? `no other video is clearly her \u2014 closest is `
+              + `${Math.round(found.closest * 100)}%`
             : 'her face is in no other video that has been read');
-    // A row of eight strangers is the one failure worth preventing, and the
-    // rows that fail are the ones whose best match scrapes the floor. So a low
-    // best is withheld deliberately, and saying the number is what stops that
-    // looking like the feature not working.
     if (found.closest && found.people && found.located) {
-      note.title = 'A video only earns a row when something in the library is '
-        + 'convincingly the same face. Below that, the row is almost always '
-        + 'eight women who merely resemble her, so it is not drawn.';
+      note.title = 'Only videos at 75% and above are shown. Below that the row '
+        + 'fills with women who merely resemble her, which is worse than an '
+        + 'empty row.';
     }
     return;
   }
 
-  const lead = say(host, 'face-lead', 'More of her');
-  lead.title = 'Videos holding the same face, from the face index. Matched on the '
-    + 'face itself, not on any name \u2014 so an uncredited video counts.';
-  const more = found.total - found.videos.length;
-  say(host, 'face-note', more > 0
-    ? `${found.videos.length} of ${found.total}`
-    : `${found.total} found`);
-
+  similar.total = found.total;
   const row = document.createElement('div');
   row.className = 'similar-row';
-  for (const other of found.videos) row.appendChild(buildSimilarTile(other));
   host.appendChild(row);
+  addSimilarTiles(row, found.videos);
+}
+
+function addSimilarTiles(row, videos) {
+  for (const other of videos) row.appendChild(buildSimilarTile(other));
+  similar.shown += videos.length;
+}
+
+/**
+ * The next twelve, once you have scrolled to the end of the last twelve.
+ *
+ * Bound once, at startup, to the container rather than to each row -- the
+ * player is opened hundreds of times in a session and a listener per opening
+ * is a leak per opening.
+ */
+async function extendSimilar() {
+  const host = $('#playerSimilar');
+  const row = host && host.querySelector('.similar-row');
+  if (!row || similar.loading || similar.shown >= similar.total) return;
+  if (!state.playing || state.playing.path !== similar.path) return;
+  // Within a tile's width of the end, so the next page is arriving as the last
+  // one comes into view rather than after you have hit the wall.
+  if (host.scrollLeft + host.clientWidth < host.scrollWidth - 140) return;
+
+  const mine = similar.token;
+  const from = similar.shown;
+  similar.loading = true;
+  let more;
+  try {
+    more = await api(`/api/faces/similar?path=${encodeURIComponent(similar.path)}`
+      + `&limit=${PAGE}&offset=${from}`);
+  } catch {
+    similar.loading = false;
+    return;
+  }
+  similar.loading = false;
+  // Deleting a copy, or a sweep finishing, can shorten the ranking under us --
+  // so the page that comes back is trusted about where it starts, not the
+  // count we asked from.
+  if (mine !== similar.token || more.offset !== from) return;
+  similar.total = more.total;
+  addSimilarTiles(row, more.videos);
+}
+
+function watchSimilarScroll() {
+  const host = $('#playerSimilar');
+  if (!host) return;
+  host.addEventListener('scroll', () => { extendSimilar(); }, { passive: true });
 }
 
 /**
@@ -5157,6 +5210,9 @@ async function init() {
   $('#cardWidth').value = state.config.cardWidth || 520;
   document.documentElement.style.setProperty('--card-width', (state.config.cardWidth || 520) + 'px');
   syncVolumeUI();
+  // Bound once. The row that pages as you scroll is rebuilt for every video
+  // played, and a listener added with it would be a listener leaked with it.
+  watchSimilarScroll();
   $('#dwellMs').value = state.config.dwellMs || 1000;
   $('#dwellLabel').textContent = ((state.config.dwellMs || 1000) / 1000).toFixed(1) + 's';
 

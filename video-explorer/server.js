@@ -1666,7 +1666,9 @@ const server = http.createServer(async (req, res) => {
       const target = authoriseOrThrow(url.searchParams.get('path') || '');
       const stat = await fsp.stat(target);
       const found = faces.similar(
-        stat, Number(url.searchParams.get('limit') || 12),
+        stat,
+        Number(url.searchParams.get('limit') || 12),
+        Number(url.searchParams.get('offset') || 0),
       );
       const videos = [];
       for (const row of found.videos) {
