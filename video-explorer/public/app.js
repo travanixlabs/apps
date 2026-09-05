@@ -3746,13 +3746,22 @@ function syncPlayerNav() {
 /**
  * The player opens on the same 10-segment preview the thumbnail shows, just
  * bigger — so you can tell what a video is before committing to watching it.
- * Playback starts only when you press ▶.
+ * Clicking the picture starts the real thing.
  *
  * The native controls stay hidden until then. They would be scrubbing a
  * preview rather than a playthrough, and their play button would be
  * indistinguishable from the seeking this does to render each segment.
  */
 const preview = { timer: null, index: 0, count: 10 };
+
+/**
+ * Whether the ten segments are still cycling.
+ *
+ * Asked of the timer that cycles them. It used to be asked of whether a play
+ * button was hidden, which worked only for as long as there was a button --
+ * and the button was standing in for this all along.
+ */
+const previewing = () => preview.timer !== null;
 
 function startPlayerPreview() {
   stopPlayerPreview();
@@ -3763,8 +3772,13 @@ function startPlayerPreview() {
   player.controls = false;
   player.muted = true; // a preview that blares audio is not a preview
   player.loop = false;
-  $('#playerPlay').hidden = false;
   $('#playerBadge').hidden = false;
+  // The whole picture is the button, so it should say so on the way past.
+  const stage = player.closest('.player-stage');
+  if (stage) {
+    stage.classList.add('previewing');
+    stage.title = 'Click to play from the start';
+  }
 
   const show = (index) => {
     preview.index = index;
@@ -3792,16 +3806,20 @@ function stopPlayerPreview() {
 }
 
 /**
- * ▶ turns the preview into a real playthrough: controls back, from the top,
- * and audible only if the session has sound. A muted playthrough is still the
- * whole video rather than ten sampled seconds, and the native controls are
- * there to unmute if that is what you meant.
+ * A click on the picture turns the preview into a real playthrough: controls
+ * back, from the top, and audible only if the session has sound. A muted
+ * playthrough is still the whole video rather than ten sampled seconds, and the
+ * native controls are there to unmute if that is what you meant.
  */
 function beginPlayback() {
   stopPlayerPreview();
   const player = $('#player');
-  $('#playerPlay').hidden = true;
   $('#playerBadge').hidden = true;
+  const stage = player.closest('.player-stage');
+  if (stage) {
+    stage.classList.remove('previewing');
+    stage.title = '';
+  }
   player.controls = true;
   player.muted = !soundOn;
   player.volume = masterVolume();
@@ -5004,7 +5022,13 @@ function wireEvents() {
   });
 
   // player
-  $('#playerPlay').addEventListener('click', beginPlayback);
+  // The preview itself is what you click to start watching. Guarded on the
+  // preview still running: afterwards the element belongs to the native
+  // controls, and a click meaning "pause" must not mean "start again from the
+  // beginning".
+  $('#playerModal .player-stage').addEventListener('click', () => {
+    if (previewing()) beginPlayback();
+  });
   $('#playerPrev').addEventListener('click', () => playSibling(-1));
   $('#playerNext').addEventListener('click', () => playSibling(1));
 
@@ -5109,8 +5133,7 @@ function onKeyDown(ev) {
   // so from then on stepping needs Shift.
   if (!ev.ctrlKey && !ev.metaKey && !$('#playerModal').hidden
       && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) {
-    const previewing = !$('#playerPlay').hidden;
-    if (previewing || ev.shiftKey) {
+    if (previewing() || ev.shiftKey) {
       ev.preventDefault();
       playSibling(ev.key === 'ArrowLeft' ? -1 : 1);
       return;

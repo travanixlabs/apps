@@ -1156,17 +1156,10 @@ body.dragging .card { cursor: grabbing; }
    sit over the video rather than beside it. */
 .player-stage { background: #000; position: relative; }
 
-/* Bigger than the tile's button, because there is more room and this is now the
-   only way playback starts. */
-.play-center.player-play {
-  width: 76px;
-  height: 76px;
-  font-size: 26px;
-  opacity: 1;
-  transform: translate(-50%, -50%);
-}
-.play-center.player-play:hover { transform: translate(-50%, -50%) scale(1.06); }
-.play-center.player-play[hidden] { display: none; }
+/* No play button over the preview. It covered the middle of the frame, which
+   is where the face usually is, for all ten segments -- and the badge in the
+   corner already says this is a preview. The picture is the button instead. */
+.player-stage.previewing { cursor: pointer; }
 
 /* Step through the listing without going back to the grid. In the footer rather
    than over the video: on the stage they sat on top of the picture and, once
