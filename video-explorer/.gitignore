@@ -1,6 +1,10 @@
 # Saved listing pages and the spreadsheet built from them: 9 MB of scraped HTML
 # that the tools read and can re-read, not source. Kept on disk, out of history.
 en.xchina.co/
+# The same, for AV Jiali. These pages turned out not to name anybody at all --
+# the cast lives on the site's model pages -- so tools/avjiali-cast.js fetches
+# it instead and keeps the answer in avjiali-cast.json, which IS tracked.
+avjiali.com/
 # Undo manifests from tools/xchina-apply.js — local records of a local rename.
 tools/manifests/
 # Local settings: the folder you last opened, your card size, your volume.
