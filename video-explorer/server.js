@@ -1115,18 +1115,32 @@ async function embedTags(file) {
 // ------------------------------------------------------------ file actions
 
 /** Windows Recycle Bin, so a misclick is always recoverable. */
+/**
+ * To the Recycle Bin, via the one Windows API that puts things there.
+ *
+ * The path travels in the environment rather than inside the command, because
+ * a filename is data and a command is code and the two must not be mixed. This
+ * was learnt from "Clean Yuan\u2019s high-end scrotum care (MPG0144).mp4",
+ * which could not be deleted at all: PowerShell treats the typographic
+ * apostrophe U+2019 as a string delimiter exactly as it treats the plain one,
+ * so the path ended early and the remainder was parsed as code.
+ *
+ * Doubling quotes would not have been enough -- U+2018, U+2019, U+201C and
+ * U+201D all close a string, and a library of scraped filenames contains all of
+ * them. Reading $env: parses nothing, so there is nothing left to get wrong.
+ */
 async function recycle(target) {
-  const escaped = target.replace(/'/g, "''");
   const script = [
     'Add-Type -AssemblyName Microsoft.VisualBasic;',
-    `$p = '${escaped}';`,
+    '$p = $env:VIDEO_EXPLORER_DELETE;',
     'if (Test-Path -LiteralPath $p -PathType Container) {',
     "  [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($p, 'OnlyErrorDialogs', 'SendToRecycleBin')",
     '} else {',
     "  [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($p, 'OnlyErrorDialogs', 'SendToRecycleBin')",
     '}',
   ].join(' ');
-  await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script]);
+  await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script],
+    { env: { ...process.env, VIDEO_EXPLORER_DELETE: target } });
 }
 
 /** Never silently clobber: pick "name (2).mp4" style suffixes instead. */
@@ -1589,6 +1603,9 @@ const server = http.createServer(async (req, res) => {
     // Every video that is one of several copies, wherever it lives. The
     // grouping asks for this so a set split across folders is still a set.
     if (req.method === 'GET' && route === '/api/dupes/files') {
+      // Sets heal before they are handed over, not after the listing has drawn
+      // half of one.
+      await dupes.prune();
       const seen = new Set();
       const files = [];
       for (const member of dupes.members()) {

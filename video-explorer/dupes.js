@@ -610,6 +610,10 @@ async function loop() {
           state.queue = found.filter((w) => !has(w.key));
           state.nextWalk = Date.now() + WALK_EVERY_MS;
         } finally { state.walking = false; }
+        // Now that where everything is is known, drop any member that is not
+        // there any more -- deleted before this app learned to forget them, or
+        // moved out from under the record.
+        await prune();
         if (!state.queue.length) {
           // Everything read. Match whatever is outstanding, then sleep and look
           // again in case files arrive or come down from the cloud.
@@ -657,6 +661,49 @@ function setEnabled(on) {
  * Shaped like the face profiler's, because the pill beside it reads the same
  * way: a fraction of the downloaded library, and one word for what it is doing.
  */
+
+/**
+ * Drop members whose file is no longer there, and dissolve what that empties.
+ *
+ * A key is size and modified time, so this catches a file deleted, moved out of
+ * the library, or re-encoded in place -- all of which mean the video that was
+ * compared no longer exists, whatever is at that path now.
+ *
+ * Only members whose path is known are ever judged. Before the first walk
+ * nothing is known, and "I cannot find it" must not be mistaken for "it is
+ * gone" -- that would dissolve the whole index on a slow start.
+ */
+async function prune() {
+  if (!state.counted || !state.pathByKey.size) return 0;
+  const gone = [];
+  for (const group of state.groups) {
+    for (const key of group) {
+      const where = state.pathByKey.get(key) || (state.light.get(key) || {}).path;
+      if (!where) {
+        // No path at all, and the walk has finished: it is not among the
+        // downloaded videos, so it is not somewhere this can compare against.
+        //
+        // A video freed up to the cloud since it was read lands here too, and
+        // is dropped with the deleted ones -- the walk skips placeholders. That
+        // is the right trade: a set nobody can open is not a set worth showing,
+        // the fingerprint is kept either way, and pulling the file back down
+        // re-forms the set at the next match.
+        gone.push(key);
+        continue;
+      }
+      try {
+        const stat = await fsp.stat(where);
+        if (keyFor(stat) !== key) gone.push(key);
+      } catch {
+        gone.push(key);
+      }
+    }
+  }
+  for (const key of gone) forget(key);
+  if (gone.length) log(`${gone.length} copies no longer exist, sets updated`);
+  return gone.length;
+}
+
 /**
  * Every video that is one of several copies, with the path it was read at.
  *
@@ -709,6 +756,7 @@ function status() {
 module.exports = {
   init,
   members,
+  prune,
   forget,
   start,
   setEnabled,
