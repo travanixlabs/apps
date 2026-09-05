@@ -2534,12 +2534,13 @@ function renderDupePill() {
   }
   pill.hidden = false;
   const {
-    fingerprinted, downloaded, counted, remaining, doing, current,
-    groups, copies, possible, done, rate, enabled,
+    fingerprinted, fingerprintedOnDisk, cached, downloaded, counted, remaining,
+    doing, current, groups, copies, possible, done, rate, enabled,
   } = dupeStatus;
   const n = (x) => Number(x || 0).toLocaleString();
 
-  const finished = counted && !remaining && downloaded > 0 && fingerprinted >= downloaded;
+  const finished = counted && !remaining && downloaded > 0
+    && fingerprintedOnDisk >= downloaded;
   const busy = doing === 'reading' || doing === 'counting' || doing === 'matching';
 
   pill.classList.toggle('working', busy);
@@ -2559,7 +2560,7 @@ function renderDupePill() {
   };
   const main = document.createElement('span');
   main.textContent = counted && downloaded
-    ? `${n(fingerprinted)} / ${n(downloaded)}`
+    ? `${n(fingerprintedOnDisk)} / ${n(downloaded)}`
     : `${n(fingerprinted)}`;
   text.appendChild(main);
 
@@ -2569,13 +2570,15 @@ function renderDupePill() {
     ? 'all fingerprinted' : (said[doing] || 'fingerprinted'));
   text.appendChild(state);
 
-  // The finding, not just the progress: a backfill nobody can see the point of
-  // is a backfill nobody lets finish.
-  if (copies > 0) {
-    const found = document.createElement('span');
-    found.className = 'faces-cached';
-    found.textContent = ` \u00b7 ${n(copies)} to delete`;
-    text.appendChild(found);
+  // Read exactly as the faces pill reads: work done on videos that have since
+  // gone back to the cloud, kept and still counting for something. How many
+  // copies could be deleted is a finding rather than progress, so it moves to
+  // the tooltip, where the pill beside this one keeps its findings too.
+  if (cached > 0) {
+    const kept = document.createElement('span');
+    kept.className = 'faces-cached';
+    kept.textContent = ` \u00b7 ${n(cached)} cached`;
+    text.appendChild(kept);
   }
 
   pill.title = [
@@ -2587,9 +2590,13 @@ function renderDupePill() {
               : doing === 'paused' ? 'Paused'
                 : 'Not running',
     counted && downloaded
-      ? `${n(fingerprinted)} of ${n(downloaded)} downloaded videos fingerprinted`
+      ? `${n(fingerprintedOnDisk)} of ${n(downloaded)} downloaded videos fingerprinted`
         + (remaining ? `, ${n(remaining)} to go` : '')
       : `${n(fingerprinted)} fingerprinted, still counting the library`,
+    cached > 0
+      ? `${n(cached)} more were fingerprinted before being freed up to the cloud, `
+        + 'and still count as copies'
+      : null,
     'Cloud-only videos are never fingerprinted \u2014 reading one would download it',
     groups
       ? `${n(groups)} set${groups === 1 ? '' : 's'} of copies found, `

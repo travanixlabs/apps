@@ -726,12 +726,26 @@ function members() {
 
 function status() {
   const fingerprinted = state.light.size;
+  // Fingerprints whose video is no longer on this machine. They keep working
+  // -- the key is size and modified time, which freeing a file up to the cloud
+  // does not touch -- so this is the count of work that outlived its file.
+  //
+  // Counted only once the walk has said what is here. Before that everything
+  // would look absent, and the pill would report the whole index as cached.
+  const cached = state.counted
+    ? [...state.light.keys()].reduce((n, k) => n + (state.pathByKey.has(k) ? 0 : 1), 0)
+    : 0;
   return {
     available: true,
     ready: state.ready,
     enabled: state.enabled,
     running: state.running,
     fingerprinted,
+    // The pair that belongs either side of a slash. Fingerprints of freed-up
+    // files are counted apart, since a denominator they are not part of cannot
+    // contain them -- which is what made this read "3,927 / 475".
+    fingerprintedOnDisk: fingerprinted - cached,
+    cached,
     downloaded: state.downloaded,
     counted: state.counted,
     remaining: state.walking ? null : state.queue.length,
