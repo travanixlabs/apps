@@ -137,7 +137,6 @@ const state = {
  */
 function newAdvFilter() {
   const adv = {
-    text: '',
     tags: new Map(),
     models: new Map(),
     studio: new Map(),
@@ -295,16 +294,14 @@ function resetView() {
   saveConfig({ ...VIEW_DEFAULTS });
   state.adv = newAdvFilter();
   advDraft = newAdvFilter();
-  // Chromium restores form values across a reload, so these are cleared rather
+  // Chromium restores form values across a reload, so this is cleared rather
   // than assumed empty.
   $('#searchInput').value = '';
-  $('#advText').value = '';
   syncAdvBadge();
 }
 
 function advActive(adv = state.adv) {
-  return Boolean(adv.text)
-    || CHOICE_FACETS.some((f) => adv[f].size > 0)
+  return CHOICE_FACETS.some((f) => adv[f].size > 0)
     || FACETS.some((f) => adv[f].size > 0);
 }
 
@@ -669,11 +666,6 @@ async function toggleFavouriteModel(name) {
  * populated facet has to match; an empty one is ignored.
  */
 function matchesAdvanced(file, adv) {
-  if (adv.text) {
-    const hay = (file.name + ' ' + file.relFolder).toLowerCase();
-    if (!adv.text.toLowerCase().split(/\s+/).filter(Boolean).every((t) => hay.includes(t))) return false;
-  }
-
   // Tags and models are matched the same way, but each facet on its own: two
   // models and one tag means "those models AND that tag", not one merged pool.
   // The all/any switch governs the included tags; exclusions are always all-of,
@@ -1331,7 +1323,6 @@ function openAdvanced() {
   for (const [key, value] of Object.entries(state.adv)) {
     if (value instanceof Map) advDraft[key] = new Map(value);
   }
-  $('#advText').value = advDraft.text;
   for (const [field, name] of MODE_INPUTS) {
     for (const radio of document.querySelectorAll(`input[name="${name}"]`)) {
       radio.checked = radio.value === advDraft.mode[field];
@@ -1438,7 +1429,6 @@ function updateAdvMatch() {
       if (mode === 'out') bits.push(`not ${label}`);
     }
   }
-  if (advDraft.text) bits.push(`"${advDraft.text}"`);
   el.textContent = bits.join(' · ');
 }
 
@@ -1477,7 +1467,6 @@ async function filterByLabel(field, value) {
   adv[field].set(value, 'in');
   state.adv = adv;
   $('#searchInput').value = '';
-  $('#advText').value = '';
   syncAdvBadge();
   await commitFilter();
 }
@@ -1520,7 +1509,6 @@ function cycleIn(map, value) {
 }
 
 async function applyAdvanced() {
-  advDraft.text = $('#advText').value.trim();
   for (const [field, name] of MODE_INPUTS) {
     const picked = document.querySelector(`input[name="${name}"]:checked`);
     advDraft.mode[field] = picked ? picked.value : 'all';
@@ -1542,7 +1530,6 @@ async function applyAdvanced() {
  */
 async function resetAdvanced() {
   advDraft = newAdvFilter();
-  $('#advText').value = '';
   renderAdvanced();
 
   state.adv = advDraft;
@@ -5000,7 +4987,6 @@ function wireEvents() {
   $('#advBtn').addEventListener('click', openAdvanced);
   $('#advApply').addEventListener('click', applyAdvanced);
   $('#advReset').addEventListener('click', resetAdvanced);
-  $('#advText').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') applyAdvanced(); });
   for (const btn of document.querySelectorAll('[data-clear]')) {
     btn.addEventListener('click', () => {
       const what = btn.dataset.clear;
