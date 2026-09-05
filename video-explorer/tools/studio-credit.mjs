@@ -4,7 +4,7 @@
  *   node tools/studio-credit.mjs tenshigao          one folder, writes nothing
  *   node tools/studio-credit.mjs tenshigao --apply  fills the blanks in
  *
- * Three studios in this library name their files rather than leaving the work to
+ * Four studios in this library name their files rather than leaving the work to
  * a site fetch, and they do it the same way underneath:
  *
  *   teenthais_Pra_scene1_hd                          -> Pra
@@ -39,6 +39,21 @@
  * get the studio and the series, which were never in doubt, and wait for a
  * person on the name.
  *
+ * AND ONE THAT CANNOT BE READ AT ALL. Japan HDV runs the title straight into
+ * the cast with the same underscore between every word -- titles one to nine
+ * words, casts nought to fourteen, and 75 of its 563 titles appear exactly once
+ * so there is nothing to learn the split from. Guessing was measured against the
+ * folder and it reads "Anal Fuck Reiko Kobayakawa" as the title "Anal". So that
+ * studio carries a fetched cast file rather than a parsing rule, and the join is
+ * exact: the site's own thumbnails sit at content/videos/<token>/scene<n>/, and
+ * that token is the filename's token to the character. tools/japanhdv-cast.mjs
+ * fetches it; this only reads what it wrote.
+ *
+ * Its series is then the token with every name the site knows for it taken out,
+ * kept only where two or more different shoots wear the same one -- a series
+ * worn once is just this video's title, and a facet of those is a filter whose
+ * every row selects a single file.
+ *
  * Fills blanks only: a name typed in by hand is never overwritten, and running
  * this twice is the same as running it once.
  */
@@ -47,6 +62,7 @@ import path from 'node:path';
 import http from 'node:http';
 
 const ONEDRIVE = process.env.OneDrive || 'C:\\Users\\User\\OneDrive';
+const HERE = path.dirname(new URL(import.meta.url).pathname.slice(1));
 const SIDECAR = path.join(ONEDRIVE, '.video-explorer', 'library.json');
 const BACKUPS = path.join(path.dirname(SIDECAR), 'backups');
 const PORT = Number(process.env.VIDEO_EXPLORER_PORT || 4321);
@@ -73,6 +89,13 @@ const STUDIOS = [
     studio: 'AV Idolz',
     prefix: 'avidolz',
     series: true,
+  },
+  {
+    key: 'japanhdv',
+    dir: 'Japan HDV',
+    studio: 'Japan HDV',
+    prefix: 'japanhdv',
+    cast: 'japanhdv-cast.json',
   },
 ];
 
@@ -125,6 +148,58 @@ function read(stem, studio) {
   };
 }
 
+/**
+ * The fetched cast, indexed the two ways the join needs it.
+ *
+ * `byKey` answers "who is in this scene". `seriesOf` answers "what is this shoot
+ * called", by taking out every name the site ever credits under that token --
+ * the union across its scenes, not just this one's, or the castmates left out of
+ * scene 1 stay stranded in the title.
+ */
+function siteCast(studio) {
+  const at = path.join(HERE, studio.cast);
+  if (!fs.existsSync(at)) return null;
+  const scenes = JSON.parse(fs.readFileSync(at, 'utf8')).scenes || [];
+
+  const byKey = new Map();
+  const castOfToken = new Map();
+  for (const s of scenes) {
+    byKey.set(`${s.token.toLowerCase()}|${s.scene}`, s);
+    const k = s.token.toLowerCase();
+    if (!castOfToken.has(k)) castOfToken.set(k, new Set());
+    for (const n of s.cast) castOfToken.get(k).add(n);
+  }
+
+  const seriesOf = (token) => {
+    let words = token.split('_');
+    const names = [...(castOfToken.get(token.toLowerCase()) || [])]
+      // Longest first, so "Yui Misaki" goes before a bare "Yui" eats half of it.
+      .sort((a, b) => b.split(/\s+/).length - a.split(/\s+/).length);
+    for (const name of names) {
+      const parts = name.split(/\s+/);
+      for (let i = 0; i + parts.length <= words.length; i += 1) {
+        if (words.slice(i, i + parts.length).join(' ').toLowerCase() === name.toLowerCase()) {
+          words = [...words.slice(0, i), ...words.slice(i + parts.length)];
+          break;
+        }
+      }
+    }
+    return words.filter((w) => !/^\d+$/.test(w)).join(' ').trim();
+  };
+
+  // Counted over the whole site rather than the folder: a series is a fact
+  // about the studio, not about what happens to be downloaded.
+  const wornBy = new Map();
+  for (const token of castOfToken.keys()) {
+    const t = seriesOf(token).toLowerCase();
+    if (!t) continue;
+    if (!wornBy.has(t)) wornBy.set(t, new Set());
+    wornBy.get(t).add(token);
+  }
+
+  return { byKey, seriesOf, wornBy };
+}
+
 function survey(studio) {
   const dir = path.join(HOME, studio.dir);
   if (!fs.existsSync(dir)) return { studio, missing: dir };
@@ -134,26 +209,59 @@ function survey(studio) {
     .map((f) => path.join(dir, f));
   const records = JSON.parse(fs.readFileSync(SIDECAR, 'utf8')).records || {};
 
+  const site = studio.cast ? siteCast(studio) : null;
+  if (studio.cast && !site) return { studio, dir, files, rows: [], odd: [], nocast: true };
+  // A trailing _2 after the quality is a second copy of that same scene rather
+  // than a different one: japanhdv_Date_In_Macau_..._scene1_hd_2.mp4 is 184MB
+  // against the original's 125MB, so both are kept and both are scene 1.
+  const shaped = new RegExp(`^${studio.prefix}_(.+?)_scene(\\d+)_hd(?:_\\d+)?$`, 'i');
+
   const rows = [];
   const odd = [];
+  const unjoined = [];
   for (const file of files) {
     const stem = path.basename(file, path.extname(file));
-    const got = read(stem, studio);
-    if (!got) { odd.push(stem); continue; }
+
+    let got;
+    if (site) {
+      const m = shaped.exec(stem);
+      if (!m) { odd.push(stem); continue; }
+      const found = site.byKey.get(`${m[1].toLowerCase()}|${Number(m[2])}`);
+      if (!found) { unjoined.push(stem); continue; }
+      const series = site.seriesOf(m[1]);
+      const worn = (site.wornBy.get(series.toLowerCase()) || new Set()).size;
+      got = {
+        model: found.cast.join(', '),
+        cast: found.cast,
+        parts: found.cast.length,
+        production: worn >= 2 ? series : '',
+        url: found.url || '',
+        shoot: '',
+      };
+    } else {
+      got = read(stem, studio);
+      if (!got) { odd.push(stem); continue; }
+      got.cast = [got.model];
+    }
 
     let stat;
     try { stat = fs.statSync(file); } catch { continue; }
     const record = records[keyFor(stat)] || {};
 
-    const crowded = got.parts > 2;
+    // Read off a filename, more than two words is not one name. Told by the
+    // site, a cast is a cast however long it is: nothing is left to guess.
+    const crowded = !site && got.parts > 2;
     const patch = {};
-    if (!crowded && !(record.models || []).length) patch.addModels = [got.model];
+    if (!crowded && got.cast.length && !(record.models || []).length) {
+      patch.addModels = got.cast;
+    }
     if (!record.studio) patch.studio = studio.studio;
     if (got.production && !record.production) patch.production = got.production;
+    if (got.url && !record.url) patch.url = got.url;
 
     rows.push({ file, stem, ...got, crowded, patch, record });
   }
-  return { studio, dir, files, rows, odd };
+  return { studio, dir, files, rows, odd, unjoined };
 }
 
 function report(s) {
@@ -164,9 +272,13 @@ function report(s) {
   const people = new Map();
   const series = new Map();
   for (const r of s.rows) {
-    if (!r.crowded) people.set(r.model, (people.get(r.model) || 0) + 1);
+    if (r.crowded) continue;
+    for (const n of r.cast || []) people.set(n, (people.get(n) || 0) + 1);
     if (r.production) series.set(r.production, (series.get(r.production) || 0) + 1);
   }
+  // Listed by the site and credited to nobody is an answer, not a gap: 94 of
+  // the scenes it carries name no one at all.
+  const silent = s.rows.filter((r) => r.cast && !r.cast.length);
 
   console.log(`on disk    : ${s.files.length} videos`);
   console.log(`to write   : ${work.length}`
@@ -175,6 +287,8 @@ function report(s) {
     + `${s.studio.series ? `, series ${work.filter((r) => r.patch.production).length}` : ''})`);
   console.log(`performers : ${people.size}`);
   if (s.odd.length) console.log(`not parsed : ${s.odd.length}`);
+  if ((s.unjoined || []).length) console.log(`not on site: ${s.unjoined.length}`);
+  if (silent.length) console.log(`no cast credited: ${silent.length}`);
 
   if (series.size) {
     console.log(`\n  ${series.size} series found, which is the split working:`);
@@ -209,6 +323,14 @@ function report(s) {
   if (s.odd.length) {
     console.log('\n  Not shaped like the rest, so not credited:');
     for (const t of s.odd) console.log(`    ${t}`);
+  }
+  if ((s.unjoined || []).length) {
+    console.log('\n  Shaped right but not on the site, so no cast:');
+    for (const t of s.unjoined) console.log(`    ${t}`);
+  }
+  if (silent.length) {
+    console.log('\n  The site lists these and credits nobody:');
+    for (const r of silent) console.log(`    ${r.stem}`);
   }
   return work;
 }

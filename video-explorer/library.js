@@ -323,8 +323,11 @@ function apply(stat, name, patch) {
   if (patch.production !== undefined) {
     // The reference's letter code — MD, RS, MCY. Upper-cased, since that is how
     // the site writes it and a code that differs only in case is the same code.
+    // 60 rather than 24. The field was cut for a reference code and 24 was
+    // generous for AVJI; it is not generous for a series name, and Japan HDV
+    // has eight that were being truncated mid-word.
     next.production = String(patch.production || '')
-      .trim().replace(/\s+/g, ' ').slice(0, 24).toUpperCase();
+      .trim().replace(/\s+/g, ' ').slice(0, 60).toUpperCase();
   }
 
   if (patch.url !== undefined) {
