@@ -2128,9 +2128,8 @@ async function buildPlayerSimilar(file) {
               + `${Math.round(found.closest * 100)}%`
             : 'her face is in no other video that has been read');
     if (found.closest && found.people && found.located) {
-      note.title = 'Only videos at 75% and above are shown. Below that the row '
-        + 'fills with women who merely resemble her, which is worse than an '
-        + 'empty row.';
+      note.title = 'Only videos at 50% and above are shown, strongest first. '
+        + 'Below that the match is little better than a coincidence.';
     }
     return;
   }

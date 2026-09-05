@@ -601,20 +601,26 @@ function rescore() {
  * name at 0.141. Face-to-face is noisier than face-to-average, so the
  * recogniser's own bands do not apply here and this is its own measurement.
  *
- * Set high on purpose. Over 250 videos drawn at random, by where the line is
- * put:
+ * Where to put the line is a trade, and it is worth writing down. Over 250
+ * videos drawn at random, top matches judged against the credits:
  *
- *     0.60   84% of videos get a row   median 13 tiles   81.7% share a name
- *     0.65   78%                       median 10         85.1%
+ *     0.50   88% of videos get a row   median 17 tiles   74.6% share a name
+ *     0.55   87%                       median 14         78.1%
+ *     0.60   84%                       median 13         81.7%
  *     0.70   68%                       median  8         89.7%
  *     0.75   54%                       median  4         90.8%
  *     0.80   33%                       median  2         93.8%
  *
- * 0.75 is the choice: about half the library gets a row, and what is in it is
- * right nine times in ten. The rows are short, which is the price -- and with
- * no cap on their length a performer's whole set is reachable by scrolling.
+ * 0.50 is the choice: almost every video gets a row, and the rows are long --
+ * seventeen tiles at the median, a hundred and sixteen at the longest in that
+ * sample. That is what the paging is for.
+ *
+ * The cost is precision, and it is not small: three quarters of what is shown
+ * is the same performer, where 0.75 managed nine tenths. Ordering carries the
+ * weight instead -- the strongest matches are the ones you see first, and the
+ * doubtful ones are the ones you have to scroll to reach.
  */
-const SAME_WOMAN = 0.75;
+const SAME_WOMAN = 0.50;
 
 // What the score is worth saying out loud. A strong match is at or above the
 // median of pairs that genuinely share a name.
