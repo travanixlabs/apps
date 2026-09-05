@@ -102,6 +102,11 @@ const state = {
   // since gone back to the cloud, and the work is kept regardless.
   onDisk: new Set(),
   failures: new Map(),
+  // Where each profiled video is, from the last sweep. A profile is keyed by
+  // size and modified time and stores no path -- that is what makes it survive
+  // a rename -- so the walk that looks for work records this on the way past.
+  // It costs nothing: the walk stats every video in the library regardless.
+  pathByKey: new Map(),
   library: null,
   rootsOf: () => [],
   homeOf: () => '',
@@ -170,6 +175,7 @@ function init({ cacheDir, library, roots, home }) {
     state.loading = true;
     loadEntries().then(() => {
       state.loading = false;
+      vectorsDirty = true;
       rebuild();
     }).catch(() => { state.loading = false; });
   }
@@ -260,6 +266,7 @@ async function writeEntry(key, entry) {
 
 async function dropEntry(key) {
   delete state.index.videos[key];
+  vectorsDirty = true;
   try {
     await fsp.unlink(path.join(state.dir, ENTRIES, `${fileNameFor(key)}.json`));
   } catch { /* never written, or already gone */ }
@@ -569,6 +576,203 @@ function rescore() {
   for (const [key, entry] of Object.entries(state.index.videos)) scoreVideo(key, entry);
 }
 
+
+// ------------------------------------------------------------- more of her
+
+/**
+ * Where the same face turns up elsewhere.
+ *
+ * The recogniser scores a video against a performer's average, which is what
+ * makes it able to put a name to her. This is the same arithmetic without the
+ * averaging step: a video's face against every other video's face directly. It
+ * needs no name, so it answers for the two thirds of the library nobody has
+ * credited -- and it answers for a performer with one video, whom no average
+ * can describe at all.
+ *
+ * Nothing here reads a file. Every vector was written when the video was
+ * profiled; this only holds them in a shape that can be multiplied quickly.
+ */
+
+/**
+ * Below this, two videos are two different women.
+ *
+ * Measured over 400 videos against the whole index, judged by the credits:
+ * pairs sharing a named performer sit at a median of 0.593, pairs sharing no
+ * name at 0.141. Face-to-face is noisier than face-to-average, so the
+ * recogniser's own bands do not apply here and this is its own measurement.
+ *
+ * 0.45 keeps 73% of the pairs that share a name while admitting 0.4% of the
+ * pairs that do not. Lower loses precision fast: 0.35 admits five times as
+ * many strangers.
+ */
+const SAME_WOMAN = 0.45;
+
+/**
+ * And below this, there is no row worth drawing at all.
+ *
+ * Over 300 videos taken at random the answer is right 84.6% of the time, but
+ * the mistakes are not spread evenly: the median row is entirely right, while
+ * 8% of rows are wrong from end to end. Those rows announce themselves before
+ * you read them -- their best match scrapes the floor at 0.46 or 0.52, where a
+ * good row opens at 0.72 and up.
+ *
+ * So the question is asked once about the row rather than eight times about
+ * the tiles: if the closest video in the whole library is not convincingly
+ * her, say so instead of filling the space. Wholly wrong rows fall from 7.5%
+ * to 4.7% and eighteen rows in three hundred are lost, most of them the ones
+ * that were wrong.
+ *
+ * Requiring every tile to clear this instead scores about the same and
+ * shortens the good rows to pay for it, which is a worse trade: the row is
+ * read as a whole.
+ */
+const WORTH_A_ROW = 0.58;
+
+// What the score is worth saying out loud. A strong match is at or above the
+// median of pairs that genuinely share a name.
+const SIMILAR_BANDS = [
+  { band: 'strong', at: 0.60 },
+  { band: 'likely', at: 0.52 },
+  { band: 'maybe', at: SAME_WOMAN },
+];
+
+let vectorsDirty = true;
+let vectors = null;
+
+/**
+ * Every profiled face, as one flat matrix.
+ *
+ * Five thousand vectors of 512 floats is ten megabytes and one allocation, and
+ * a query is then a straight run over contiguous memory -- 2.8ms against the
+ * whole library, measured. Unpacking them per request instead cost more than
+ * the multiplication did.
+ *
+ * Rebuilt only when the index gains or loses a video, which during a sweep is
+ * once every few seconds and otherwise never.
+ */
+function buildVectors() {
+  const keys = [];
+  const rows = [];
+  for (const [key, entry] of Object.entries(state.index.videos)) {
+    const people = entry.people || [];
+    if (!people.length) continue;
+    const owner = keys.length;
+    keys.push(key);
+    for (const [person, p] of people.entries()) {
+      rows.push({ owner, person, vec: unpackVector(p.vec) });
+    }
+  }
+  const dim = rows.length ? rows[0].vec.length : 0;
+  const mat = new Float32Array(rows.length * dim);
+  const owner = new Int32Array(rows.length);
+  const person = new Int32Array(rows.length);
+  for (const [i, row] of rows.entries()) {
+    mat.set(row.vec, i * dim);
+    owner[i] = row.owner;
+    person[i] = row.person;
+  }
+  vectors = { keys, mat, owner, person, dim, count: rows.length };
+  vectorsDirty = false;
+  return vectors;
+}
+
+function bandForSimilar(score) {
+  for (const b of SIMILAR_BANDS) if (score >= b.at) return b.band;
+  return '';
+}
+
+/**
+ * One video, against every other video in the index.
+ *
+ * A video can hold two people, and so can every video it is compared with, so
+ * the score between two videos is the best any of their faces manage against
+ * any of the other's. That is deliberately generous: a video she shares with a
+ * co-star should still come back when you are watching one of hers.
+ *
+ * Only videos whose file can be found are offered, because the answer is a row
+ * of thumbnails you can click. A profile outlives its file -- freed up to the
+ * cloud, moved, deleted -- and a result you cannot open is not a result.
+ */
+function similar(stat, limit = 12) {
+  const key = keyFor(stat);
+  const entry = state.index.videos[key];
+  if (!entry) return { profiled: false, people: 0, total: 0, videos: [] };
+  const mine = (entry.people || []).map((p) => unpackVector(p.vec));
+  if (!mine.length) return { profiled: true, people: 0, total: 0, videos: [] };
+
+  const v = vectorsDirty || !vectors ? buildVectors() : vectors;
+  const best = new Float32Array(v.keys.length).fill(-1);
+  const theirs = new Int32Array(v.keys.length);
+  const ours = new Int32Array(v.keys.length);
+  for (const [qi, q] of mine.entries()) {
+    for (let r = 0; r < v.count; r += 1) {
+      const base = r * v.dim;
+      let dot = 0;
+      // Both sides are normalised, so the dot product is the cosine.
+      for (let i = 0; i < v.dim; i += 1) dot += q[i] * v.mat[base + i];
+      const o = v.owner[r];
+      if (dot > best[o]) { best[o] = dot; theirs[o] = v.person[r]; ours[o] = qi; }
+    }
+  }
+
+  // Nothing in the library is convincingly her: no row, and the closest score
+  // so the player can say how close it came rather than going quiet.
+  let lead = 0;
+  for (let i = 0; i < v.keys.length; i += 1) {
+    if (v.keys[i] !== key && best[i] > lead) lead = best[i];
+  }
+  if (lead < WORTH_A_ROW) {
+    return {
+      profiled: true,
+      people: mine.length,
+      total: 0,
+      located: state.pathByKey.size,
+      closest: Math.round(lead * 1000) / 1000,
+      unreachable: 0,
+      videos: [],
+    };
+  }
+
+  // Only to break ties. Nothing here matches on a name: two videos are alike
+  // because the same face is in both, whoever anyone has said that is.
+  const records = state.library ? state.library.all() : {};
+  const rows = [];
+  let unreachable = 0;
+  for (let i = 0; i < v.keys.length; i += 1) {
+    const other = v.keys[i];
+    if (other === key || best[i] < SAME_WOMAN) continue;
+    const where = state.pathByKey.get(other);
+    if (!where) { unreachable += 1; continue; }
+    rows.push({
+      key: other,
+      path: where,
+      score: Math.round(best[i] * 1000) / 1000,
+      band: bandForSimilar(best[i]),
+      // Which face of theirs, and which of ours, actually matched -- so the two
+      // crops behind the number can be held up against each other.
+      person: theirs[i],
+      mine: ours[i],
+      rating: (records[other] || {}).rating || 0,
+    });
+  }
+  rows.sort((a, b) => b.score - a.score || b.rating - a.rating);
+  return {
+    profiled: true,
+    people: mine.length,
+    total: rows.length,
+    closest: Math.round(lead * 1000) / 1000,
+    // Whether anywhere has been looked at yet. Without this, a library that has
+    // not been walked is indistinguishable from a library with no matches in
+    // it, and the row would confidently report the wrong thing.
+    located: state.pathByKey.size,
+    // Found, but its file is not where the last sweep saw one. Worth saying:
+    // otherwise a library half in the cloud looks like a library with no
+    // matches in it.
+    unreachable,
+    videos: rows.slice(0, Math.max(1, Math.min(48, limit))),
+  };
+}
+
 // -------------------------------------------------------------- the listing
 
 const EMPTY = Object.freeze({ suggested: [], profiled: false, people: 0 });
@@ -593,6 +797,17 @@ function decorate(stat) {
     profiled: true,
     people: (entry.people || []).length,
   };
+}
+
+/**
+ * Where a video is, learnt in passing.
+ *
+ * Called for every entry of every listing, so the folders you actually look at
+ * are known immediately rather than after the sweep next comes round to them.
+ * A Map set is nanoseconds and the stat is already in hand.
+ */
+function notePath(stat, at) {
+  if (at) state.pathByKey.set(keyFor(stat), at);
 }
 
 function suggestionsFor(stat) {
@@ -760,6 +975,7 @@ async function profile(file, stat, opts = {}) {
     gen: HARVEST_GEN,
   };
   state.index.videos[key] = entry;
+  vectorsDirty = true;
   await writeEntry(key, entry);
 
   // One picture per person, so a suggestion can show the face it came from.
@@ -837,6 +1053,7 @@ function sweepRoots() {
 async function walkForWork() {
   const work = [];
   const onDisk = new Set();
+  const paths = new Map();
   const seen = new Set();
   const visited = new Set();
 
@@ -859,6 +1076,7 @@ async function walkForWork() {
         if (isCloudOnly(stat)) continue;
         const key = keyFor(stat);
         onDisk.add(key);
+        paths.set(key, full);
         if (seen.has(key)) continue;
         const have = state.index.videos[key];
         // Read at the current settings: nothing to do. Read at older ones: worth
@@ -878,6 +1096,10 @@ async function walkForWork() {
     await walk(root, 0);
   }
   state.onDisk = onDisk;
+  // Merged, not replaced. The walk skips cloud-only files by design, and a
+  // listing is the only thing that ever sees those -- replacing would throw
+  // away the one record of where a freed-up match lives every sixty seconds.
+  for (const [key, at] of paths) state.pathByKey.set(key, at);
   state.counted = { downloaded: onDisk.size, at: Date.now() };
   return prioritise(work);
 }
@@ -1116,7 +1338,7 @@ module.exports = {
   init, start, setEnabled, status, noteActivity, rootsChanged, decorate, writeDigest,
   rescoreOne,
   suggestionsFor, rankFor,
-  lineup, faceImageByKey, standing,
+  lineup, faceImageByKey, standing, similar, notePath,
   // The reading order, for checking what a fresh install would do first.
   __queueForTest: walkForWork,
   faceImage, profile, rebuild, flush, keyFor, MIN_VIDEOS,

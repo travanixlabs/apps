@@ -1527,6 +1527,118 @@ body.dragging .card { cursor: grabbing; }
   flex: none;
 }
 
+
+/* Where else this face is -- the third row of the player footer, under the
+   names. Scrolls sideways rather than wrapping: it is a row of one kind of
+   thing, and a second line of it would push the video off the screen. */
+.player-similar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 100%;
+  order: 11;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding-top: 2px;
+}
+.player-similar[hidden] { display: none; }
+
+.similar-row { display: flex; gap: 7px; }
+
+.similar-tile {
+  flex: none;
+  width: 116px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.similar-shot {
+  position: relative;
+  display: block;
+  width: 116px;
+  height: 65px;
+  border-radius: 5px;
+  background: var(--bg-sunk, #14161a) center / cover no-repeat;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.similar-tile:hover .similar-shot { border-color: var(--accent); }
+.similar-shot.cloud::after {
+  content: '\2601';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  color: var(--text-faint);
+}
+
+/* On the picture, because the score is the reason the tile is in the row. */
+.similar-pct {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 650;
+  background: rgba(0, 0, 0, .72);
+  color: #fff;
+}
+.band-strong .similar-pct { color: #7ee0a5; }
+.band-likely .similar-pct { color: #ffd479; }
+.band-maybe .similar-pct { color: #d7d9de; }
+
+.similar-stars {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  font-size: 9.5px;
+  color: #ffc85c;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .9);
+}
+
+.similar-name {
+  font-size: 10.5px;
+  line-height: 1.25;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.similar-tile:hover .similar-name { color: var(--text); }
+
+/* The footer now carries three rows: rating, names, and this. That is more
+   than the card can hold on a short window at 68vh of video, and the card
+   clips rather than scrolls -- so the row was there and invisible.
+
+   A video element sets its flex item's automatic minimum height from its own
+   contents, which is why the stage would not shrink to make room. An explicit
+   floor overrides that, and `object-fit: contain` means the picture letterboxes
+   into whatever is left instead of being cropped. The video gives up height;
+   nothing disappears. */
+#playerModal .player-stage {
+  flex: 0 1 auto;
+  min-height: 120px;
+  display: flex;
+}
+#playerModal #player {
+  height: 100%;
+  width: 100%;
+  object-fit: contain;
+  margin: auto;
+}
+#playerModal .modal-foot { flex: 0 0 auto; }
+
 /* The player footer is the one that carries a second row. Wrapping is scoped to
    it so the other dialogs' footers keep their single line. */
 #playerModal .modal-foot { flex-wrap: wrap; }

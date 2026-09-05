@@ -2055,6 +2055,143 @@ function buildPlayerSuggestions(file) {
   appendRefused(host, current, refused);
 }
 
+
+/**
+ * Where else this face is.
+ *
+ * The suggestion strip above puts names to the faces in this video. This puts
+ * videos to them -- and it does so without using a name at all: the match is
+ * one video's face vector against another's, so it finds her in videos nobody
+ * has credited, in videos credited to a second spelling of her name, and for
+ * performers with too few videos for an average to exist.
+ *
+ * Nothing is computed from the file. Every vector was written when the video
+ * was profiled for the recogniser; this is that index asked a different
+ * question, and the answer takes about three milliseconds.
+ */
+let similarToken = 0;
+
+async function buildPlayerSimilar(file) {
+  const host = $('#playerSimilar');
+  if (!host) return;
+  const mine = ++similarToken;
+  host.replaceChildren();
+  host.hidden = false;
+  say(host, 'face-lead', 'More of her');
+  const waiting = say(host, 'face-note', 'looking\u2026');
+
+  let found;
+  try {
+    found = await api(`/api/faces/similar?path=${encodeURIComponent(file.path)}&limit=14`);
+  } catch {
+    if (mine === similarToken) waiting.textContent = 'could not look';
+    return;
+  }
+  // The player moves on faster than a fetch returns when you hold the arrow
+  // key down, and a row of somebody else's videos under this one is worse than
+  // no row at all.
+  if (mine !== similarToken || !state.playing || state.playing.path !== file.path) return;
+
+  host.replaceChildren();
+  if (!found.profiled) { host.hidden = true; return; }
+  if (!found.videos.length) {
+    // Four different silences, and only one of them is a fact about the
+    // library. Saying which is the difference between a feature that has
+    // nothing to show and a feature that looks broken.
+    say(host, 'face-lead', 'More of her');
+    const note = say(host, 'face-note', !found.people
+      ? 'no usable face to go on'
+      : !found.located
+        ? 'still finding where the library is \u2014 open a folder, or give the '
+          + 'sweep a minute'
+        : found.unreachable
+          ? `${found.unreachable} match${found.unreachable === 1 ? '' : 'es'}, `
+            + 'none of them in a folder that has been opened'
+          : found.closest
+            ? `nothing convincing \u2014 closest is ${Math.round(found.closest * 100)}%`
+            : 'her face is in no other video that has been read');
+    // A row of eight strangers is the one failure worth preventing, and the
+    // rows that fail are the ones whose best match scrapes the floor. So a low
+    // best is withheld deliberately, and saying the number is what stops that
+    // looking like the feature not working.
+    if (found.closest && found.people && found.located) {
+      note.title = 'A video only earns a row when something in the library is '
+        + 'convincingly the same face. Below that, the row is almost always '
+        + 'eight women who merely resemble her, so it is not drawn.';
+    }
+    return;
+  }
+
+  const lead = say(host, 'face-lead', 'More of her');
+  lead.title = 'Videos holding the same face, from the face index. Matched on the '
+    + 'face itself, not on any name \u2014 so an uncredited video counts.';
+  const more = found.total - found.videos.length;
+  say(host, 'face-note', more > 0
+    ? `${found.videos.length} of ${found.total}`
+    : `${found.total} found`);
+
+  const row = document.createElement('div');
+  row.className = 'similar-row';
+  for (const other of found.videos) row.appendChild(buildSimilarTile(other));
+  host.appendChild(row);
+}
+
+/**
+ * One video in the row.
+ *
+ * The percentage is on the picture rather than beside it: it is the reason the
+ * tile is there, and reading a row of them is how you tell a certain match from
+ * a hopeful one at a glance.
+ */
+function buildSimilarTile(other) {
+  const tile = document.createElement('button');
+  tile.type = 'button';
+  tile.className = `similar-tile band-${other.band || 'maybe'}`;
+  const credited = (other.models || []).join(', ');
+  tile.title = [
+    other.name,
+    `${Math.round(other.score * 100)}% like a face in this video`,
+    credited ? `credited: ${credited}` : 'nobody credited on it',
+    other.rating ? `${'\u2605'.repeat(other.rating)}` : null,
+    other.folder,
+  ].filter(Boolean).join('\n');
+
+  const shot = document.createElement('span');
+  shot.className = 'similar-shot preview';
+  tile.appendChild(shot);
+  // Cloud-only videos are listed but never fetched for a picture: the poster
+  // would hydrate the file, and this app does not download anything.
+  if (!other.cloudOnly) loadThumb(other.path, shot);
+  else shot.classList.add('cloud');
+
+  const pct = document.createElement('span');
+  pct.className = 'similar-pct';
+  pct.textContent = `${Math.round(other.score * 100)}%`;
+  shot.appendChild(pct);
+
+  if (other.rating) {
+    const stars = document.createElement('span');
+    stars.className = 'similar-stars';
+    stars.textContent = '\u2605'.repeat(other.rating);
+    shot.appendChild(stars);
+  }
+
+  const name = document.createElement('span');
+  name.className = 'similar-name';
+  name.textContent = credited || other.name;
+  tile.appendChild(name);
+
+  // Playing it rebuilds this row for the new video, so the row is a way of
+  // travelling through the library by who is in it.
+  tile.addEventListener('click', () => {
+    // If it happens to be in the listing, play THAT object: it is the one the
+    // grid, the arrows and the rating keys are all already pointing at.
+    const inView = state.files.find((f) => f.path === other.path);
+    playFile(inView || other);
+  });
+  return tile;
+}
+
 /** A label in the strip, and the element back so it can be replaced. */
 function say(host, className, text) {
   const el = document.createElement('span');
@@ -3461,6 +3598,7 @@ function playFile(file, seq = null) {
   state.playingCard = seq;
   buildPlayerActions(file);
   buildPlayerSuggestions(file);
+  buildPlayerSimilar(file);
   $('#playerTitle').textContent = file.name;
   const info = state.meta.get(file.path) || {};
   $('#playerMeta').textContent = [

@@ -1000,6 +1000,10 @@ async function migrateCacheNames() {
  * have, the first time one of them gained a field.
  */
 function describeVideo(video, dir) {
+  // Every listing teaches the face index where its profiled videos are, which
+  // is what lets "more of her" offer a thumbnail you can click. Free: the scan
+  // is already holding this stat.
+  faces.notePath(video, video.path);
   return {
     path: video.path,
     name: path.basename(video.path),
@@ -1654,6 +1658,38 @@ const server = http.createServer(async (req, res) => {
       const target = authoriseOrThrow(url.searchParams.get('path') || '');
       const stat = await fsp.stat(target);
       return sendJson(res, 200, faces.standing(stat));
+    }
+
+    // Other videos holding the same face. Not a name -- the same face -- so
+    // it answers for the uncredited majority of the library as well.
+    if (req.method === 'GET' && route === '/api/faces/similar') {
+      const target = authoriseOrThrow(url.searchParams.get('path') || '');
+      const stat = await fsp.stat(target);
+      const found = faces.similar(
+        stat, Number(url.searchParams.get('limit') || 12),
+      );
+      const videos = [];
+      for (const row of found.videos) {
+        // The sweep's note of where this was can be a quarter of an hour old.
+        // Stat it: gone, and it is not offered; different file at that path,
+        // and it is a different video wearing the name of this one.
+        let at;
+        try { at = await fsp.stat(row.path); } catch { continue; }
+        if (faces.keyFor(at) !== row.key) continue;
+        videos.push({
+          ...describeVideo({
+            path: row.path,
+            size: at.size,
+            mtimeMs: at.mtimeMs,
+            cloudOnly: isCloudOnly(at),
+          }, ''),
+          score: row.score,
+          band: row.band,
+          person: row.person,
+          mine: row.mine,
+        });
+      }
+      return sendJson(res, 200, { ...found, videos });
     }
 
     // A performer's other faces, to hold the suggested one up against.
