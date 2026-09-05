@@ -67,8 +67,14 @@ const CHOICES = {
       return (f.suggested || []).some((s) => !named.has(s.name.toLowerCase()));
     },
   },
+  // Which signal found this video's copy. Sound and picture each catch what
+  // the other cannot -- a re-dub defeats the sound, a re-crop defeats the
+  // picture -- so "matched" is three questions, not one. `both` is a subset of
+  // each of the other two, by construction.
   duplicate: {
-    yes: (f) => Boolean(f.duplicate),
+    sound: (f) => Boolean(f.dupeKinds && f.dupeKinds.sound),
+    picture: (f) => Boolean(f.dupeKinds && f.dupeKinds.picture),
+    both: (f) => Boolean(f.dupeKinds && f.dupeKinds.both),
     // Not "the only copy": a cloud video was never fingerprinted, so nothing
     // is known about it either way. Only a video that was read and found
     // unique can honestly answer no.
@@ -212,10 +218,16 @@ const CHOICE_ROWS = [
     ['cloud', 'cloud only \u2601'],
   ]],
   ['#advDupe', 'duplicate', [
-    ['yes', 'one of several copies',
-      'the same video is in the library more than once. Matched on its '
-      + 'soundtrack and its picture, which is the only thing that can see it: '
-      + 'the names, sizes and byte hashes of two copies all differ'],
+    ['both', 'both match',
+      'the soundtrack AND the picture both found the same other video, and '
+      + 'agreed on the same offset between them. As certain as this gets'],
+    ['sound', 'sound matches',
+      'the soundtrack lines up with another video. Finds a copy that was '
+      + 're-cropped, letterboxed or watermarked, which the picture would miss'],
+    ['picture', 'video matches',
+      'the frames and the shot-change rhythm line up with another video. Finds '
+      + 'a copy that was re-dubbed, re-scored or muted, which the sound '
+      + 'would miss'],
     ['no', 'the only copy',
       'read and found unique. Cloud videos are not in here, because nothing '
       + 'has been read of them and neither answer would be true'],
@@ -932,6 +944,73 @@ function buildModelGroups(list, mode = 'models') {
   return out;
 }
 
+
+/**
+ * One section per set of copies, so a pair sits side by side.
+ *
+ * The whole point of the grouping: filtered to duplicates a pair can be forty
+ * cards apart, sorted by whatever the sort happens to be, and comparing two
+ * videos you cannot see at once is not comparing them.
+ *
+ * Ordered by how much a decision is worth -- the biggest file in the set, since
+ * that is what deleting one recovers -- and the copies within a section by size
+ * too, so the fullest is first and the runt beside it is the obvious candidate.
+ */
+function buildDupeGroups(list) {
+  const groups = new Map();
+  const alone = [];
+  for (const file of list) {
+    if (!file.duplicate || file.group === undefined) { alone.push(file); continue; }
+    let group = groups.get(file.group);
+    if (!group) {
+      group = {
+        key: `dupe-${file.group}`, name: '', files: [], bytes: 0, total: 0, both: false,
+        // The heading is built for performers and has to be told this is not
+        // one: no favourite heart, no points, no "her videos" link.
+        dupe: true, points: 0,
+      };
+      groups.set(file.group, group);
+    }
+    group.files.push(file);
+    group.bytes = Math.max(group.bytes, Number(file.size) || 0);
+    // How big the set is across the whole library, which is not the same as how
+    // much of it is in front of you.
+    group.total = Math.max(group.total, Number(file.copies) || 0);
+    if (file.dupeKinds && file.dupeKinds.both) group.both = true;
+  }
+
+  const out = [...groups.values()].sort((a, b) => b.bytes - a.bytes);
+  for (const group of out) {
+    group.files.sort((a, b) => (Number(b.size) || 0) - (Number(a.size) || 0));
+    const n = group.files.length;
+    // The heading has to carry the finding, because the section IS the finding:
+    // how many copies, and how sure the matcher was about them.
+    // Half a pair is not "1 copy" -- that reads as the opposite of what it
+    // means. Say how much of the set is here and where the rest is, because the
+    // answer is usually "flatten the subfolders" or "your filter hid it".
+    group.partial = group.total > n;
+    group.name = group.partial
+      ? `${n} of ${group.total} copies \u2014 the rest are not in this listing`
+      : `${n} cop${n === 1 ? 'y' : 'ies'}`;
+    if (!group.both) group.name += ' \u2014 one signal only';
+    group.label = group.name;
+    // Everything but the largest: what keeping one of these would give back.
+    // Nothing, when only one copy is here to choose between.
+    group.recover = group.files.slice(1)
+      .reduce((sum, f) => sum + (Number(f.size) || 0), 0);
+  }
+  if (alone.length) {
+    out.push({
+      key: '',
+      name: '',
+      files: alone,
+      unnamed: true,
+      label: 'No copy found',
+    });
+  }
+  return out;
+}
+
 /**
  * The grouped layout as one flat list, so the grid keeps paging the way it does
  * flat: each entry is either a section heading or one card under it. Without
@@ -939,7 +1018,9 @@ function buildModelGroups(list, mode = 'models') {
  * videos would render in one go.
  */
 function buildSlots() {
-  state.groups = state.grouped ? buildModelGroups(state.view, state.grouped) : [];
+  state.groups = !state.grouped ? []
+    : state.grouped === 'dupes' ? buildDupeGroups(state.view)
+      : buildModelGroups(state.view, state.grouped);
   state.slots = [];
   state.cards = [];
   if (!state.grouped) return;
@@ -2198,6 +2279,116 @@ function keyOf(file) {
   return `${file.size}:${Math.round(file.mtimeMs)}`;
 }
 
+
+/**
+ * The same readout for duplicate fingerprinting, left of the faces one.
+ *
+ * Two long backfills run side by side and each answers "how far in are you",
+ * so they read the same way: a fraction, one word for what it is doing, and
+ * the finding on the end. Clicking pauses, as it does for faces.
+ */
+let dupeStatus = null;
+async function pollDupeStatus() {
+  try {
+    dupeStatus = await api('/api/dupes/status');
+  } catch {
+    dupeStatus = null;
+  }
+  renderDupePill();
+}
+
+function renderDupePill() {
+  const pill = $('#dupesPill');
+  const text = $('#dupesText');
+  if (!pill || !text) return;
+  if (!dupeStatus || !dupeStatus.available) {
+    pill.hidden = true;
+    return;
+  }
+  pill.hidden = false;
+  const {
+    fingerprinted, downloaded, counted, remaining, doing, current,
+    groups, copies, possible, done, rate, enabled,
+  } = dupeStatus;
+  const n = (x) => Number(x || 0).toLocaleString();
+
+  const finished = counted && !remaining && downloaded > 0 && fingerprinted >= downloaded;
+  const busy = doing === 'reading' || doing === 'counting' || doing === 'matching';
+
+  pill.classList.toggle('working', busy);
+  pill.classList.toggle('waiting', doing === 'waiting');
+  pill.classList.toggle('paused', doing === 'paused' || doing === 'stopped');
+  pill.classList.toggle('done', finished && !busy);
+
+  text.replaceChildren();
+  const said = {
+    loading: 'opening the fingerprints\u2026',
+    counting: 'counting the library\u2026',
+    reading: 'fingerprinting\u2026',
+    matching: 'comparing\u2026',
+    waiting: 'waiting for you to pause',
+    paused: 'paused',
+    stopped: 'stopped',
+  };
+  const main = document.createElement('span');
+  main.textContent = counted && downloaded
+    ? `${n(fingerprinted)} / ${n(downloaded)}`
+    : `${n(fingerprinted)}`;
+  text.appendChild(main);
+
+  const state = document.createElement('span');
+  state.className = 'faces-doing';
+  state.textContent = ' ' + (finished && !busy
+    ? 'all fingerprinted' : (said[doing] || 'fingerprinted'));
+  text.appendChild(state);
+
+  // The finding, not just the progress: a backfill nobody can see the point of
+  // is a backfill nobody lets finish.
+  if (copies > 0) {
+    const found = document.createElement('span');
+    found.className = 'faces-cached';
+    found.textContent = ` \u00b7 ${n(copies)} to delete`;
+    text.appendChild(found);
+  }
+
+  pill.title = [
+    doing === 'reading' ? `Fingerprinting ${current}`
+      : doing === 'matching' ? 'Comparing what has been read so far\u2026'
+        : doing === 'loading' ? 'Reading back what has already been fingerprinted\u2026'
+          : doing === 'counting' ? 'Counting the library\u2026'
+            : doing === 'waiting' ? 'Ready \u2014 it reads a video whenever you pause for a moment'
+              : doing === 'paused' ? 'Paused'
+                : 'Not running',
+    counted && downloaded
+      ? `${n(fingerprinted)} of ${n(downloaded)} downloaded videos fingerprinted`
+        + (remaining ? `, ${n(remaining)} to go` : '')
+      : `${n(fingerprinted)} fingerprinted, still counting the library`,
+    'Cloud-only videos are never fingerprinted \u2014 reading one would download it',
+    groups
+      ? `${n(groups)} set${groups === 1 ? '' : 's'} of copies found, `
+        + `${n(copies)} file${copies === 1 ? '' : 's'} could go`
+      : 'No duplicates found yet',
+    possible ? `${n(possible)} more where only one of sound and picture agreed` : null,
+    done ? `${n(done)} read this session${rate ? `, about ${n(rate)} an hour` : ''}` : null,
+    'Advanced filters \u2192 Duplicates to see them',
+    enabled ? 'Click to pause' : 'Click to resume',
+  ].filter(Boolean).join('\n');
+}
+
+async function toggleDupeSweep() {
+  if (!dupeStatus) return;
+  try {
+    dupeStatus = await api('/api/dupes/enabled', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !dupeStatus.enabled }),
+    });
+    renderDupePill();
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
 /**
  * How far the backfill has got, in the toolbar.
  *
@@ -3005,8 +3196,13 @@ async function doAction(op, paths, extra = {}) {
   // Reflect the filesystem change locally instead of a full rescan.
   const removed = new Set(ok.filter((r) => op === 'delete' || op === 'move').map((r) => r.path));
   if (removed.size) {
+    // Which sets of copies just lost a member, before the files go.
+    const touched = new Set(state.files
+      .filter((f) => removed.has(f.path) && f.duplicate && f.group !== undefined)
+      .map((f) => f.group));
     state.files = state.files.filter((f) => !removed.has(f.path));
     removed.forEach((p) => state.selected.delete(p));
+    if (touched.size) forgetCopies(touched);
   }
   const renamed = ok.filter((r) => op === 'rename' && r.dest);
   for (const r of renamed) {
@@ -3026,6 +3222,32 @@ async function doAction(op, paths, extra = {}) {
 
 function baseName(p) {
   return String(p).split(/[\\/]/).pop();
+}
+
+/**
+ * Delete one copy and the other stops being one.
+ *
+ * The server forgets it too, but a round trip is not what should decide whether
+ * the card in front of you is still listed -- under the Duplicates filter it
+ * would sit there being a duplicate of something that no longer exists.
+ *
+ * A set that drops to one member is not a set: that last video is simply a
+ * video again, loses its badge, and leaves the filter.
+ */
+function forgetCopies(groups) {
+  for (const group of groups) {
+    const left = state.files.filter((f) => f.group === group);
+    if (left.length > 1) {
+      for (const f of left) f.copies = left.length;
+      continue;
+    }
+    for (const f of left) {
+      f.duplicate = false;
+      f.copies = 0;
+      f.dupeKinds = null;
+      f.group = undefined;
+    }
+  }
 }
 
 /**
@@ -3414,7 +3636,7 @@ function buildGroupHead(group) {
   head.className = 'group-head' + (group.unnamed ? ' group-unnamed' : '');
   head.dataset.group = group.key;
 
-  if (!group.unnamed) {
+  if (!group.unnamed && !group.dupe) {
     const marked = isFavouriteModel(group.name);
     const heart = document.createElement('button');
     heart.type = 'button';
@@ -3440,7 +3662,7 @@ function buildGroupHead(group) {
   name.textContent = group.unnamed ? (group.label || 'Nobody named') : group.name;
   head.appendChild(name);
 
-  if (!group.unnamed) {
+  if (!group.unnamed && !group.dupe) {
     const score = document.createElement('span');
     score.className = 'group-score';
     score.textContent = group.points.toLocaleString();
@@ -3449,9 +3671,19 @@ function buildGroupHead(group) {
     head.appendChild(score);
   }
 
+  // A duplicate section already says how many copies it holds in its name, so
+  // it gets what deleting one would give back instead.
   const count = document.createElement('span');
   count.className = 'group-count';
-  count.textContent = `${group.files.length} video${group.files.length === 1 ? '' : 's'}`;
+  count.textContent = group.dupe
+    ? (group.recover ? `${fmtBytes(group.recover)} could go` : 'nothing to choose between here')
+    : `${group.files.length} video${group.files.length === 1 ? '' : 's'}`;
+  if (group.dupe) {
+    count.title = group.recover
+      ? 'Keeping the largest copy and deleting the rest would recover this'
+      : 'The other copies are somewhere else \u2014 flatten the subfolders, or '
+        + 'clear the filters, to bring them together';
+  }
   head.appendChild(count);
 
   // How much of this performer the face index has actually read. Only shown
@@ -3477,6 +3709,7 @@ function buildGroupHead(group) {
     // actually credited to her, rather than what looks like her -- and there is
     // no filter for the latter to send it to. So it says which, instead of
     // reading as "only this section" and quietly showing a different set.
+    if (group.dupe) return head;   // no performer to filter down to
     const guessed = state.grouped === 'suggested';
     const only = document.createElement('button');
     only.type = 'button';
@@ -3659,9 +3892,18 @@ function buildCard(file, index, group = null, seq = null) {
     // is before anything has been opened.
     const dupeBadge = document.createElement('span');
     dupeBadge.className = 'badge badge-dupe';
-    dupeBadge.textContent = `${file.copies} copies`;
-    dupeBadge.title = 'The same video is in the library more than once.'
-      + ' Advanced filters, Duplicates, lists them.';
+    const kinds = file.dupeKinds || {};
+    const how = kinds.both ? '' : (kinds.sound ? ' sound' : ' video');
+    dupeBadge.textContent = `${file.copies} copies${how}`;
+    dupeBadge.classList.toggle('one-signal', !kinds.both);
+    dupeBadge.title = (kinds.both
+      ? 'The soundtrack and the picture both match another video here.'
+      : kinds.sound
+        ? 'The soundtrack matches another video here, but the picture does not '
+          + '\u2014 worth an eye.'
+        : 'The picture matches another video here, but the soundtrack does not '
+          + '\u2014 worth an eye.')
+      + ' Group by duplicate to see them together.';
     preview.appendChild(dupeBadge);
   }
 
@@ -4070,11 +4312,11 @@ async function dropOnto(paths, destPath, copy, label) {
  * search and the sort all still apply, and every video in it is still there —
  * just once per person named in it.
  */
-const GROUP_MODES = ['', 'models', 'suggested'];
+const GROUP_MODES = ['', 'models', 'suggested', 'dupes'];
 
 async function toggleGrouped() {
-  // Off, credited, suggested, off. The plain listing is the way back from
-  // either, so neither grouping is more than one press from the default.
+  // Off, credited, suggested, duplicates, off. The plain listing is never more
+  // than one more press away, whichever grouping you are in.
   state.grouped = GROUP_MODES[(GROUP_MODES.indexOf(state.grouped) + 1) % GROUP_MODES.length];
   syncGroupButton();
   await saveConfig({ grouped: state.grouped });
@@ -4082,6 +4324,15 @@ async function toggleGrouped() {
   if (!state.grouped) return;
   const named = state.groups.filter((g) => !g.unnamed).length;
   const marked = state.groups.filter((g) => !g.unnamed && isFavouriteModel(g.name)).length;
+  if (state.grouped === 'dupes') {
+    const sets = state.groups.filter((g) => !g.unnamed).length;
+    const extra = state.groups.filter((g) => !g.unnamed)
+      .reduce((n, g) => n + g.files.length - 1, 0);
+    toast(sets
+      ? `${sets} set${sets === 1 ? '' : 's'} of copies, ${extra} file${extra === 1 ? '' : 's'} could go`
+      : 'No copies found in this listing', sets ? 'ok' : 'info');
+    return;
+  }
   if (state.grouped === 'suggested') {
     toast(named
       ? `${named} performer${named === 1 ? '' : 's'} the faces look like, best rated first`
@@ -4101,11 +4352,14 @@ function syncGroupButton() {
   // Two different groupings behind one button, so the state has to be
   // legible without pressing it: the heart changes colour as well as filling.
   btn.classList.toggle('by-suggested', state.grouped === 'suggested');
+  btn.classList.toggle('by-dupes', state.grouped === 'dupes');
   btn.title = {
     '': 'Ungrouped — click to group this listing by credited performer',
     models: 'Grouped by credited performer — click to group by suggested performer',
     suggested: 'Grouped by suggested performer, from the face index '
-      + '— click for the plain listing',
+      + '— click to group copies of the same video together',
+    dupes: 'Grouped by duplicate — each section is one video and every copy of '
+      + 'it, side by side — click for the plain listing',
   }[state.grouped];
 }
 
@@ -4370,6 +4624,7 @@ function wireEvents() {
   }
 
   $('#facesPill').addEventListener('click', toggleFaceSweep);
+  $('#dupesPill').addEventListener('click', toggleDupeSweep);
   $('#faceAdd').addEventListener('click', () => {
     if (!lineupFor) return;
     const { sug, onPick } = lineupFor;
@@ -4413,6 +4668,8 @@ function wireEvents() {
   });
   pollFaceStatus();
   setInterval(pollFaceStatus, 2000);
+  pollDupeStatus();
+  setInterval(pollDupeStatus, 2000);
 
   // settings
   $('#groupBtn').addEventListener('click', toggleGrouped);

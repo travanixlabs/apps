@@ -494,7 +494,7 @@ function rememberRoot(dir) {
   config.rootsSeen[root.toLowerCase()] = Date.now();
   // Opening a folder inside one already authorised adds nothing to sweep; only
   // genuinely new ground makes the denominator wrong.
-  if (config.roots.length !== had) faces.rootsChanged();
+  if (config.roots.length !== had) { faces.rootsChanged(); dupes.rootsChanged(); }
   config.lastDir = resolved;
   saveConfigSoon();
 }
@@ -1280,7 +1280,14 @@ async function handleAction(body) {
     const src = authoriseOrThrow(raw);
     try {
       if (op === 'delete') {
+        // Read the key before the file goes: it is size and modified time, and
+        // neither can be had once it is in the Recycle Bin.
+        let key = null;
+        try { key = dupes.keyFor(await fsp.stat(src)); } catch { /* already gone */ }
         await recycle(src);
+        // A pair minus one member is not a pair -- the survivor must stop being
+        // called a copy, or the Duplicates filter keeps listing it.
+        if (key) dupes.forget(key);
         results.push({ path: src, ok: true, message: 'Sent to Recycle Bin' });
       } else if (op === 'move') {
         if (!body.dest) throw new Error('No destination folder given');
@@ -1322,6 +1329,9 @@ const server = http.createServer(async (req, res) => {
   // The background sweep stands aside while the app is being used. Its own
   // status polling does not count as use, or it would starve itself.
   if (!route.startsWith('/api/faces/')) faces.noteActivity();
+  // The duplicate worker yields to the app the same way, and for the same
+  // reason -- a decode holds the CPU in bursts and browsing must win.
+  if (!route.startsWith('/api/dupes/')) dupes.noteActivity();
 
   try {
     if (req.method === 'GET' && (route === '/' || route === '/index.html')) {
@@ -1550,6 +1560,18 @@ const server = http.createServer(async (req, res) => {
     // How far the backfill has got. Polled by the UI, and deliberately exempt
     // from the activity clock so asking does not pause the answering.
     if (req.method === 'GET' && route === '/api/dupes/status') {
+      return sendJson(res, 200, dupes.status());
+    }
+
+    if (req.method === 'POST' && route === '/api/dupes/enabled') {
+      const body = await readBody(req);
+      return sendJson(res, 200, dupes.setEnabled(body.enabled !== false));
+    }
+
+    // Match now rather than waiting for the batch to fill: useful when a sweep
+    // was interrupted and its fingerprints have never been compared.
+    if (req.method === 'POST' && route === '/api/dupes/match') {
+      await dupes.refresh();
       return sendJson(res, 200, dupes.status());
     }
 
@@ -1811,6 +1833,7 @@ async function main() {
   // listing needs, where reading every fingerprint is thousands of files.
   dupes.loadDigest()
     .then(() => dupes.loadIndex())
+    .then(() => dupes.start())
     .catch(() => { });
 
   metaIndex = loadJsonSync(META_FILE, {});

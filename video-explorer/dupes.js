@@ -52,10 +52,30 @@ const state = {
   ready: false,
   light: new Map(),        // key -> { gaps, secs, cuts, name }
   groups: [],              // arrays of keys, each a set of the same video
-  possible: [],            // pairs one signal liked and the other did not
+  pairs: [],               // every pair a signal spoke for, with which one
+  possible: [],            // kept for the digest's shape
   byKey: new Map(),        // key -> index into groups
+  kindsByKey: new Map(),   // key -> { sound, picture, both }
   scanned: 0,
   matched: 0,
+  // The in-app worker: one video at a time, only while nothing else is
+  // happening. See the loop at the bottom of this file.
+  enabled: true,
+  running: false,
+  walking: false,
+  matching: false,
+  queue: [],
+  current: '',
+  failures: new Set(),
+  lastActivity: 0,
+  nextWalk: 0,
+  startedAt: 0,
+  done: 0,
+  sinceMatch: 0,
+  needsMatch: false,
+  lastMatch: 0,
+  downloaded: 0,
+  counted: false,
 };
 
 const keyFor = (stat) => `${stat.size}:${Math.round(stat.mtimeMs)}`;
@@ -85,11 +105,22 @@ function init({ cacheDir, roots = [], home = null }) {
 async function loadDigest() {
   try {
     const body = JSON.parse(await fsp.readFile(path.join(state.dir, DIGEST), 'utf8'));
-    state.groups = (body.groups || []).map((group) => group.map((g) => g.key));
-    state.possible = body.possible || [];
-    state.matched = (body.confirmed || []).length;
+    // A group of one is not a group. A digest written before its last pair was
+    // broken up can hold one, and it would flag a video as a copy of nothing.
+    state.groups = (body.groups || [])
+      .filter((group) => group.length > 1)
+      .map((group) => group.map((g) => g.key));
+    state.pairs = body.confirmed || [];
+    state.matched = state.pairs.filter((p) => p.signals && p.signals.both).length;
     state.byKey = new Map();
+    state.kindsByKey = new Map();
     state.groups.forEach((group, i) => group.forEach((k) => state.byKey.set(k, i)));
+    for (const group of body.groups || []) {
+      if (group.length < 2) continue;
+      for (const g of group) {
+        if (g.kinds) state.kindsByKey.set(g.key, g.kinds);
+      }
+    }
     // The names in the digest cover videos whose fingerprints have not been
     // read yet, so a review list works the moment the server is up.
     for (const group of body.groups || []) {
@@ -99,7 +130,15 @@ async function loadDigest() {
         }
       }
     }
-    log(`${state.groups.length} duplicate groups from the last run`);
+    // A digest from before the signals were recorded says nothing about WHICH
+    // of sound and picture agreed, so the three filters would all come back
+    // empty and every set would read "one signal only". Matching again is the
+    // only way to fill that in, and it must not wait for the next batch of
+    // twenty-five reads to trigger it.
+    state.needsMatch = (body.confirmed || []).some((r) => !r.signals)
+      || state.groups.some((g) => g.some((k) => !state.kindsByKey.has(k)));
+    log(`${state.groups.length} duplicate groups from the last run`
+      + (state.needsMatch ? ' (needs matching again: no signals recorded)' : ''));
     return body;
   } catch {
     return null;
@@ -111,7 +150,9 @@ async function loadDigest() {
 async function loadIndex() {
   const dir = path.join(state.dir, ENTRIES);
   let names = [];
-  try { names = await fsp.readdir(dir); } catch { return; }
+  // An unreadable folder still counts as read: leaving `ready` false would
+  // park the worker in "loading" for the life of the process.
+  try { names = await fsp.readdir(dir); } catch { state.ready = true; return; }
   let loaded = 0;
   for (const name of names) {
     if (!name.endsWith('.json')) continue;
@@ -212,6 +253,7 @@ async function profile(file, stat) {
     gaps: row.gaps, secs: row.secs, cuts: row.cuts, name: row.name,
   });
   state.scanned += 1;
+  state.done += 1;
   return row;
 }
 
@@ -301,8 +343,7 @@ async function match({ onProgress } = {}) {
     return print;
   };
 
-  const confirmed = [];
-  const possible = [];
+  const matches = [];
   let done = 0;
   for (const pair of list) {
     const [pa, pb] = [await printOf(pair.a), await printOf(pair.b)];
@@ -317,8 +358,7 @@ async function match({ onProgress } = {}) {
       bName: (state.light.get(pair.b) || {}).name || '',
       ...verdict,
     };
-    if (verdict.verdict === 'duplicate') confirmed.push(row);
-    else if (verdict.verdict !== 'no') possible.push(row);
+    if (verdict.signals.sound || verdict.signals.picture) matches.push(row);
   }
 
   // Union-find, so three copies of one video make one group of three rather
@@ -331,7 +371,10 @@ async function match({ onProgress } = {}) {
     }
     return x;
   };
-  for (const row of confirmed) {
+  // Over every match, not only the certain ones: a pair only the sound agreed
+  // on is exactly the pair worth putting side by side, and it cannot be put
+  // side by side unless it is in a group.
+  for (const row of matches) {
     for (const k of [row.a, row.b]) if (!parent.has(k)) parent.set(k, k);
     const ra = find(row.a); const rb = find(row.b);
     if (ra !== rb) parent.set(ra, rb);
@@ -344,14 +387,29 @@ async function match({ onProgress } = {}) {
   }
 
   state.groups = [...sets.values()];
-  state.possible = possible;
+  state.pairs = matches;
   state.byKey = new Map();
   state.groups.forEach((group, i) => group.forEach((k) => state.byKey.set(k, i)));
-  state.matched = confirmed.length;
 
-  log(`${state.groups.length} duplicate groups (${confirmed.length} confirmed pairs), `
-    + `${possible.length} to look at by eye`);
-  return { groups: state.groups, confirmed, possible };
+  // Which signals spoke for each video, across all of its pairs. A video can be
+  // sound-matched to one copy and fully matched to another.
+  state.kindsByKey = new Map();
+  for (const row of matches) {
+    for (const k of [row.a, row.b]) {
+      const had = state.kindsByKey.get(k) || { sound: false, picture: false, both: false };
+      state.kindsByKey.set(k, {
+        sound: had.sound || row.signals.sound,
+        picture: had.picture || row.signals.picture,
+        both: had.both || row.signals.both,
+      });
+    }
+  }
+
+  const both = matches.filter((m) => m.signals.both).length;
+  state.matched = both;
+  log(`${state.groups.length} groups from ${matches.length} matched pairs `
+    + `(${both} on both signals, ${matches.length - both} on one)`);
+  return { groups: state.groups, confirmed: matches, possible: [] };
 }
 
 // -------------------------------------------------------------------- output
@@ -370,6 +428,7 @@ async function writeDigest(confirmed = [], possible = []) {
       key,
       name: (state.light.get(key) || {}).name || '',
       secs: (state.light.get(key) || {}).secs || 0,
+      kinds: state.kindsByKey.get(key) || { sound: false, picture: false, both: false },
     }))),
     confirmed,
     possible,
@@ -378,29 +437,252 @@ async function writeDigest(confirmed = [], possible = []) {
   return body;
 }
 
-const EMPTY = Object.freeze({ duplicate: false, copies: 0 });
+
+/**
+ * A video is gone: take it out of its set, and dissolve the set if that leaves
+ * nothing to compare.
+ *
+ * A pair minus one member is not a pair. Leaving the survivor flagged meant the
+ * Duplicates filter kept listing a video whose copy had already been deleted --
+ * true when it was written down, false the moment it was acted on.
+ *
+ * The fingerprint itself is kept. It is keyed by size and modified time, so if
+ * the file comes back -- restored from the Recycle Bin, or re-downloaded -- it
+ * is recognised again without being read a second time.
+ */
+function forget(key) {
+  const at = state.byKey.get(key);
+  if (at === undefined) return { changed: false, survivors: [] };
+
+  const group = state.groups[at].filter((k) => k !== key);
+  state.byKey.delete(key);
+  state.kindsByKey.delete(key);
+  state.pairs = state.pairs.filter((p) => p.a !== key && p.b !== key);
+
+  let survivors = group;
+  if (group.length < 2) {
+    // Nothing left to be a copy of.
+    for (const k of group) {
+      state.byKey.delete(k);
+      state.kindsByKey.delete(k);
+    }
+    state.groups[at] = [];
+  } else {
+    state.groups[at] = group;
+    survivors = group;
+  }
+
+  // Indices shift when an empty group is dropped, so the whole map is rebuilt
+  // rather than patched -- there are tens of groups, not thousands.
+  state.groups = state.groups.filter((g) => g.length > 1);
+  state.byKey = new Map();
+  state.groups.forEach((g, i) => g.forEach((k) => state.byKey.set(k, i)));
+  state.matched = state.pairs.filter((p) => p.signals && p.signals.both).length;
+
+  digestSoon();
+  return { changed: true, survivors };
+}
+
+// Rewriting the digest per deletion would be a file write per click, so it is
+// debounced: a selection of twenty deleted at once writes once.
+let digestTimer = null;
+function digestSoon() {
+  if (digestTimer) clearTimeout(digestTimer);
+  digestTimer = setTimeout(() => {
+    digestTimer = null;
+    // Never republish over a digest that is about to be rebuilt properly: this
+    // write carries whatever is in memory, and if that came from an old-format
+    // file it would overwrite a good match with a worse one.
+    if (state.needsMatch) return;
+    writeDigest(state.pairs, []).catch(() => { });
+  }, 2000);
+  if (digestTimer.unref) digestTimer.unref();
+}
+
+const EMPTY = Object.freeze({ duplicate: false, copies: 0, dupeKinds: null });
 
 /** What a listing needs to know about one video. */
 function decorate(stat) {
   const key = keyFor(stat);
   const at = state.byKey.get(key);
   if (at === undefined) return EMPTY;
-  return { duplicate: true, copies: state.groups[at].length, group: at };
+  return {
+    duplicate: true,
+    copies: state.groups[at].length,
+    group: at,
+    // Which signals matched it to its copies, so the filter can ask for one
+    // kind and the card can say which it was.
+    dupeKinds: state.kindsByKey.get(key) || null,
+  };
 }
 
+
+// ------------------------------------------------------------------ the loop
+//
+// Deliberately the face profiler's manners rather than the tool's: one video at
+// a time, and only while the app is quiet. A backfill that makes browsing
+// stutter is worse than a backfill that takes a week, and this one runs for as
+// long as the app happens to be open rather than in one sitting.
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** How long the app must be quiet before the sweep takes a turn. */
+const IDLE_MS = 1500;
+/** How often the library is walked again, so new files are picked up. */
+const WALK_EVERY_MS = 15 * 60 * 1000;
+/** How many new fingerprints are worth a re-match. */
+const MATCH_AFTER = 25;
+/** And how long a match must have rested first.
+
+    Comparing grows with the library: a few thousand fingerprints make several
+    thousand candidate pairs, and each pair is two files read and two
+    cross-correlations. At twenty-five reads a batch that would soon be more
+    matching than reading, so a match also has to wait its turn. */
+const MATCH_REST_MS = 5 * 60 * 1000;
+
+const busy = () => Date.now() - state.lastActivity < IDLE_MS;
+
+function noteActivity() {
+  state.lastActivity = Date.now();
+}
+
+/** A folder was opened that had not been before: count again now, not in 15m. */
+function rootsChanged() {
+  state.nextWalk = 0;
+  start();
+}
+
+/**
+ * Re-match and republish, when there is something new to match.
+ *
+ * Matching is seconds of work over thousands of fingerprints, so it does not
+ * run per video -- it runs once a batch has built up, and again when the queue
+ * finally empties, so the digest is never far behind what has been read.
+ */
+async function refresh() {
+  if (state.matching) return;
+  state.matching = true;
+  state.lastMatch = Date.now();
+  try {
+    const { confirmed, possible } = await match();
+    await writeDigest(confirmed, possible);
+    state.sinceMatch = 0;
+    state.needsMatch = false;
+    state.lastMatch = Date.now();
+  } catch (err) {
+    log(`matching failed: ${err.message}`);
+  } finally {
+    state.matching = false;
+  }
+}
+
+async function loop() {
+  if (state.running) return;
+  state.running = true;
+  try {
+    while (state.enabled) {
+      // Nothing may be queued until the index is read: a video whose
+      // fingerprint has not loaded yet looks unread, and would be read again.
+      if (!state.ready) { await wait(250); continue; }
+      if (busy()) { await wait(400); continue; }
+
+      // An old-format digest is worth fixing before anything else: until it is,
+      // the filters have nothing to filter on.
+      if (state.needsMatch) { await refresh(); continue; }
+
+      if (!state.queue.length || Date.now() > state.nextWalk) {
+        state.walking = true;
+        try {
+          const found = await walkForWork();
+          state.downloaded = found.length;
+          state.counted = true;
+          state.queue = found.filter((w) => !has(w.key));
+          state.nextWalk = Date.now() + WALK_EVERY_MS;
+        } finally { state.walking = false; }
+        if (!state.queue.length) {
+          // Everything read. Match whatever is outstanding, then sleep and look
+          // again in case files arrive or come down from the cloud.
+          state.current = '';
+          if (state.sinceMatch) await refresh();
+          await wait(60000);
+          continue;
+        }
+      }
+
+      const next = state.queue.shift();
+      state.current = path.basename(next.file);
+      if (!state.startedAt) state.startedAt = Date.now();
+      try {
+        await profile(next.file, next.stat);
+        state.sinceMatch += 1;
+      } catch {
+        state.failures.add(next.key);
+      }
+      state.current = '';
+      if (state.sinceMatch >= MATCH_AFTER && !busy()
+        && Date.now() - state.lastMatch > MATCH_REST_MS) await refresh();
+      await wait(150);
+    }
+  } finally {
+    state.running = false;
+    state.current = '';
+  }
+}
+
+function start() {
+  if (state.running || !state.enabled) return;
+  loop().catch(() => { state.running = false; });
+}
+
+function setEnabled(on) {
+  state.enabled = Boolean(on);
+  if (state.enabled) start();
+  return status();
+}
+
+/**
+ * What the sweep has done and what is left.
+ *
+ * Shaped like the face profiler's, because the pill beside it reads the same
+ * way: a fraction of the downloaded library, and one word for what it is doing.
+ */
 function status() {
+  const fingerprinted = state.light.size;
   return {
+    available: true,
     ready: state.ready,
-    fingerprinted: state.light.size,
-    scanned: state.scanned,
+    enabled: state.enabled,
+    running: state.running,
+    fingerprinted,
+    downloaded: state.downloaded,
+    counted: state.counted,
+    remaining: state.walking ? null : state.queue.length,
+    current: state.current,
+    doing: !state.enabled ? 'paused'
+      : !state.ready ? 'loading'
+        : state.matching ? 'matching'
+          : state.walking ? 'counting'
+            : state.current ? 'reading'
+              : state.running ? 'waiting' : 'stopped',
+    done: state.done,
+    rate: state.done > 2 && state.startedAt
+      ? Math.round(state.done / ((Date.now() - state.startedAt) / 3600000))
+      : 0,
     groups: state.groups.length,
     pairs: state.matched,
-    possible: state.possible.length,
+    possible: state.pairs.length - state.matched,
+    copies: state.groups.reduce((n, g) => n + g.length - 1, 0),
   };
 }
 
 module.exports = {
   init,
+  forget,
+  start,
+  setEnabled,
+  noteActivity,
+  rootsChanged,
+  refresh,
   loadIndex,
   loadDigest,
   walkForWork,

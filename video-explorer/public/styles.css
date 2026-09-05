@@ -517,6 +517,13 @@ main { padding: 16px; }
   color: #ffd79a;
   border: 1px solid rgba(214, 152, 60, .55);
 }
+/* Only one of the two signals agreed. Dimmer, because it is a maybe rather
+   than a finding, and the card should not shout it. */
+.badge-dupe.one-signal {
+  background: rgba(58, 62, 74, .86);
+  color: #b9c2cf;
+  border-color: rgba(120, 130, 148, .5);
+}
 
 /* Dead centre of the thumbnail: opens the player. Sits above the live video
    layer and is the one part of the tile that doesn't toggle selection. */
@@ -1403,6 +1410,17 @@ body.dragging .card { cursor: grabbing; }
 .faces-pill.paused { color: var(--text-faint); opacity: 0.6; }
 .faces-pill.paused .faces-dot { background: none; box-shadow: inset 0 0 0 1px currentColor; }
 .faces-pill.done { color: #7fd1a3; border-color: #2f5a44; }
+
+/* The duplicate pill borrows the whole faces style and only recolours. It has
+   to come AFTER those rules: .dupes-pill.working and .faces-pill.working carry
+   the same specificity, so source order is the only thing deciding, and above
+   them it would simply never apply. */
+.dupes-pill.working { color: #c3b6ec; border-color: #6b5ea8; }
+.dupes-pill.done { color: #8fd6a3; border-color: #3f6d4a; }
+
+/* The fourth state of the group toggle. After #groupBtn.on for the same reason
+   the suggested colour is: equal specificity, so source order decides. */
+#groupBtn.on.by-dupes { color: #ffd79a; border-color: #a3762f; }
 /* Profiles kept for videos since freed up to the cloud: a second, quieter
    number, because it is not part of the fraction beside it. */
 .faces-cached { color: var(--text-faint); margin-left: 5px; }

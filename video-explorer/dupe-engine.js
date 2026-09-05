@@ -410,6 +410,14 @@ function compare(a, b, opts = {}) {
 
   return {
     verdict,
+    // Which signals agreed, stated rather than left to be re-derived from the
+    // numbers by every caller. The cut rhythm counts as picture: it is measured
+    // off the frames and it is what survives a re-encode best.
+    signals: {
+      sound: soundSays,
+      picture: pictureSays || cutsSay,
+      both: soundSays && (pictureSays || cutsSay) && agree,
+    },
     offset: sound ? sound.offset : (picture ? picture.offset : 0),
     sound: sound ? { r: round(sound.r, 4), offset: round(sound.offset, 2), background: round(sound.background, 4) } : null,
     picture: picture ? { bits: round(picture.bits, 2), offset: round(picture.offset, 2), background: round(picture.background, 2) } : null,
