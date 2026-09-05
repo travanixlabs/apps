@@ -1610,6 +1610,38 @@ body.dragging .card { cursor: grabbing; }
   text-shadow: 0 1px 2px rgba(0, 0, 0, .9);
 }
 
+/* A performer rather than a video. The name is the point here, where in the
+   row below it is a caption, so it reads at full strength. */
+.face-tile .similar-name { color: var(--text); font-weight: 560; }
+
+/* Credited already, or not yet: on the picture, so a row can be read without
+   reading any of it. This is what replaced the heading that used to count the
+   uncredited ones. */
+.similar-mark {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  background: rgba(0, 0, 0, .72);
+  color: #fff;
+}
+.face-tile.confirmed .similar-mark { background: #1f7a4d; }
+.face-tile:not(.confirmed) .similar-mark { background: rgba(59, 130, 246, .92); }
+.face-tile.confirmed .similar-shot { border-color: #1f7a4d; }
+
+/* Below the recogniser's bar but above the row's floor: shown, clickable, and
+   visibly less sure than the rest. */
+.band-near .similar-pct { color: #b9bec9; }
+.face-tile.band-near .similar-shot { border-style: dashed; }
+
 .similar-name {
   font-size: 10.5px;
   line-height: 1.25;

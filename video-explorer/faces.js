@@ -763,6 +763,65 @@ function similar(stat, limit = 12, offset = 0) {
   };
 }
 
+
+/**
+ * For each of these performers, her video that most resembles this one.
+ *
+ * Used to put a picture on a suggestion. A suggestion says "this looks like
+ * her"; the picture that belongs beside it is the video of hers it looks like,
+ * not a portrait that would be the same under every video in the library.
+ *
+ * Names are matched case-insensitively against the credits, which is the only
+ * place a name means anything -- the comparison itself never sees one.
+ */
+function bestOf(stat, names) {
+  const key = keyFor(stat);
+  const entry = state.index.videos[key];
+  const wanted = new Map((names || []).map((n) => [String(n).toLowerCase(), String(n)]));
+  const out = {};
+  if (!entry || !wanted.size) return out;
+  const mine = (entry.people || []).map((p) => unpackVector(p.vec));
+  if (!mine.length) return out;
+
+  const v = vectorsDirty || !vectors ? buildVectors() : vectors;
+  const best = new Float32Array(v.keys.length).fill(-1);
+  const theirs = new Int32Array(v.keys.length);
+  for (const q of mine) {
+    for (let r = 0; r < v.count; r += 1) {
+      const base = r * v.dim;
+      let dot = 0;
+      for (let i = 0; i < v.dim; i += 1) dot += q[i] * v.mat[base + i];
+      const o = v.owner[r];
+      if (dot > best[o]) { best[o] = dot; theirs[o] = v.person[r]; }
+    }
+  }
+
+  const records = state.library ? state.library.all() : {};
+  const order = [];
+  for (let i = 0; i < v.keys.length; i += 1) {
+    if (v.keys[i] !== key) order.push(i);
+  }
+  order.sort((a, b) => best[b] - best[a]);
+
+  for (const i of order) {
+    if (Object.keys(out).length === wanted.size) break;
+    const other = v.keys[i];
+    const where = state.pathByKey.get(other);
+    if (!where) continue;
+    for (const credited of (records[other] || {}).models || []) {
+      const want = wanted.get(String(credited).toLowerCase());
+      if (!want || out[want]) continue;
+      out[want] = {
+        key: other,
+        path: where,
+        person: theirs[i],
+        score: Math.round(best[i] * 1000) / 1000,
+      };
+    }
+  }
+  return out;
+}
+
 // -------------------------------------------------------------- the listing
 
 const EMPTY = Object.freeze({ suggested: [], profiled: false, people: 0 });
@@ -1346,7 +1405,7 @@ module.exports = {
   init, start, setEnabled, status, noteActivity, rootsChanged, decorate, writeDigest,
   rescoreOne,
   suggestionsFor, rankFor,
-  lineup, faceImageByKey, standing, similar, notePath, forgetPath,
+  lineup, faceImageByKey, standing, similar, bestOf, notePath, forgetPath,
   // The reading order, for checking what a fresh install would do first.
   __queueForTest: walkForWork,
   faceImage, profile, rebuild, flush, keyFor, MIN_VIDEOS,

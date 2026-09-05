@@ -1704,6 +1704,31 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ...found, videos });
     }
 
+    // A picture for each named performer: her video that most resembles this
+    // one. What turns a row of names into a row of thumbnails.
+    if (req.method === 'GET' && route === '/api/faces/best') {
+      const target = authoriseOrThrow(url.searchParams.get('path') || '');
+      const stat = await fsp.stat(target);
+      const names = String(url.searchParams.get('models') || '')
+        .split('\n').map((s) => s.trim()).filter(Boolean).slice(0, 12);
+      const picked = faces.bestOf(stat, names);
+      const out = {};
+      for (const [name, row] of Object.entries(picked)) {
+        // Same guard the row below uses: the sweep's note of where this was can
+        // be a quarter of an hour old, and a picture of the wrong video is
+        // worse than no picture.
+        let at;
+        try { at = await fsp.stat(row.path); } catch { faces.forgetPath(row.key); continue; }
+        if (faces.keyFor(at) !== row.key) { faces.forgetPath(row.key); continue; }
+        out[name] = {
+          ...row,
+          name: path.basename(row.path),
+          cloudOnly: isCloudOnly(at),
+        };
+      }
+      return sendJson(res, 200, { best: out });
+    }
+
     // A performer's other faces, to hold the suggested one up against.
     if (req.method === 'GET' && route === '/api/faces/lineup') {
       return sendJson(res, 200, faces.lineup(

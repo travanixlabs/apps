@@ -1996,18 +1996,139 @@ function closeFaceHover() {
   if (card) card.hidden = true;
 }
 
+
+/**
+ * Nothing under half is offered in the recognise row.
+ *
+ * The recogniser's own bands reach down to 0.38, and they stay there -- they
+ * decide what counts as a suggestion at all, which the filters and the
+ * grouping are both built on. This is a separate question: what is worth
+ * putting a picture on and inviting a click. The row of related videos draws
+ * its line at the same place, so the two rows agree.
+ */
+const FACE_FLOOR = 0.50;
+
+/**
+ * A suggested performer, as a tile.
+ *
+ * The same shape as a tile in the row below, because it answers the same
+ * question. The picture is her video that most resembles this one, so the row
+ * reads as "here is who, and here is what that looks like" rather than as a
+ * list of names to be taken on trust.
+ *
+ * Three pictures are tried in turn: her most-like-this video's poster; that
+ * video's stored face crop; and failing both, the face in THIS video that she
+ * was matched against, which always exists because it is what made the
+ * suggestion.
+ */
+function buildFaceTile(file, sug, { onPick, best }) {
+  const tile = document.createElement('button');
+  tile.type = 'button';
+  tile.className = `similar-tile face-tile band-${sug.band || 'near'}`;
+  const already = (file.models || []).some((m) => m.toLowerCase() === sug.name.toLowerCase());
+  if (already) tile.classList.add('confirmed');
+
+  const shot = document.createElement('span');
+  shot.className = 'similar-shot preview';
+  tile.appendChild(shot);
+  const ownFace = () => {
+    shot.classList.add('face-only');
+    shot.style.backgroundImage = `url("/api/faces/face?path=${encodeURIComponent(file.path)}`
+      + `&person=${sug.person || 0}")`;
+  };
+  if (best && best.path) {
+    loadThumb(best.path, shot).then((got) => {
+      if (got) return;
+      // Her video had no poster to be had; her face from it is the next best
+      // picture, and this video's face is the one after that.
+      const probe = new Image();
+      const at = `/api/faces/crop?key=${encodeURIComponent(best.key)}`
+        + `&person=${Number(best.person) || 0}`;
+      probe.onload = () => {
+        shot.classList.add('face-only');
+        shot.style.backgroundImage = `url("${at}")`;
+      };
+      probe.onerror = ownFace;
+      probe.src = at;
+    });
+  } else {
+    ownFace();
+  }
+
+  const pct = document.createElement('span');
+  pct.className = 'similar-pct';
+  pct.textContent = `${Math.round(sug.score * 100)}%`;
+  shot.appendChild(pct);
+
+  // Credited or not, on the picture, where the row can be read at a glance.
+  const mark = document.createElement('span');
+  mark.className = 'similar-mark';
+  mark.textContent = already ? '\u2713' : '+';
+  shot.appendChild(mark);
+
+  const name = document.createElement('span');
+  name.className = 'similar-name';
+  name.textContent = sug.name;
+  tile.appendChild(name);
+
+  tile.title = [
+    sug.videos
+      ? `${Math.round(sug.score * 100)}% like ${sug.name}'s average face, `
+        + `across the ${sug.videos} videos she is named in`
+      : `${Math.round(sug.score * 100)}% like ${sug.name} \u2014 below the bar, `
+        + 'so not suggested',
+    sug.margin
+      ? `${Math.round(sug.margin * 100)} points clear of the next name`
+        + (sug.runnerUp ? ` (${sug.runnerUp})` : '')
+        + (sug.band ? ` \u2014 ${BAND_LABEL[sug.band]}` : '')
+      : null,
+    best && best.path ? `Pictured: ${best.name}, her video most like this one` : null,
+    'Hover to compare the faces',
+    already ? 'Already credited on this video' : 'Click to add her',
+  ].filter(Boolean).join('\n');
+
+  tile.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    if (!already) onPick(sug.name);
+  });
+  attachFaceHover(tile, file, sug);
+  return tile;
+}
+
+/**
+ * The pictures for a set of names, in one request.
+ *
+ * Asked for all of them at once rather than per tile: it is one pass over the
+ * vectors either way, and a row of four would otherwise do that pass four
+ * times.
+ */
+async function picturesFor(file, names) {
+  if (!names.length) return {};
+  try {
+    const got = await api(`/api/faces/best?path=${encodeURIComponent(file.path)}`
+      + `&models=${encodeURIComponent(names.join('\n'))}`);
+    return got.best || {};
+  } catch {
+    return {};
+  }
+}
+
 /**
  * The suggestion strip under the player.
  *
  * Shown for a credited video as well as an uncredited one: a face that agrees
  * with the name is a confirmation, and one that disagrees is the most useful
  * thing this feature can tell you.
+ *
+ * A row of thumbnails, like the one below it. No heading: the ✓ on a tile says
+ * credited, its absence says not, and how many there are is the row's length.
  */
-function buildPlayerSuggestions(file) {
+async function buildPlayerSuggestions(file) {
   const host = $('#playerSuggest');
   if (!host) return;
   const current = state.files.find((f) => f.path === file.path) || file;
-  const suggested = current.suggested || [];
+  const suggested = (current.suggested || []).filter((s) => s.score >= FACE_FLOOR);
   // These chips are about to be replaced, and a card left open would be
   // anchored to one that no longer exists.
   closeFaceHover();
@@ -2023,29 +2144,29 @@ function buildPlayerSuggestions(file) {
   const refused = current.notModels || [];
 
   if (!suggested.length) {
-    say(host, 'face-lead', current.profiled ? 'Checking…' : 'Not read for faces yet');
-    if (current.profiled) explainNothing(host, current);
+    if (!current.profiled) { appendRefused(host, current, refused); return; }
+    await explainNothing(host, current);
     appendRefused(host, current, refused);
     return;
   }
 
-  const named = new Set((current.models || []).map((m) => m.toLowerCase()));
-  const missing = suggested.filter((sug) => !named.has(sug.name.toLowerCase())).length;
-  const label = document.createElement('span');
-  label.className = 'face-lead';
-  // A video can hold more than one performer, so the count is the useful part:
-  // "two names it lacks" is a job, where "looks like" is only an observation.
-  label.textContent = missing === 0 ? 'All credited'
-    : missing === suggested.length ? 'Looks like'
-      : `Also looks like · ${missing} not credited`;
-  host.appendChild(label);
+  const pictures = await picturesFor(current, suggested.map((s) => s.name));
+  // The player moves on faster than a fetch returns when the arrow key is held
+  // down, and somebody else's suggestions under this video would be a lie.
+  if (!state.playing || state.playing.path !== file.path) return;
+  host.replaceChildren();
+
+  const row = document.createElement('div');
+  row.className = 'similar-row';
+  host.appendChild(row);
   for (const sug of suggested) {
-    host.appendChild(buildFaceChip(current, sug, {
+    row.appendChild(buildFaceTile(current, sug, {
+      best: pictures[sug.name],
       onPick: async (name) => {
         await editRecords([current.path], { addModels: [name] });
         // Accepting a name can take the video out of the filter that found it,
         // and the player then moves to the next one. Redrawing the strip for
-        // the video that was open would put its chips over somebody else's --
+        // the video that was open would put its tiles over somebody else's --
         // so whatever is playing NOW is what the strip is rebuilt for.
         if (state.playing) buildPlayerSuggestions(state.playing);
         else host.replaceChildren();
@@ -2287,90 +2408,62 @@ function say(host, className, text) {
  * The near misses open the lineup rather than adding anyone -- they did not
  * clear the bar, so the one useful action is to look.
  */
+/**
+ * Why a profiled video suggested nobody, and who came closest.
+ *
+ * A near miss and an empty video look identical from outside, and the first is
+ * worth seeing: a name that fell just short says the performer is in the index
+ * but the evidence was thin, where nothing at all says the video is unreadable.
+ *
+ * The near misses are tiles like any other. Being below the bar is a statement
+ * about how sure the recogniser is, not about what you are allowed to do, so
+ * clicking one credits her exactly as clicking a suggestion does.
+ */
 async function explainNothing(host, file) {
   let info;
   try {
     info = await api(`/api/faces/standing?path=${encodeURIComponent(file.path)}`);
   } catch {
     host.replaceChildren();
-    say(host, 'face-lead', 'Could not read its standing');
     return;
   }
   // The player may have moved on while that was in the air.
   if (!state.playing || state.playing.path !== file.path) return;
   host.replaceChildren();
+  if (!info.profiled || !info.people) return;
 
-  if (!info.profiled) { say(host, 'face-lead', 'Not read for faces yet'); return; }
-  if (!info.people) {
-    say(host, 'face-lead', 'No usable face');
-    say(host, 'face-note', info.faces
-      ? `${info.faces} face${info.faces === 1 ? '' : 's'} found, too few to compare`
-      : 'nothing clear enough to compare — often a video shot from behind or in the dark');
-    return;
-  }
+  // Nothing under half is offered. The bands themselves go down to 0.38, which
+  // was defensible when the answer was a name in a line of text; a picture
+  // invites a click, and a 40% face is not worth inviting one on. The row
+  // below draws its line in the same place.
+  const near = (info.near || []).filter((n) => n.score >= FACE_FLOOR);
+  if (!near.length) return;
 
-  say(host, 'face-lead', 'Nobody recognised');
-  if (!info.near.length) {
-    say(host, 'face-note', info.performers
-      ? 'no performer in the index is close'
-      : 'no performer has enough profiled videos to compare against yet');
-    return;
-  }
-  say(host, 'face-note', 'closest');
-  for (const near of info.near) {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'face-chip band-near';
-    // A name can be credited already and still be the closest face: the bar is
-    // about how sure the recognition is, not about what is on the video. Now
-    // that the chip is the thing that adds her, it has to say which.
-    const already = (file.models || []).some((m) => m.toLowerCase() === near.name.toLowerCase());
-    if (already) chip.classList.add('confirmed');
-    const name = document.createElement('span');
-    name.className = 'face-name';
-    name.textContent = near.name;
-    chip.appendChild(name);
-    const pct = document.createElement('span');
-    pct.className = 'face-pct';
-    pct.textContent = `${Math.round(near.score * 100)}%`;
-    chip.appendChild(pct);
-    const mark = document.createElement('span');
-    mark.className = 'face-band';
-    mark.textContent = already ? '✓' : '+';
-    chip.appendChild(mark);
-    chip.title = [
-      `${Math.round(near.score * 100)}% like ${near.name} — below the bar, so not suggested`,
-      near.margin
-        ? `only ${Math.round(near.margin * 100)} point`
-          + `${Math.round(near.margin * 100) === 1 ? '' : 's'} clear of the next name; `
-          + 'a suggestion needs a real gap as well as a score'
-        : null,
-      already
-        ? 'Already credited on this video · hover to compare the faces'
-        : 'Hover to compare the faces · click to add her',
-    ].filter(Boolean).join('\n');
-    // Below the bar is a statement about confidence, not about what you are
-    // allowed to do. If the faces agree, crediting her is the same single click
-    // it is on a suggestion that cleared the bar.
+  const pictures = await picturesFor(file, near.map((n) => n.name));
+  if (!state.playing || state.playing.path !== file.path) return;
+  host.replaceChildren();
+
+  const row = document.createElement('div');
+  row.className = 'similar-row';
+  host.appendChild(row);
+  for (const one of near) {
     const sug = {
-      name: near.name,
-      score: near.score,
-      margin: near.margin,
+      name: one.name,
+      score: one.score,
+      margin: one.margin,
       band: 'near',
       person: 0,
       videos: 0,
-      runnerUp: '—',
+      runnerUp: '',
     };
-    chip.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      ev.preventDefault();
-      if (already) return;
-      closeFaceHover();
-      editRecords([file.path], { addModels: [near.name] })
-        .then(() => { if (state.playing) buildPlayerSuggestions(state.playing); });
-    });
-    attachFaceHover(chip, file, sug);
-    host.appendChild(chip);
+    row.appendChild(buildFaceTile(file, sug, {
+      best: pictures[one.name],
+      onPick: (name) => {
+        closeFaceHover();
+        editRecords([file.path], { addModels: [name] })
+          .then(() => { if (state.playing) buildPlayerSuggestions(state.playing); });
+      },
+    }));
   }
 }
 
