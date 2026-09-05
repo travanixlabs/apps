@@ -67,7 +67,6 @@ const state = {
   queue: [],
   current: '',
   failures: new Set(),
-  lastActivity: 0,
   nextWalk: 0,
   startedAt: 0,
   done: 0,
@@ -526,14 +525,11 @@ function decorate(stat) {
 // ------------------------------------------------------------------ the loop
 //
 // Deliberately the face profiler's manners rather than the tool's: one video at
-// a time, and only while the app is quiet. A backfill that makes browsing
-// stutter is worse than a backfill that takes a week, and this one runs for as
-// long as the app happens to be open rather than in one sitting.
+// a time, for as long as the app is open rather than in one sitting, and
+// stopped only by its own pill.
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** How long the app must be quiet before the sweep takes a turn. */
-const IDLE_MS = 1500;
 /** How often the library is walked again, so new files are picked up. */
 const WALK_EVERY_MS = 15 * 60 * 1000;
 /** How many new fingerprints are worth a re-match. */
@@ -545,12 +541,6 @@ const MATCH_AFTER = 25;
     cross-correlations. At twenty-five reads a batch that would soon be more
     matching than reading, so a match also has to wait its turn. */
 const MATCH_REST_MS = 5 * 60 * 1000;
-
-const busy = () => Date.now() - state.lastActivity < IDLE_MS;
-
-function noteActivity() {
-  state.lastActivity = Date.now();
-}
 
 /** A folder was opened that had not been before: count again now, not in 15m. */
 function rootsChanged() {
@@ -590,7 +580,6 @@ async function loop() {
       // Nothing may be queued until the index is read: a video whose
       // fingerprint has not loaded yet looks unread, and would be read again.
       if (!state.ready) { await wait(250); continue; }
-      if (busy()) { await wait(400); continue; }
 
       // An old-format digest is worth fixing before anything else: until it is,
       // the filters have nothing to filter on.
@@ -634,7 +623,7 @@ async function loop() {
         state.failures.add(next.key);
       }
       state.current = '';
-      if (state.sinceMatch >= MATCH_AFTER && !busy()
+      if (state.sinceMatch >= MATCH_AFTER
         && Date.now() - state.lastMatch > MATCH_REST_MS) await refresh();
       await wait(150);
     }
@@ -774,7 +763,6 @@ module.exports = {
   forget,
   start,
   setEnabled,
-  noteActivity,
   rootsChanged,
   refresh,
   loadIndex,

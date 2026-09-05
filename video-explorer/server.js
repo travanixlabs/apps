@@ -1360,13 +1360,6 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${HOST}:${PORT}`);
   const route = url.pathname;
 
-  // The background sweep stands aside while the app is being used. Its own
-  // status polling does not count as use, or it would starve itself.
-  if (!route.startsWith('/api/faces/')) faces.noteActivity();
-  // The duplicate worker yields to the app the same way, and for the same
-  // reason -- a decode holds the CPU in bursts and browsing must win.
-  if (!route.startsWith('/api/dupes/')) dupes.noteActivity();
-
   try {
     if (req.method === 'GET' && (route === '/' || route === '/index.html')) {
       return serveStatic(res, 'index.html');
@@ -1591,8 +1584,7 @@ const server = http.createServer(async (req, res) => {
 
     // ------------------------------------------------------- familiar faces
 
-    // How far the backfill has got. Polled by the UI, and deliberately exempt
-    // from the activity clock so asking does not pause the answering.
+    // How far the backfill has got. Polled by the UI.
     if (req.method === 'GET' && route === '/api/dupes/status') {
       return sendJson(res, 200, dupes.status());
     }

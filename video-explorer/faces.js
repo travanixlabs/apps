@@ -95,7 +95,6 @@ const state = {
   lastRead: '',
   done: 0,
   startedAt: 0,
-  lastActivity: 0,
   counted: { downloaded: 0, at: 0 },
   // Every downloaded video's key, from the last sweep for work. Its purpose is
   // the difference: a profile whose video is NOT in here is one whose file has
@@ -262,14 +261,6 @@ async function writeEntry(key, entry) {
     await fsp.mkdir(dir, { recursive: true });
     await fsp.writeFile(path.join(dir, `${fileNameFor(key)}.json`), JSON.stringify(entry));
   } catch { /* a full or read-only disk must not break browsing */ }
-}
-
-async function dropEntry(key) {
-  delete state.index.videos[key];
-  vectorsDirty = true;
-  try {
-    await fsp.unlink(path.join(state.dir, ENTRIES, `${fileNameFor(key)}.json`));
-  } catch { /* never written, or already gone */ }
 }
 
 /**
@@ -1227,17 +1218,9 @@ function prioritise(work) {
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// How long the app must be quiet before the sweep takes a turn. Profiling holds
-// the CPU in bursts, and a browse that stutters is worse than a slow backfill.
-const IDLE_MS = 1500;
 // How often the library is counted again, so the pill's denominator corrects
 // itself rather than standing at whatever the first sweep happened to see.
 const WALK_EVERY_MS = 15 * 60 * 1000;
-const busy = () => Date.now() - state.lastActivity < IDLE_MS;
-
-function noteActivity() {
-  state.lastActivity = Date.now();
-}
 
 /**
  * A folder was opened that had not been before.
@@ -1253,11 +1236,13 @@ function rootsChanged() {
 }
 
 /**
- * The sweep itself: one video at a time, only while nothing else is happening.
+ * The sweep itself: one video at a time, for as long as it is switched on.
  *
- * It yields to the app rather than competing with it — the moment a request
- * arrives the current harvest abandons its remaining frames, and the loop waits
- * for quiet before picking the next file.
+ * It used to stand aside whenever the app was used, on an activity clock any
+ * request refreshed. A browse is requests with gaps in between; playback is a
+ * range request every few seconds for as long as the video runs, so opening the
+ * player stopped the sweep for the whole viewing — the time it has the machine
+ * most to itself. The pill is the pause button, and now the only one.
  */
 async function loop() {
   if (state.running) return;
@@ -1267,7 +1252,6 @@ async function loop() {
       // Nothing may be queued until the store is fully read: a video whose
       // profile has not loaded yet looks unread, and would be read again.
       if (state.loading) { await wait(250); continue; }
-      if (busy()) { await wait(400); continue; }
 
       // Re-counted on a timer as well as when the queue runs dry. The library
       // is not fixed -- files are added, and freed up -- and on a fresh install
@@ -1296,17 +1280,13 @@ async function loop() {
       state.lastRead = state.current;
       if (!state.startedAt) state.startedAt = Date.now();
       try {
-        const entry = await profile(next.file, next.stat,
-          { shouldStop: busy, force: next.redo });
+        const entry = await profile(next.file, next.stat, { force: next.redo });
         if (!entry.people.length && entry.faces < 2) {
-          // Abandoned early because the app woke up, or genuinely faceless. A
-          // second look costs one more read; a third would be stubbornness.
+          // Genuinely faceless: a harvest is never cut short any more, so an
+          // empty result is the answer rather than an interruption. A second
+          // look costs one more read; a third would be stubbornness.
           const tries = (state.failures.get(next.key) || 0) + 1;
           state.failures.set(next.key, tries);
-          // Abandoned midway rather than genuinely empty: drop it so it is read
-          // again properly. Never for a re-read -- that would throw away a
-          // working profile in exchange for an interrupted one.
-          if (busy() && !next.redo) await dropEntry(next.key);
         } else {
           // A solo credit joins someone's average, which moves every score. An
           // unnamed video moves nothing but its own, so it is scored alone --
@@ -1363,7 +1343,6 @@ function status() {
     enabled: state.enabled,
     running: state.running,
     walking: state.walking,
-    idle: !busy(),
     current: state.current,
     // What it is doing right now, in one word, so the UI does not have to
     // reconstruct it from four booleans.
@@ -1402,7 +1381,7 @@ function status() {
 }
 
 module.exports = {
-  init, start, setEnabled, status, noteActivity, rootsChanged, decorate, writeDigest,
+  init, start, setEnabled, status, rootsChanged, decorate, writeDigest,
   rescoreOne,
   suggestionsFor, rankFor,
   lineup, faceImageByKey, standing, similar, bestOf, notePath, forgetPath,
