@@ -794,6 +794,19 @@ function notePath(stat, at) {
   if (at) state.pathByKey.set(keyFor(stat), at);
 }
 
+/**
+ * And unlearnt, when the file turns out not to be there.
+ *
+ * Only the location is forgotten. The profile itself is kept: it is keyed by
+ * size and modified time, so a video restored from the Recycle Bin, or a drive
+ * plugged back in, walks straight back into everything already known about it.
+ * Throwing away hours of reading because a file moved would be the expensive
+ * mistake, and it is not one this can be talked into.
+ */
+function forgetPath(key) {
+  return state.pathByKey.delete(key);
+}
+
 function suggestionsFor(stat) {
   return state.suggestions.get(keyFor(stat)) || [];
 }
@@ -1322,7 +1335,7 @@ module.exports = {
   init, start, setEnabled, status, noteActivity, rootsChanged, decorate, writeDigest,
   rescoreOne,
   suggestionsFor, rankFor,
-  lineup, faceImageByKey, standing, similar, notePath,
+  lineup, faceImageByKey, standing, similar, notePath, forgetPath,
   // The reading order, for checking what a fresh install would do first.
   __queueForTest: walkForWork,
   faceImage, profile, rebuild, flush, keyFor, MIN_VIDEOS,

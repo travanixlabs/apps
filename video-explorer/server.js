@@ -1317,6 +1317,11 @@ async function handleAction(body) {
         // A pair minus one member is not a pair -- the survivor must stop being
         // called a copy, or the Duplicates filter keeps listing it.
         if (key) dupes.forget(key);
+        // And it is no longer anywhere, so it must stop being offered as
+        // somewhere else this face can be found. Its profile is kept: restore
+        // it from the Recycle Bin and the key is unchanged, so everything known
+        // about it comes back with it.
+        if (key) faces.forgetPath(key);
         results.push({ path: src, ok: true, message: 'Sent to Recycle Bin' });
       } else if (op === 'move') {
         if (!body.dest) throw new Error('No destination folder given');
@@ -1676,8 +1681,10 @@ const server = http.createServer(async (req, res) => {
         // Stat it: gone, and it is not offered; different file at that path,
         // and it is a different video wearing the name of this one.
         let at;
-        try { at = await fsp.stat(row.path); } catch { continue; }
-        if (faces.keyFor(at) !== row.key) continue;
+        try { at = await fsp.stat(row.path); } catch { faces.forgetPath(row.key); continue; }
+        // A different file at that path now. The video this profile describes
+        // is not there, whatever is.
+        if (faces.keyFor(at) !== row.key) { faces.forgetPath(row.key); continue; }
         videos.push({
           ...describeVideo({
             path: row.path,
