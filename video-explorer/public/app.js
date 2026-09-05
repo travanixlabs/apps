@@ -2121,8 +2121,8 @@ async function buildPlayerSimilar(file) {
         ? 'still finding where the library is \u2014 open a folder, or give the '
           + 'sweep a minute'
         : found.unreachable
-          ? `${found.unreachable} match${found.unreachable === 1 ? '' : 'es'}, `
-            + 'none of them in a folder that has been opened'
+          ? `${found.unreachable} match${found.unreachable === 1 ? '' : 'es'} found, `
+            + 'still working out where they live'
           : found.closest
             ? `no other video is clearly her \u2014 closest is `
               + `${Math.round(found.closest * 100)}%`
@@ -2189,6 +2189,29 @@ function watchSimilarScroll() {
 }
 
 /**
+ * When no poster can be had, the face itself.
+ *
+ * A 112px crop was saved for every profiled video, so there is a picture even
+ * for a file in the cloud that has no thumbnail anywhere. It is also the very
+ * face this match was made on, which for this row is arguably the more honest
+ * illustration.
+ */
+function showTheFace(shot, other) {
+  if (!other.key) { shot.classList.add('cloud'); return; }
+  const at = `/api/faces/crop?key=${encodeURIComponent(other.key)}`
+    + `&person=${Number(other.person) || 0}`;
+  // Loaded before it is applied: a background that 404s leaves an empty box
+  // with no way to know it happened, where the cloud mark at least says why.
+  const probe = new Image();
+  probe.onload = () => {
+    shot.classList.add('face-only');
+    shot.style.backgroundImage = `url("${at}")`;
+  };
+  probe.onerror = () => shot.classList.add('cloud');
+  probe.src = at;
+}
+
+/**
  * One video in the row.
  *
  * The percentage is on the picture rather than beside it: it is the reason the
@@ -2211,10 +2234,12 @@ function buildSimilarTile(other) {
   const shot = document.createElement('span');
   shot.className = 'similar-shot preview';
   tile.appendChild(shot);
-  // Cloud-only videos are listed but never fetched for a picture: the poster
-  // would hydrate the file, and this app does not download anything.
-  if (!other.cloudOnly) loadThumb(other.path, shot);
-  else shot.classList.add('cloud');
+  // Asked for even when the file is in the cloud. The route never builds a
+  // poster from a cloud file -- that would download it -- but it will serve one
+  // built while the file was here, and failing that ask OneDrive for the
+  // thumbnail it already holds, which is sixteen kilobytes and hydrates
+  // nothing. Only when both come to nothing does the face stand in.
+  loadThumb(other.path, shot).then((got) => { if (!got) showTheFace(shot, other); });
 
   const pct = document.createElement('span');
   pct.className = 'similar-pct';

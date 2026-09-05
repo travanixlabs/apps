@@ -1692,6 +1692,9 @@ const server = http.createServer(async (req, res) => {
             mtimeMs: at.mtimeMs,
             cloudOnly: isCloudOnly(at),
           }, ''),
+          // The key addresses the face crop saved when it was profiled, which
+          // is the picture of last resort for a video no poster can be had for.
+          key: row.key,
           score: row.score,
           band: row.band,
           person: row.person,

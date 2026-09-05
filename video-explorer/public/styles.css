@@ -1565,6 +1565,16 @@ body.dragging .card { cursor: grabbing; }
   overflow: hidden;
 }
 .similar-tile:hover .similar-shot { border-color: var(--accent); }
+/* No poster anywhere, so the face this matched on stands in for the video.
+   Contained rather than covering: it is a 112px square, and stretching it to
+   fill a 16:9 tile would be a worse picture than a small honest one. */
+.similar-shot.face-only {
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-color: #0d0f13;
+}
+
 .similar-shot.cloud::after {
   content: '\2601';
   position: absolute;

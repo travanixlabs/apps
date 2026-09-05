@@ -1076,10 +1076,15 @@ async function walkForWork() {
       } else if (/\.(mp4|m4v|mov|mkv|webm)$/i.test(e.name)) {
         let stat;
         try { stat = await fsp.stat(full); } catch { continue; }
-        if (isCloudOnly(stat)) continue;
         const key = keyFor(stat);
-        onDisk.add(key);
+        // Where it is, whether or not it is here. A cloud-only video is never
+        // read -- that would download it -- but not reading one and not knowing
+        // where it lives are different things, and only the first is required.
+        // Most of this library lives in the cloud, so forgetting those
+        // addresses threw away most of what the index could offer.
         paths.set(key, full);
+        if (isCloudOnly(stat)) continue;
+        onDisk.add(key);
         if (seen.has(key)) continue;
         const have = state.index.videos[key];
         // Read at the current settings: nothing to do. Read at older ones: worth
