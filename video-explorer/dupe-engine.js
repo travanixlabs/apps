@@ -89,16 +89,36 @@ async function soundOf(file) {
   return env;
 }
 
-/** 64-bit dHash of one HASH_W x HASH_H greyscale frame, as a BigInt. */
-function hashFrame(buf, at) {
-  let bits = 0n;
-  for (let row = 0; row < HASH_H; row += 1) {
-    for (let col = 0; col < HASH_H; col += 1) {
-      const i = at + row * HASH_W + col;
-      bits = (bits << 1n) | (buf[i] > buf[i + 1] ? 1n : 0n);
+/**
+ * The 64-bit dHash of one HASH_W x HASH_H greyscale frame, as two 32-bit words.
+ *
+ * Two words rather than a BigInt because counting differing bits is the inner
+ * loop of every comparison, and on a BigInt that is 64 BigInt operations where
+ * on a word it is a five-instruction twiddle. Measured: 42ms a pair became
+ * under 2ms. The halves are written high-then-low so the bytes on disk are
+ * exactly what a big-endian uint64 gave.
+ */
+function hashFrame(buf, at, out, slot) {
+  for (const half of [0, 1]) {
+    let bits = 0;
+    for (let row = half * 4; row < half * 4 + 4; row += 1) {
+      for (let col = 0; col < HASH_H; col += 1) {
+        const i = at + row * HASH_W + col;
+        // >>> 0 keeps it unsigned: a 1 shifted into bit 31 is negative
+        // otherwise, and the byte written out would be wrong.
+        bits = ((bits << 1) | (buf[i] > buf[i + 1] ? 1 : 0)) >>> 0;
+      }
     }
+    out[slot * 2 + half] = bits;
   }
-  return bits;
+}
+
+/** Bits set in a 32-bit word, without a loop. */
+function bits32(v) {
+  let x = v - ((v >>> 1) & 0x55555555);
+  x = (x & 0x33333333) + ((x >>> 2) & 0x33333333);
+  x = (x + (x >>> 4)) & 0x0f0f0f0f;
+  return (x * 0x01010101) >>> 24;
 }
 
 /**
@@ -130,8 +150,10 @@ async function pictureOf(file) {
 
   const frameBytes = HASH_W * HASH_H;
   const count = Math.floor(out.length / frameBytes);
-  const hashes = new Array(count);
-  for (let i = 0; i < count; i += 1) hashes[i] = hashFrame(out, i * frameBytes);
+  // Two words per frame, laid out flat: one allocation, and the comparison
+  // walks it without chasing pointers.
+  const hashes = new Uint32Array(count * 2);
+  for (let i = 0; i < count; i += 1) hashFrame(out, i * frameBytes, hashes, i);
 
   return { hashes, cuts };
 }
@@ -147,7 +169,7 @@ async function fingerprint(file) {
   const [sound, picture] = await Promise.all([soundOf(file), pictureOf(file)]);
   return {
     sound,                       // Float64Array | null
-    hashes: picture.hashes,      // BigInt[]
+    hashes: picture.hashes,      // Uint32Array, two words a frame
     cuts: picture.cuts,          // seconds
   };
 }
@@ -188,17 +210,17 @@ function unpackSound(packed) {
   return env;
 }
 
-function packHashes(hashes) {
-  const buf = Buffer.allocUnsafe(hashes.length * 8);
-  for (let i = 0; i < hashes.length; i += 1) buf.writeBigUInt64BE(hashes[i], i * 8);
+function packHashes(words) {
+  const buf = Buffer.allocUnsafe(words.length * 4);
+  for (let i = 0; i < words.length; i += 1) buf.writeUInt32BE(words[i] >>> 0, i * 4);
   return buf.toString('base64');
 }
 
 function unpackHashes(text) {
-  if (!text) return [];
+  if (!text) return new Uint32Array(0);
   const buf = Buffer.from(text, 'base64');
-  const out = new Array(Math.floor(buf.length / 8));
-  for (let i = 0; i < out.length; i += 1) out[i] = buf.readBigUInt64BE(i * 8);
+  const out = new Uint32Array(Math.floor(buf.length / 4));
+  for (let i = 0; i < out.length; i += 1) out[i] = buf.readUInt32BE(i * 4);
   return out;
 }
 
@@ -277,7 +299,7 @@ function longestRun(a, b) {
  * the verdict and its position is the offset; the height of the second-best
  * peak elsewhere says whether the first one means anything.
  */
-function alignSound(x, y, hz, maxShiftSec = 180) {
+function alignSound(x, y, hz, maxShiftSec = MAX_SHIFT_SEC) {
   if (!x || !y || !x.length || !y.length) return null;
   const max = Math.round(maxShiftSec * hz);
   const floor = Math.round(30 * hz); // at least 30s of overlap to have an opinion
@@ -324,18 +346,24 @@ const popcount = (v) => {
  * that agree on an alignment they each found alone is the strongest evidence
  * available here, and it costs nothing extra to have them work separately.
  */
-function alignPicture(a, b, every, maxShiftSec = 180) {
-  if (!a.length || !b.length) return null;
+function alignPicture(a, b, every, maxShiftSec = MAX_SHIFT_SEC) {
+  const na = a.length >>> 1;
+  const nb = b.length >>> 1;
+  if (!na || !nb) return null;
   const max = Math.round(maxShiftSec / every);
   const floor = Math.max(4, Math.round(30 / every));
   let best = null;
   let second = 64;
   for (let s = -max; s <= max; s += 1) {
     const from = Math.max(0, -s);
-    const to = Math.min(a.length, b.length - s);
+    const to = Math.min(na, nb - s);
     if (to - from < floor) continue;
     let sum = 0;
-    for (let i = from; i < to; i += 1) sum += popcount(a[i] ^ b[i + s]);
+    for (let i = from; i < to; i += 1) {
+      const x = (i << 1);
+      const y = ((i + s) << 1);
+      sum += bits32((a[x] ^ b[y]) >>> 0) + bits32((a[x + 1] ^ b[y + 1]) >>> 0);
+    }
     const mean = sum / (to - from);
     if (!best || mean < best.mean) {
       if (best && Math.abs(best.shift - s) > 3) second = Math.min(second, best.mean);
@@ -376,6 +404,21 @@ function alignPicture(a, b, every, maxShiftSec = 180) {
 // the mean is taken over the whole overlap -- a shared studio logo at the top
 // of two different videos cannot drag it down.
 
+/**
+ * How far apart two copies may be trimmed and still be found.
+ *
+ * Every offset in range is tried, on both signals, so this is a direct multiple
+ * of the cost -- which is why it was first set to 90s on the strength of a
+ * handful of examples. The library disagreed: of 89 matched pairs the median
+ * offset is 6.5s and the ninetieth percentile 47s, but five sit beyond 60s and
+ * the largest is 144.5s. A 90s cap silently lost two real duplicates, scoring
+ * them 24 and 28 bits apart instead of 10 and 6.
+ *
+ * So it stays at 180, and the speed comes from the comparison being cheap
+ * rather than from the search being short.
+ */
+const MAX_SHIFT_SEC = 180;
+
 const SOUND_PASS = 0.75;
 const PICTURE_PASS = 18;
 const OFFSET_AGREE = 2.5;
@@ -389,7 +432,7 @@ const RUN_PASS = 8;
  * only one signal likes is exactly the pair a person should look at.
  */
 function compare(a, b, opts = {}) {
-  const maxShift = opts.maxShiftSec || 180;
+  const maxShift = opts.maxShiftSec || MAX_SHIFT_SEC;
   const hz = Math.min(a.hz, b.hz);
   const every = Math.max(a.every, b.every);
 
@@ -432,6 +475,8 @@ const round = (n, places) => {
 };
 
 module.exports = {
+  MAX_SHIFT_SEC,
+  bits32,
   ENVELOPE_HZ,
   FRAME_EVERY,
   SOUND_PASS,

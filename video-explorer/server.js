@@ -992,6 +992,34 @@ async function migrateCacheNames() {
   return { seen, moved };
 }
 
+/**
+ * One video as a listing entry.
+ *
+ * Factored out because the duplicates view needs the same shape for a file in
+ * a folder nobody has opened -- and two builders that had to agree would not
+ * have, the first time one of them gained a field.
+ */
+function describeVideo(video, dir) {
+  return {
+    path: video.path,
+    name: path.basename(video.path),
+    folder: path.dirname(video.path),
+    relFolder: dir ? (path.relative(dir, path.dirname(video.path)) || '.') : '',
+    ext: path.extname(video.path).toLowerCase(),
+    size: video.size,
+    mtimeMs: video.mtimeMs,
+    cloudOnly: video.cloudOnly,
+    // Free: the scan already holds the stat these are keyed by, so ratings and
+    // tags arrive with the listing rather than costing a second round trip.
+    ...library.decorate(video),
+    // Likewise for who the faces look like, so "has a suggestion" is a filter
+    // the listing can answer on its own.
+    ...faces.decorate(video),
+    // And whether this is one of several copies of the same video.
+    ...dupes.decorate(video),
+  };
+}
+
 async function scanDirectory(dir, recursive, includeCloud) {
   const videos = await collectVideos(dir);
   const folders = await listSubfolders(dir, videos);
@@ -1007,24 +1035,7 @@ async function scanDirectory(dir, recursive, includeCloud) {
 
   // Deliberately NO ffprobe here. Probing 47 cloud-backed files took 91s and
   // silently downloaded gigabytes. Metadata is fetched per page via /api/meta.
-  const files = shown.map((video) => ({
-    path: video.path,
-    name: path.basename(video.path),
-    folder: path.dirname(video.path),
-    relFolder: path.relative(dir, path.dirname(video.path)) || '.',
-    ext: path.extname(video.path).toLowerCase(),
-    size: video.size,
-    mtimeMs: video.mtimeMs,
-    cloudOnly: video.cloudOnly,
-    // Free: the scan already holds the stat these are keyed by, so ratings and
-    // tags arrive with the listing rather than costing a second round trip.
-    ...library.decorate(video),
-    // Likewise for who the faces look like, so "has a suggestion" is a filter
-    // the listing can answer on its own.
-    ...faces.decorate(video),
-    // And whether this is one of several copies of the same video.
-    ...dupes.decorate(video),
-  }));
+  const files = shown.map((video) => describeVideo(video, dir));
 
   const cloudBelow = videos.reduce((n, v) => n + (v.cloudOnly ? 1 : 0), 0);
   return { files, folders, totalBelow: videos.length, cloudBelow, cloudHidden };
@@ -1573,6 +1584,28 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && route === '/api/dupes/match') {
       await dupes.refresh();
       return sendJson(res, 200, dupes.status());
+    }
+
+    // Every video that is one of several copies, wherever it lives. The
+    // grouping asks for this so a set split across folders is still a set.
+    if (req.method === 'GET' && route === '/api/dupes/files') {
+      const seen = new Set();
+      const files = [];
+      for (const member of dupes.members()) {
+        if (seen.has(member.path)) continue;
+        seen.add(member.path);
+        try {
+          const full = authoriseOrThrow(member.path);
+          const { stat, cloudOnly } = await statWithCloud(full);
+          // The key is size and modified time, so a file edited since it was
+          // read is a different video now and does not belong to this set.
+          if (dupes.keyFor(stat) !== member.key) continue;
+          files.push(describeVideo({
+            path: full, size: stat.size, mtimeMs: stat.mtimeMs, cloudOnly,
+          }, null));
+        } catch { /* moved, deleted, or outside the opened roots */ }
+      }
+      return sendJson(res, 200, { files });
     }
 
     if (req.method === 'GET' && route === '/api/dupes/groups') {

@@ -956,6 +956,47 @@ function buildModelGroups(list, mode = 'models') {
  * that is what deleting one recovers -- and the copies within a section by size
  * too, so the fullest is first and the runt beside it is the obvious candidate.
  */
+/**
+ * The copies that are not in the folder you are looking at.
+ *
+ * A set of copies is recorded across the whole library, but a listing is one
+ * folder -- so grouping by duplicate would show half a pair and have to explain
+ * itself. Fetching the rest is one request, answered from an index already in
+ * memory on the server, and it is only made while this grouping is on.
+ *
+ * Held until the next scan or edit, because the same set is regrouped on every
+ * render and re-fetching per keystroke would be absurd.
+ */
+let elsewhere = { at: 0, files: [] };
+
+async function fetchOtherCopies() {
+  try {
+    const { files } = await api('/api/dupes/files');
+    elsewhere = { at: Date.now(), files: files || [] };
+  } catch {
+    elsewhere = { at: Date.now(), files: [] };
+  }
+}
+
+function forgetOtherCopies() {
+  elsewhere = { at: 0, files: [] };
+}
+
+/**
+ * This listing, plus any copy of anything in it that lives somewhere else.
+ *
+ * Matched on path so a video already on screen keeps the record the listing
+ * gave it -- its rating and tags are the same either way, but the one from the
+ * scan carries the folder it was found in.
+ */
+function withOtherCopies(list) {
+  if (!elsewhere.files.length) return list;
+  const here = new Set(list.map((f) => f.path));
+  const groups = new Set(list.filter((f) => f.duplicate).map((f) => f.group));
+  const extra = elsewhere.files.filter((f) => !here.has(f.path) && groups.has(f.group));
+  return extra.length ? [...list, ...extra] : list;
+}
+
 function buildDupeGroups(list) {
   const groups = new Map();
   const alone = [];
@@ -985,13 +1026,10 @@ function buildDupeGroups(list) {
     const n = group.files.length;
     // The heading has to carry the finding, because the section IS the finding:
     // how many copies, and how sure the matcher was about them.
-    // Half a pair is not "1 copy" -- that reads as the opposite of what it
-    // means. Say how much of the set is here and where the rest is, because the
-    // answer is usually "flatten the subfolders" or "your filter hid it".
+    // A set that has lost members until one is left is not a set: the server
+    // dissolves it on deletion, so this only shows while a fetch is in flight.
     group.partial = group.total > n;
-    group.name = group.partial
-      ? `${n} of ${group.total} copies \u2014 the rest are not in this listing`
-      : `${n} cop${n === 1 ? 'y' : 'ies'}`;
+    group.name = `${n} cop${n === 1 ? 'y' : 'ies'}`;
     if (!group.both) group.name += ' \u2014 one signal only';
     group.label = group.name;
     // Everything but the largest: what keeping one of these would give back.
@@ -1019,7 +1057,7 @@ function buildDupeGroups(list) {
  */
 function buildSlots() {
   state.groups = !state.grouped ? []
-    : state.grouped === 'dupes' ? buildDupeGroups(state.view)
+    : state.grouped === 'dupes' ? buildDupeGroups(withOtherCopies(state.view))
       : buildModelGroups(state.view, state.grouped);
   state.slots = [];
   state.cards = [];
@@ -3196,13 +3234,15 @@ async function doAction(op, paths, extra = {}) {
   // Reflect the filesystem change locally instead of a full rescan.
   const removed = new Set(ok.filter((r) => op === 'delete' || op === 'move').map((r) => r.path));
   if (removed.size) {
-    // Which sets of copies just lost a member, before the files go.
-    const touched = new Set(state.files
-      .filter((f) => removed.has(f.path) && f.duplicate && f.group !== undefined)
-      .map((f) => f.group));
+    // A copy may have been deleted from either side: one in this folder, or one
+    // fetched in from another. Both are on screen in the duplicates view, so
+    // neither can be the only case handled.
+    const wasCopy = state.files.some((f) => removed.has(f.path) && f.duplicate)
+      || elsewhere.files.some((f) => removed.has(f.path));
     state.files = state.files.filter((f) => !removed.has(f.path));
     removed.forEach((p) => state.selected.delete(p));
-    if (touched.size) forgetCopies(touched);
+    forgetOtherCopies();
+    if (wasCopy) await refreshDupeFlags();
   }
   const renamed = ok.filter((r) => op === 'rename' && r.dest);
   for (const r of renamed) {
@@ -3227,27 +3267,43 @@ function baseName(p) {
 /**
  * Delete one copy and the other stops being one.
  *
- * The server forgets it too, but a round trip is not what should decide whether
- * the card in front of you is still listed -- under the Duplicates filter it
- * would sit there being a duplicate of something that no longer exists.
+ * Asked of the server rather than worked out here. The page can only see the
+ * folder it is showing, and in the duplicates view the copy you delete is very
+ * often the one fetched from somewhere else -- deleting that left the survivor
+ * still wearing its badge, in a section headed "1 copy", which is precisely the
+ * thing this feature exists to avoid.
  *
- * A set that drops to one member is not a set: that last video is simply a
- * video again, loses its badge, and leaves the filter.
+ * The server forgets the key and dissolves any set that drops below two, so its
+ * answer is the answer. A localhost round trip is a millisecond.
  */
-function forgetCopies(groups) {
-  for (const group of groups) {
-    const left = state.files.filter((f) => f.group === group);
-    if (left.length > 1) {
-      for (const f of left) f.copies = left.length;
-      continue;
-    }
-    for (const f of left) {
-      f.duplicate = false;
-      f.copies = 0;
-      f.dupeKinds = null;
-      f.group = undefined;
+async function refreshDupeFlags() {
+  let members = [];
+  try {
+    ({ files: members } = await api('/api/dupes/files'));
+  } catch {
+    return;
+  }
+  const byPath = new Map(members.map((f) => [f.path, f]));
+  const sizes = new Map();
+  for (const f of members) sizes.set(f.group, (sizes.get(f.group) || 0) + 1);
+
+  for (const file of state.files) {
+    const now = byPath.get(file.path);
+    if (now && sizes.get(now.group) > 1) {
+      file.duplicate = true;
+      file.group = now.group;
+      file.copies = sizes.get(now.group);
+      file.dupeKinds = now.dupeKinds;
+    } else if (file.duplicate) {
+      file.duplicate = false;
+      file.copies = 0;
+      file.dupeKinds = null;
+      file.group = undefined;
     }
   }
+  // The fetched siblings are the same answer, so keep them rather than asking
+  // twice for one deletion.
+  elsewhere = { at: Date.now(), files: members };
 }
 
 /**
@@ -4319,6 +4375,9 @@ async function toggleGrouped() {
   // than one more press away, whichever grouping you are in.
   state.grouped = GROUP_MODES[(GROUP_MODES.indexOf(state.grouped) + 1) % GROUP_MODES.length];
   syncGroupButton();
+  // The whole set, not the part of it in this folder.
+  if (state.grouped === 'dupes') await fetchOtherCopies();
+  else forgetOtherCopies();
   await saveConfig({ grouped: state.grouped });
   render();
   if (!state.grouped) return;
@@ -4952,6 +5011,9 @@ async function init() {
   state.grouped = state.config.grouped === true ? 'models'
     : (GROUP_MODES.includes(state.config.grouped) ? state.config.grouped : '');
   syncGroupButton();
+  // The mode is remembered across launches, so the fetch has to happen on the
+  // way in as well as on the click.
+  if (state.grouped === 'dupes') fetchOtherCopies().then(() => render());
   $('#sortSelect').value = state.config.sort || 'name';
   syncSortButton();
   $('#cardWidth').value = state.config.cardWidth || 520;

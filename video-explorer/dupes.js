@@ -74,6 +74,7 @@ const state = {
   sinceMatch: 0,
   needsMatch: false,
   lastMatch: 0,
+  pathByKey: new Map(),   // key -> where the walk last saw it
   downloaded: 0,
   counted: false,
 };
@@ -163,6 +164,7 @@ async function loadIndex() {
         secs: row.secs || 0,
         cuts: row.cuts || 0,
         name: row.name || '',
+        path: row.path || '',
       });
       loaded += 1;
     } catch { /* a half-written file from a hard kill: it will be redone */ }
@@ -247,10 +249,14 @@ async function profile(file, stat) {
   const raw = await engine.fingerprint(file);
   const row = engine.pack(raw);
   row.name = path.basename(file);
-  row.secs = raw.hashes.length * engine.FRAME_EVERY;
+  // Where it was when it was read. A stale path is harmless -- it is checked
+  // before use -- and it is the only way to put a set of copies on screen
+  // together when they live in different folders.
+  row.path = file;
+  row.secs = (raw.hashes.length >>> 1) * engine.FRAME_EVERY;
   await writePrint(key, row);
   state.light.set(key, {
-    gaps: row.gaps, secs: row.secs, cuts: row.cuts, name: row.name,
+    gaps: row.gaps, secs: row.secs, cuts: row.cuts, name: row.name, path: file,
   });
   state.scanned += 1;
   state.done += 1;
@@ -596,6 +602,11 @@ async function loop() {
           const found = await walkForWork();
           state.downloaded = found.length;
           state.counted = true;
+          // Where every downloaded video is, right now. The fingerprints
+          // written before this existed carry no path, and a walk is happening
+          // anyway -- so the live answer costs nothing and cannot go stale the
+          // way a recorded one can.
+          state.pathByKey = new Map(found.map((w) => [w.key, w.file]));
           state.queue = found.filter((w) => !has(w.key));
           state.nextWalk = Date.now() + WALK_EVERY_MS;
         } finally { state.walking = false; }
@@ -646,6 +657,26 @@ function setEnabled(on) {
  * Shaped like the face profiler's, because the pill beside it reads the same
  * way: a fraction of the downloaded library, and one word for what it is doing.
  */
+/**
+ * Every video that is one of several copies, with the path it was read at.
+ *
+ * The listing uses this to complete a set whose other half is in a folder you
+ * are not looking at -- the grouping is only worth having if the whole set is
+ * in it.
+ */
+function members() {
+  const out = [];
+  state.groups.forEach((group, at) => {
+    for (const key of group) {
+      const light = state.light.get(key) || {};
+      const where = state.pathByKey.get(key) || light.path;
+      if (!where) continue;
+      out.push({ key, group: at, path: where, name: light.name || '' });
+    }
+  });
+  return out;
+}
+
 function status() {
   const fingerprinted = state.light.size;
   return {
@@ -677,6 +708,7 @@ function status() {
 
 module.exports = {
   init,
+  members,
   forget,
   start,
   setEnabled,
