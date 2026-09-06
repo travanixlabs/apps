@@ -3343,6 +3343,24 @@ function applyThumb(previewEl, url) {
   if (placard) placard.remove();
 }
 
+/**
+ * Asks the server to resolve a cloud file's streaming URL before it is needed.
+ *
+ * Once per file per session: the server caches the answer for 45 minutes, and
+ * a second request would only confirm what it already knows. Failures are
+ * ignored on purpose -- this is an optimisation, and /api/video still does the
+ * lookup itself if this never ran.
+ */
+const warmed = new Set();
+function warmStream(file) {
+  if (!file || !file.cloudOnly || warmed.has(file.path)) return;
+  warmed.add(file.path);
+  fetch(`/api/warm?path=${encodeURIComponent(file.path)}`).catch(() => {
+    // Let it be tried again: the click may still be seconds away.
+    warmed.delete(file.path);
+  });
+}
+
 /** Dispatches to whichever engine is active. */
 function loadPoster(previewEl) {
   return state.config.previewMode === 'sprite'
@@ -3494,6 +3512,10 @@ function attachHover(previewEl, file) {
   };
 
   previewEl.addEventListener('mouseenter', async () => {
+    // Before anything else, and whether or not previews are opted into: get the
+    // streaming URL resolved now. Playing a cloud file needs a Graph lookup
+    // worth about three seconds, and hovering is the warning that it is coming.
+    warmStream(file);
     // Hovering must never trigger a multi-hundred-MB download.
     if (file.cloudOnly && !state.cloudOptIn.has(file.path)) return;
     // Opening the player moves the cursor onto the modal, which fires mouseenter
@@ -3818,6 +3840,28 @@ function playFile(file, seq = null) {
       fmtBytes(file.size),
     ].filter(Boolean).join('  ·  ');
   };
+  // Something to look at while the browser fetches the moov atom. For a cloud
+  // file that is a round trip to the end of the file, and the stage was simply
+  // black for all of it.
+  const known = state.thumbs.get(file.path);
+  if (known) player.poster = known;
+  else {
+    player.removeAttribute('poster');
+    fetch(`/api/thumb?path=${encodeURIComponent(file.path)}`)
+      .then((res) => (res.ok ? res.blob() : null))
+      .then((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        state.thumbs.set(file.path, url);
+        // Only if this is still the video on screen, and only while it has
+        // nothing of its own to show yet.
+        if (state.playing && state.playing.path === file.path && player.readyState < 2) {
+          player.poster = url;
+        }
+      })
+      .catch(() => { /* a missing poster is just the old black stage */ });
+  }
+
   player.src = `/api/video?path=${encodeURIComponent(file.path)}`;
   player.volume = masterVolume();
   $('#playerModal').hidden = false;

@@ -1916,6 +1916,19 @@ const server = http.createServer(async (req, res) => {
       return res.end(data);
     }
 
+    // Resolve a cloud file's streaming URL AHEAD of being asked to play it.
+    // The answer is cached for 45 minutes, so this is the same lookup /api/video
+    // would do -- just paid while the user is still deciding rather than while
+    // they watch a black rectangle. Cheap to call and safe to call repeatedly.
+    if (req.method === 'GET' && route === '/api/warm') {
+      const target = authoriseOrThrow(url.searchParams.get('path') || '');
+      const { stat } = await statWithCloud(target);
+      if (!isCloudOnly(stat)) return sendJson(res, 200, { warmed: false, local: true });
+      const began = Date.now();
+      const info = await graphStreamInfo(target).catch(() => null);
+      return sendJson(res, 200, { warmed: Boolean(info), ms: Date.now() - began });
+    }
+
     if (req.method === 'GET' && route === '/api/video') {
       const target = authoriseOrThrow(url.searchParams.get('path') || '');
       const { cloudOnly } = await statWithCloud(target);
