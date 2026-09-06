@@ -261,6 +261,33 @@ async function getDownloadUrl(absPath, oneDriveRoot) {
 }
 
 /**
+ * The download URL and, where OneDrive knows it, how long the video runs --
+ * from a SINGLE item fetch.
+ *
+ * Building a preview strip for a cloud file needs both: the URL to seek
+ * against, and the duration to work out where the ten frames fall. Asking
+ * ffprobe for the duration means another HTTPS round trip to the same CDN, and
+ * on this connection that measured 3.3s -- as long as fetching a frame. The
+ * video facet is already in the item response, so it is free.
+ *
+ * duration comes back in seconds, or 0 when OneDrive has not indexed the file
+ * and the caller has to probe after all.
+ */
+async function getStreamInfo(absPath, oneDriveRoot) {
+  const urlPath = await itemPathFor(absPath, oneDriveRoot);
+  if (!urlPath) return null;
+  const item = await graphGet(urlPath);
+  const url = item['@microsoft.graph.downloadUrl'] || null;
+  if (!url) return null;
+  const ms = Number(item.video && item.video.duration);
+  return {
+    url,
+    duration: Number.isFinite(ms) && ms > 0 ? ms / 1000 : 0,
+    size: Number(item.size) || 0,
+  };
+}
+
+/**
  * Downloads the largest thumbnail Microsoft holds for this file.
  * Returns a Buffer, or null when the service has no thumbnail for it.
  * Never touches the local placeholder, so nothing is hydrated.
@@ -328,6 +355,7 @@ module.exports = {
   getThumbnails,
   fetchThumbnail,
   getDownloadUrl,
+  getStreamInfo,
   getRootMap,
   resetRootMap,
   toDriveRelative,

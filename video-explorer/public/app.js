@@ -3206,9 +3206,35 @@ function loadSprite(filePath, previewEl) {
 
   if (previewEl) previewEl.classList.add('loading');
 
+  // Building a strip for a cloud file means several round trips to OneDrive,
+  // and the tile would sit empty for all of them. OneDrive already has a poster
+  // for it -- one small image, no download -- so show that in the meantime.
+  // Fire and forget: nothing below waits on it.
+  let stripLanded = false;
+  // Cloud only. A downloaded file builds its strip locally in well under a
+  // second, and asking for a poster would just add an ffmpeg run per tile.
+  if (previewEl && state.cloudOptIn.has(filePath)) {
+    const already = state.thumbs.get(filePath);
+    if (already) applyThumb(previewEl, already);
+    else {
+      fetch(`/api/thumb?path=${encodeURIComponent(filePath)}`)
+        .then((res) => (res.ok ? res.blob() : null))
+        .then((blob) => {
+          // The strip is what was asked for; if it beat us, leave it alone.
+          if (!blob || stripLanded) return;
+          const url = URL.createObjectURL(blob);
+          state.thumbs.set(filePath, url);
+          if (!stripLanded) applyThumb(previewEl, url);
+        })
+        .catch(() => { /* no poster is simply no placeholder */ });
+    }
+  }
+
   const request = (async () => {
     try {
-      const res = await fetch(`/api/sprite?path=${encodeURIComponent(filePath)}`);
+      // Cloud-only files are refused unless we say the user asked for this one.
+      const allow = state.cloudOptIn.has(filePath) ? '&allowCloud=1' : '';
+      const res = await fetch(`/api/sprite?path=${encodeURIComponent(filePath)}${allow}`);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || `sprite failed (${res.status})`);
@@ -3217,6 +3243,7 @@ function loadSprite(filePath, previewEl) {
       const blob = await res.blob();
       const entry = { url: URL.createObjectURL(blob), frames };
       state.sprites.set(filePath, entry);
+      stripLanded = true;
       return entry;
     } catch (err) {
       state.failed.add(filePath);

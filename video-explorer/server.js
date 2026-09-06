@@ -299,21 +299,33 @@ async function applyHomeDir() {
  * Streaming URLs are short-lived but a playing <video> issues many range
  * requests. Without caching, every seek would cost a Graph round trip.
  */
-const streamUrlCache = new Map(); // lowercased path -> { url, expiresAt }
+const streamUrlCache = new Map(); // lowercased path -> { url, duration, expiresAt }
 const STREAM_URL_TTL_MS = 45 * 60 * 1000;
 
-async function graphStreamUrl(file) {
+/**
+ * The URL to stream this cloud file from, plus its duration where OneDrive
+ * knows it -- one Graph call for both, cached together. Fetching the item took
+ * ~2.6s on this connection, so the preview strip and playback sharing one
+ * lookup matters: whichever asks first pays, the other gets it free.
+ */
+async function graphStreamInfo(file) {
   if (!graph || !ONEDRIVE_ROOT || !graph.isSignedIn()) return null;
 
   const key = file.toLowerCase();
   const hit = streamUrlCache.get(key);
-  if (hit && Date.now() < hit.expiresAt) return hit.url;
+  if (hit && Date.now() < hit.expiresAt) return hit;
 
-  const url = await graph.getDownloadUrl(file, ONEDRIVE_ROOT);
-  if (!url) return null;
+  const info = await graph.getStreamInfo(file, ONEDRIVE_ROOT);
+  if (!info || !info.url) return null;
 
-  streamUrlCache.set(key, { url, expiresAt: Date.now() + STREAM_URL_TTL_MS });
-  return url;
+  const entry = { ...info, expiresAt: Date.now() + STREAM_URL_TTL_MS };
+  streamUrlCache.set(key, entry);
+  return entry;
+}
+
+async function graphStreamUrl(file) {
+  const info = await graphStreamInfo(file);
+  return info ? info.url : null;
 }
 
 /**
@@ -692,6 +704,70 @@ function segmentSeek(duration, index, count) {
   return Math.min(at, Math.max(0, duration - 1));
 }
 
+// How many cloud frames are fetched at once, ACROSS THE WHOLE APP. Four,
+// measured: the CDN began refusing connections at six and above, and two left
+// the machine waiting on latency. See the commit message for the numbers.
+//
+// Global rather than per strip, because ffLimit lets six strips build at once
+// and six fours would be twenty-four connections to the same host.
+const cloudSeekLimit = createLimiter(4);
+
+/**
+ * One frame of a cloud video, pulled straight from OneDrive over HTTPS.
+ *
+ * `-ss` goes BEFORE `-i` so ffmpeg seeks by byte range instead of decoding from
+ * the beginning; the CDN answers 206, so this costs a few hundred KB rather
+ * than the whole file. The local placeholder is never opened, so nothing
+ * hydrates -- which is the entire point.
+ */
+function cloudFrame(url, seek, out, vf) {
+  return cloudSeekLimit(async () => {
+    await run('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error',
+      '-ss', seek.toFixed(3),
+      // A CDN hiccup mid-strip should cost one frame's retry, not the strip.
+      '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '4',
+      '-rw_timeout', '30000000',
+      '-i', url,
+      '-frames:v', '1',
+      '-vf', vf,
+      '-q:v', '4',
+      '-y', out,
+    ]);
+    const st = await fsp.stat(out).catch(() => null);
+    return Boolean(st && st.size > 0);
+  });
+}
+
+/**
+ * The ten frames of a cloud strip, four at a time, each retried once.
+ *
+ * A retry is worth having because the failures seen in testing were TCP
+ * refusals from the CDN rather than anything wrong with the seek -- the same
+ * seek succeeded moments later. Returns the files that came back, in order;
+ * a strip missing a frame or two is still worth showing.
+ */
+async function cloudFrames(url, duration, frames, tmpDir, vf) {
+  const wanted = Array.from({ length: frames }, (unused, i) => i);
+
+  const got = await Promise.all(wanted.map(async (i) => {
+    const seek = segmentSeek(duration, i, frames);
+    const out = path.join(tmpDir, `raw${i}.jpg`);
+    let ok = false;
+    try { ok = await cloudFrame(url, seek, out, vf); } catch { ok = false; }
+    if (!ok) {
+      // The failures seen in testing were TCP refusals from the CDN rather than
+      // anything wrong with the seek -- the same seek succeeded moments later.
+      await new Promise((resolve) => { setTimeout(resolve, 400); });
+      try { ok = await cloudFrame(url, seek, out, vf); } catch { ok = false; }
+    }
+    return ok ? out : null;
+  }));
+
+  // In order, gaps dropped: a strip missing a frame is still worth showing.
+  return got.filter(Boolean);
+}
+
 /**
  * Builds an N-wide sprite strip. Every tile is letterboxed to the exact same
  * box, so the client can address frame i with pure percentage maths and
@@ -723,8 +799,6 @@ async function ensureSprite(file, stat) {
       return { file: out, frames: spriteFrameCount.get(out) || frames };
     }
 
-    const meta = await getMeta(file, stat);
-    const duration = meta.duration > 0 ? meta.duration : 0;
     const tmpDir = path.join(CACHE_DIR, 'tmp_' + key);
     await fsp.mkdir(tmpDir, { recursive: true });
 
@@ -733,27 +807,56 @@ async function ensureSprite(file, stat) {
       `pad=${tileW}:${tileH}:(ow-iw)/2:(oh-ih)/2:black`,
     ].join(',');
 
-    try {
-      const extracted = [];
-      for (let i = 0; i < frames; i += 1) {
-        // Even divisions: a 20-minute video split 10 ways gives 2:00, 4:00, …
-        // The last is pulled a second short of the end to avoid a black frame.
-        const seek = segmentSeek(duration, i, frames);
-        const rawPath = path.join(tmpDir, `raw${i}.jpg`);
+    // A cloud file is read over HTTPS, never through its placeholder. Opening
+    // the placeholder is what makes Windows download the whole video, so the
+    // old path cost a full hydration per preview -- ten times over, in series.
+    // Range requests cost a few hundred KB a frame and hydrate nothing.
+    const cloud = isCloudOnly(stat) ? await graphStreamInfo(file).catch(() => null) : null;
+
+    let duration = 0;
+    if (cloud) {
+      duration = cloud.duration;
+      if (!(duration > 0)) {
+        // OneDrive had no video facet for this one, so ask ffmpeg -- still over
+        // HTTP, because probing the local path would hydrate it.
         try {
-          await run('ffmpeg', [
+          const { stdout } = await run('ffprobe', [
             '-hide_banner', '-loglevel', 'error',
-            '-ss', seek.toFixed(3),
-            '-i', file,
-            '-frames:v', '1',
-            '-vf', vf,
-            '-q:v', '4',
-            '-y', rawPath,
+            '-show_entries', 'format=duration', '-of', 'json', cloud.url,
           ]);
-          const st = await fsp.stat(rawPath).catch(() => null);
-          if (st && st.size > 0) extracted.push(rawPath);
-        } catch {
-          // A seek past the last keyframe or a damaged region: skip this tile.
+          duration = Number(JSON.parse(stdout).format?.duration) || 0;
+        } catch { duration = 0; }
+      }
+    } else {
+      const meta = await getMeta(file, stat);
+      duration = meta.duration > 0 ? meta.duration : 0;
+    }
+
+    try {
+      let extracted = [];
+      if (cloud) {
+        extracted = await cloudFrames(cloud.url, duration, frames, tmpDir, vf);
+      } else {
+        for (let i = 0; i < frames; i += 1) {
+          // Even divisions: a 20-minute video split 10 ways gives 2:00, 4:00, …
+          // The last is pulled a second short of the end to avoid a black frame.
+          const seek = segmentSeek(duration, i, frames);
+          const rawPath = path.join(tmpDir, `raw${i}.jpg`);
+          try {
+            await run('ffmpeg', [
+              '-hide_banner', '-loglevel', 'error',
+              '-ss', seek.toFixed(3),
+              '-i', file,
+              '-frames:v', '1',
+              '-vf', vf,
+              '-q:v', '4',
+              '-y', rawPath,
+            ]);
+            const st = await fsp.stat(rawPath).catch(() => null);
+            if (st && st.size > 0) extracted.push(rawPath);
+          } catch {
+            // A seek past the last keyframe or a damaged region: skip this tile.
+          }
         }
       }
 
