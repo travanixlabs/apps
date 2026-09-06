@@ -4548,18 +4548,30 @@ function buildQuickbar(file, card) {
   return bar;
 }
 
-/** Explicit, per-file consent to hydrate a cloud placeholder. */
+/**
+ * Explicit, per-file consent to build a preview for a cloud file.
+ *
+ * This used to hydrate the placeholder -- hence the warning it used to show.
+ * It no longer does: the frames are seeked over HTTPS, the poster is the one
+ * OneDrive already holds, and the details are ffprobed over the same URL. What
+ * is being consented to now is the network traffic, not a download.
+ */
 async function optInCloud(file, card) {
   if (!window.confirm(
     `"${file.name}" is not downloaded.\n\n`
-    + `Generating a preview makes OneDrive download the whole file (${fmtBytes(file.size)}).\n\nContinue?`,
+    + `Its preview will be built by reading a few frames straight from OneDrive `
+    + `(${fmtBytes(file.size)} stays in the cloud — nothing is downloaded).\n\n`
+    + `It takes a few seconds. Continue?`,
   )) return;
 
   state.cloudOptIn.add(file.path);
   const preview = card.querySelector('.preview');
   if (preview) preview.classList.add('loading');
 
-  await loadThumb(file.path, preview, true);
+  // NOT allowCloud: that flag means "build one locally", which is the thing
+  // that downloads. Without it the poster route hands back OneDrive's own
+  // thumbnail instead, for about 16KB.
+  await loadThumb(file.path, preview);
 
   try {
     const { meta } = await api('/api/meta', {
@@ -4579,7 +4591,9 @@ async function optInCloud(file, card) {
   const mark = card.querySelector('.cloud-mark');
   if (mark) mark.remove();
   if (preview) preview.classList.remove('cloud');
-  toast('Downloaded — hover now previews it', 'ok');
+  // Deliberately not "Downloaded": it is still a cloud file, and saying
+  // otherwise is how somebody ends up believing their library is local.
+  toast('Preview ready — still in the cloud', 'ok');
 }
 
 

@@ -571,7 +571,19 @@ async function getMeta(file, stat) {
   if (metaIndex[key]) return metaIndex[key];
   let meta;
   try {
-    meta = await ffLimit(() => probe(file));
+    // A cloud file is probed over HTTPS, never through its placeholder:
+    // ffprobe wants a few KB of header, and reading one byte of a placeholder
+    // makes Windows fetch the entire video. ffprobe takes a URL exactly as it
+    // takes a path. The cache key is still path + size + mtime, none of which
+    // change when the file is dehydrated, so this is read once either way.
+    const cloud = isCloudOnly(stat) ? await graphStreamInfo(file).catch(() => null) : null;
+    // Whichever queue matches what the work actually waits on: ffLimit is sized
+    // from the core count for local decoding, graphLimit is the network one. A
+    // probe over HTTPS in an ffLimit slot would block local thumbnails while it
+    // sat waiting on a CDN.
+    meta = cloud
+      ? await graphLimit(() => probe(cloud.url))
+      : await ffLimit(() => probe(file));
   } catch (err) {
     meta = { width: 0, height: 0, codec: '', fps: 0, duration: 0, bitrate: 0, error: 'probe failed' };
   }

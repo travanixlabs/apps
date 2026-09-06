@@ -122,10 +122,31 @@ function available() {
 
 // ------------------------------------------------------------------ sessions
 
+// How much of the CPU inference may take. Left to itself onnxruntime sizes its
+// intra-op pool from the core count, which is right for a foreground job and
+// wrong for this one: profiling runs for hours behind somebody who is trying to
+// use their computer. Four threads keeps a single reader to roughly a quarter
+// of a mid-size machine instead of most of it.
+//
+// Not scaled to the core count on purpose. A bigger CPU is a reason to leave
+// more of it alone, not to take more of it.
+const INFERENCE_THREADS = 4;
+
+const SESSION_OPTIONS = {
+  intraOpNumThreads: INFERENCE_THREADS,
+  // One at a time between operators. The graphs here are small and sequential,
+  // so a second pool buys nothing and competes with the first.
+  interOpNumThreads: 1,
+  executionMode: 'sequential',
+  graphOptimizationLevel: 'all',
+};
+
 const sessions = new Map();
 async function session(name, file) {
   if (!sessions.has(name)) {
-    sessions.set(name, ort.InferenceSession.create(path.join(modelDir, file)));
+    sessions.set(name, ort.InferenceSession.create(
+      path.join(modelDir, file), SESSION_OPTIONS,
+    ));
   }
   return sessions.get(name);
 }
