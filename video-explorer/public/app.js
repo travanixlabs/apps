@@ -3939,6 +3939,70 @@ const preview = { timer: null, index: 0, count: 10 };
  */
 const previewing = () => preview.timer !== null;
 
+/** Hides the strip and gives the stage back to the video. */
+function hidePlayerStrip() {
+  const strip = $('#playerStrip');
+  if (!strip) return;
+  strip.hidden = true;
+  strip.style.backgroundImage = '';
+}
+
+/**
+ * The preview as a strip of frames rather than ten seeks.
+ *
+ * Resolves true if it took over the stage. False means there was no strip to
+ * show -- a file whose frames have not been built yet, or a build that failed
+ * -- and the caller falls back to seeking the video.
+ */
+async function startStripPreview(file) {
+  const strip = $('#playerStrip');
+  if (!strip) return false;
+
+  // Watching a file is consent enough to build its frames: the strip is read
+  // over HTTPS and downloads nothing, so there is no placeholder to protect.
+  state.cloudOptIn.add(file.path);
+
+  const entry = await loadSprite(file.path, null);
+  // A slow build can outlive the modal, or land after the next video opened.
+  if (!entry || !state.playing || state.playing.path !== file.path) return false;
+  // Clicking the picture during the build turns this into a real playthrough.
+  // Taking the stage back then would pause what somebody chose to watch.
+  if (!previewing()) return false;
+  // The live preview may have been running while this was built. Take the
+  // stage from it rather than leaving two things driving the same badge.
+  clearInterval(preview.timer);
+  preview.timer = null;
+
+  strip.style.backgroundImage = `url("${entry.url}")`;
+  strip.style.backgroundSize = `${entry.frames * 100}% 100%`;
+  strip.style.backgroundPositionX = '0%';
+  strip.hidden = false;
+
+  preview.count = entry.frames;
+  preview.index = 0;
+  const video = $('#player');
+  // Stop it seeking the network behind the strip.
+  try { video.pause(); } catch { /* nothing playing yet */ }
+  const duration = Number(video.duration) > 0 ? video.duration : 0;
+
+  const show = (index) => {
+    preview.index = index;
+    strip.style.backgroundPositionX = entry.frames > 1
+      ? `${(index / (entry.frames - 1)) * 100}%`
+      : '0%';
+    const at = segmentTime(duration || Number(state.meta.get(file.path)?.duration) || 0,
+      index, entry.frames);
+    $('#playerBadge').textContent = `${index + 1}/${entry.frames}`
+      + (at > 0 ? ` · ${fmtDuration(at)}` : '');
+  };
+  show(0);
+  preview.timer = setInterval(
+    () => show((preview.index + 1) % entry.frames),
+    Number(state.config.dwellMs) || 1000,
+  );
+  return true;
+}
+
 function startPlayerPreview() {
   stopPlayerPreview();
   const player = $('#player');
@@ -3967,6 +4031,17 @@ function startPlayerPreview() {
     $('#playerBadge').textContent = `${index + 1}/${preview.count} · ${fmtDuration(at)}`;
   };
 
+  // A cloud file is seeked over the network, and every position of the first
+  // pass is a cold range request -- which is the juddering. Show the strip
+  // instead; the video keeps loading behind it for when the picture is clicked.
+  // A cloud file is seeked over the network, and every position of the first
+  // pass is a cold range request -- which is the juddering. The strip fixes it,
+  // but building one the first time takes about twelve seconds, so start the
+  // live preview now and let the strip take over the moment it arrives. Once
+  // built it is cached, and the handover is immediate on every later opening.
+  const file = state.playing;
+  if (file && file.cloudOnly) startStripPreview(file);
+
   player.addEventListener('loadedmetadata', () => show(0), { once: true });
   if (player.readyState >= 1) show(0);
 
@@ -3979,6 +4054,7 @@ function startPlayerPreview() {
 function stopPlayerPreview() {
   clearInterval(preview.timer);
   preview.timer = null;
+  hidePlayerStrip();
 }
 
 /**
