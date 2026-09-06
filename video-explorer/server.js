@@ -1520,7 +1520,7 @@ const server = http.createServer(async (req, res) => {
         // Naming someone changes who the averages are built from, so the
         // suggestions are only as current as the labels behind them.
         if (body.models !== undefined || body.addModels !== undefined
-            || body.removeModels !== undefined) faces.rebuild();
+            || body.removeModels !== undefined) faces.rebuildSoon();
         // Turning a name down changes one video's ranking and nobody's average,
         // so it re-scores that video instead of the whole library -- and then
         // says what the ranking became. Without that the client would keep

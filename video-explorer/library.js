@@ -247,15 +247,27 @@ async function writeNow() {
 
   await fsp.mkdir(path.dirname(FILE), { recursive: true });
   const temp = `${FILE}.writing`;
-  try {
-    await fsp.writeFile(temp, body);
-    await fsp.rename(temp, FILE);
-  } catch {
-    await fsp.unlink(temp).catch(() => {});
-    await fsp.writeFile(FILE, body);
+  await fsp.writeFile(temp, body);
+
+  // The rename is the whole of the atomicity, so a refusal is retried rather
+  // than worked around. OneDrive holds a handle on the target now and then and
+  // lets go a moment later.
+  for (let i = 0; i < 5; i += 1) {
+    try {
+      await fsp.rename(temp, FILE);
+      lastWritten = count;
+      return { file: FILE, records: count };
+    } catch {
+      await new Promise((resolve) => { setTimeout(resolve, 60 * (i + 1)); });
+    }
   }
-  lastWritten = count;
-  return { file: FILE, records: count };
+
+  // Still refused. This used to fall back to writing FILE in place, which
+  // truncates it first -- and a process that dies in that window leaves a
+  // truncated file or an empty one. Two bulk runs died exactly there and took
+  // the library with them. So the old file is left whole and the new content
+  // stays beside it; save() comes round again in 400ms.
+  return { file: FILE, records: count, deferred: `${path.basename(temp)} is waiting` };
 }
 
 function save() {

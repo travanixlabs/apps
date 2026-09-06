@@ -410,6 +410,24 @@ async function writeDigest() {
  * know which face belongs to which name, and a centroid polluted by the wrong
  * person is worse than no centroid at all.
  */
+let rebuildTimer = null;
+
+/**
+ * Rebuild once for a burst rather than once per name.
+ *
+ * Naming somebody moves the average she is part of, so the scores do have to be
+ * rebuilt -- but rebuilding clears every centroid, walks every profiled video
+ * and re-scores the library. That is fine for a click and ruinous for a credit
+ * run: five hundred labels written back to back meant five hundred full
+ * rebuilds, several hundred milliseconds each, with the sidecar save firing all
+ * the way through. The cost of coalescing them is that a suggestion can be
+ * 400ms stale, which nobody can see.
+ */
+function rebuildSoon() {
+  clearTimeout(rebuildTimer);
+  rebuildTimer = setTimeout(() => { rebuildTimer = null; rebuild(); }, 400);
+}
+
 function rebuild() {
   state.centroids.clear();
   const records = state.library ? state.library.all() : {};
@@ -1293,7 +1311,7 @@ async function loop() {
           // the difference between a few microseconds and a full sweep of the
           // library, several thousand times over.
           const record = (state.library ? state.library.all() : {})[next.key];
-          if (record && (record.models || []).length === 1) rebuild();
+          if (record && (record.models || []).length === 1) rebuildSoon();
           else scoreVideo(next.key, entry);
         }
       } catch {
@@ -1387,5 +1405,5 @@ module.exports = {
   lineup, faceImageByKey, standing, similar, bestOf, notePath, forgetPath,
   // The reading order, for checking what a fresh install would do first.
   __queueForTest: walkForWork,
-  faceImage, profile, rebuild, flush, keyFor, MIN_VIDEOS,
+  faceImage, profile, rebuild, rebuildSoon, flush, keyFor, MIN_VIDEOS,
 };
