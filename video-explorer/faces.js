@@ -1253,46 +1253,8 @@ function rootsChanged() {
   start();
 }
 
-// How many videos are read at once. Profiling spends most of its time waiting
-// on ffmpeg, so one reader leaves the machine mostly idle; the engine allocates
-// per-call and takes concurrent runs, so the limit is the CPU rather than
-// anything shared. Comparing deliberately stays at one -- see dupes.js.
-const WORKERS = 3;
-
-// The reads happening right now. Module-level so status() can say how many.
-const inFlight = new Set();
-
 /**
- * One video, from the queue to the index. What a worker does with its turn.
- */
-async function readOne(next) {
-  state.current = path.basename(next.file);
-  state.lastRead = state.current;
-  if (!state.startedAt) state.startedAt = Date.now();
-  try {
-    const entry = await profile(next.file, next.stat, { force: next.redo });
-    if (!entry.people.length && entry.faces < 2) {
-      // Genuinely faceless: a harvest is never cut short any more, so an empty
-      // result is the answer rather than an interruption. A second look costs
-      // one more read; a third would be stubbornness.
-      state.failures.set(next.key, (state.failures.get(next.key) || 0) + 1);
-    } else {
-      // A solo credit joins someone's average, which moves every score. An
-      // unnamed video moves nothing but its own, so it is scored alone -- the
-      // difference between a few microseconds and a full sweep of the library,
-      // several thousand times over.
-      const record = (state.library ? state.library.all() : {})[next.key];
-      if (record && (record.models || []).length === 1) rebuildSoon();
-      else scoreVideo(next.key, entry);
-    }
-  } catch {
-    state.failures.set(next.key, (state.failures.get(next.key) || 0) + 1);
-  }
-  state.done += 1;
-}
-
-/**
- * The sweep itself: three videos at a time, for as long as it is switched on.
+ * The sweep itself: one video at a time, for as long as it is switched on.
  *
  * It used to stand aside whenever the app was used, on an activity clock any
  * request refreshed. A browse is requests with gaps in between; playback is a
@@ -1314,10 +1276,7 @@ async function loop() {
       // the first sweep can run before any folder has been opened, which would
       // otherwise leave a denominator counted from nothing until the queue
       // emptied. Anything already profiled is skipped, so a re-walk is cheap.
-      // Never while a read is in flight. walkForWork decides what is
-      // outstanding by looking at the index, and a video being read right now
-      // is not in it yet -- re-walking mid-flight hands the same file out twice.
-      if (!inFlight.size && (!state.queue.length || Date.now() > state.nextWalk)) {
+      if (!state.queue.length || Date.now() > state.nextWalk) {
         state.walking = true;
         try {
           const found = await walkForWork();
@@ -1334,25 +1293,34 @@ async function loop() {
         }
       }
 
-      // Fill the empty slots, still in the order prioritise() put them: three
-      // workers take the next three, not three at random.
-      while (inFlight.size < WORKERS && state.queue.length) {
-        const job = readOne(state.queue.shift());
-        inFlight.add(job);
-        // Attached after the set holds it, so the handler cannot run against a
-        // half-assigned reference.
-        job.finally(() => inFlight.delete(job)).catch(() => {});
+      const next = state.queue.shift();
+      state.current = path.basename(next.file);
+      state.lastRead = state.current;
+      if (!state.startedAt) state.startedAt = Date.now();
+      try {
+        const entry = await profile(next.file, next.stat, { force: next.redo });
+        if (!entry.people.length && entry.faces < 2) {
+          // Genuinely faceless: a harvest is never cut short any more, so an
+          // empty result is the answer rather than an interruption. A second
+          // look costs one more read; a third would be stubbornness.
+          const tries = (state.failures.get(next.key) || 0) + 1;
+          state.failures.set(next.key, tries);
+        } else {
+          // A solo credit joins someone's average, which moves every score. An
+          // unnamed video moves nothing but its own, so it is scored alone --
+          // the difference between a few microseconds and a full sweep of the
+          // library, several thousand times over.
+          const record = (state.library ? state.library.all() : {})[next.key];
+          if (record && (record.models || []).length === 1) rebuildSoon();
+          else scoreVideo(next.key, entry);
+        }
+      } catch {
+        state.failures.set(next.key, (state.failures.get(next.key) || 0) + 1);
       }
-
-      if (!inFlight.size) { await wait(250); continue; }
-      // Wake when the first of them finishes rather than the last, so a short
-      // video is replaced immediately instead of waiting on a feature-length one.
-      await Promise.race(inFlight);
+      state.done += 1;
+      state.current = '';
       await wait(150);
     }
-    // Switched off, or the engine went away: let the reads already running
-    // finish and file their results rather than abandoning three harvests.
-    await Promise.allSettled([...inFlight]);
   } finally {
     state.running = false;
     state.current = '';
@@ -1393,9 +1361,6 @@ function status() {
     enabled: state.enabled,
     running: state.running,
     walking: state.walking,
-    // How many are being read at once, and the ceiling on that.
-    reading: inFlight.size,
-    workers: WORKERS,
     current: state.current,
     // What it is doing right now, in one word, so the UI does not have to
     // reconstruct it from four booleans.

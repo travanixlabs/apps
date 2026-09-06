@@ -527,14 +527,6 @@ function decorate(stat) {
 // Deliberately the face profiler's manners rather than the tool's: one video at
 // a time, for as long as the app is open rather than in one sitting, and
 // stopped only by its own pill.
-//
-// One at a time where faces.js now reads three, and that difference is on
-// purpose. A fingerprint is a long sequential read of the whole video, not a
-// frame every five seconds, so this sweep is bound by the disk rather than the
-// CPU -- run three at once on one spindle and the head stops streaming and
-// starts seeking, which is slower than doing them in turn. Worth revisiting for
-// a library that lives on an SSD; see WORKERS in faces.js for the shape it
-// would take.
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
