@@ -61,7 +61,10 @@ const state = {
   matched: 0,
   // The in-app worker: one video at a time, only while nothing else is
   // happening. See the loop at the bottom of this file.
-  enabled: true,
+  // Paused on load, every load. Opening the app should not start fingerprinting;
+  // the pill does. Not remembered between launches on purpose -- see the
+  // commit that introduced this.
+  enabled: false,
   running: false,
   walking: false,
   // Parked while the player builds a preview strip. See priority.js.

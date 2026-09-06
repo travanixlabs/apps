@@ -2052,7 +2052,8 @@ async function main() {
     log(`familiar faces: ${face.model}, store at `
       + `${path.join(path.dirname(CACHE_DIR), 'faces')}`);
     log(`familiar faces: models at ${face.modelDir}`);
-    faces.start();
+    // Not started. The sweep waits for its pill -- see the state in faces.js.
+    log('familiar faces: paused until you start it');
   } else {
     log(`familiar faces: off (${face.reason})`);
   }
@@ -2067,9 +2068,12 @@ async function main() {
   });
   // The digest first and on its own: it is one small file and it is all a
   // listing needs, where reading every fingerprint is thousands of files.
+  // Loaded but not started: the filters need the digest and the index either
+  // way, and reading them costs nothing anybody notices. Fingerprinting itself
+  // waits for its pill.
   dupes.loadDigest()
     .then(() => dupes.loadIndex())
-    .then(() => dupes.start())
+    .then(() => log('duplicates: paused until you start it'))
     .catch(() => { });
 
   metaIndex = loadJsonSync(META_FILE, {});

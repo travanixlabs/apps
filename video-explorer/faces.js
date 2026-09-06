@@ -90,7 +90,10 @@ const state = {
   yielding: false,
   nextWalk: 0,
   running: false,
-  enabled: true,
+  // Paused on load, every load. Opening the app should not start profiling;
+  // the pill does. Not remembered between launches on purpose -- see the
+  // commit that introduced this.
+  enabled: false,
   current: '',
   // The last file read, kept after it finishes. `current` empties between
   // videos and while the library is being counted, and a progress indicator
