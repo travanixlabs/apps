@@ -31,6 +31,7 @@ const fsp = fs.promises;
 const path = require('path');
 
 const engine = require('./dupe-engine');
+const priority = require('./priority');
 
 const log = (msg) => console.log(`[video-explorer] duplicates: ${msg}`);
 
@@ -63,6 +64,8 @@ const state = {
   enabled: true,
   running: false,
   walking: false,
+  // Parked while the player builds a preview strip. See priority.js.
+  yielding: false,
   matching: false,
   queue: [],
   current: '',
@@ -585,6 +588,17 @@ async function loop() {
       // the filters have nothing to filter on.
       if (state.needsMatch) { await refresh(); continue; }
 
+      // Stand aside while the player builds its preview strip. This sweep is
+      // the greedier of the two -- a fingerprint is a long sequential read of a
+      // whole video -- so a cloud-backed strip has most to gain from it
+      // pausing. Between files only: the read in flight is allowed to finish.
+      if (priority.busy()) {
+        state.yielding = true;
+        state.current = '';
+        try { await priority.settled(); } finally { state.yielding = false; }
+        continue;
+      }
+
       if (!state.queue.length || Date.now() > state.nextWalk) {
         state.walking = true;
         try {
@@ -739,12 +753,14 @@ function status() {
     counted: state.counted,
     remaining: state.walking ? null : state.queue.length,
     current: state.current,
+    yielding: state.yielding,
     doing: !state.enabled ? 'paused'
       : !state.ready ? 'loading'
-        : state.matching ? 'matching'
-          : state.walking ? 'counting'
-            : state.current ? 'reading'
-              : state.running ? 'waiting' : 'stopped',
+        : state.yielding ? 'standing aside'
+          : state.matching ? 'matching'
+            : state.walking ? 'counting'
+              : state.current ? 'reading'
+                : state.running ? 'waiting' : 'stopped',
     done: state.done,
     rate: state.done > 2 && state.startedAt
       ? Math.round(state.done / ((Date.now() - state.startedAt) / 3600000))

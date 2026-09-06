@@ -220,7 +220,13 @@ async function main() {
   say(`done in ${mins}m`);
   say(`  profiled     ${count.faces}${count.faceFail ? `  (${count.faceFail} failed)` : ''}`);
   say(`  fingerprinted ${count.prints}${count.printFail ? `  (${count.printFail} failed)` : ''}`);
-  say(`  left to do   ${faceQueue.length} profiles, ${printQueue.length} fingerprints`);
+  // Counted from what was asked for versus what was done, NOT from the queues:
+  // standing down drains them as no-ops, so a halted run reported "0 left" when
+  // it had skipped hundreds.
+  const faceLeft = faceTotal - count.faces - count.faceFail;
+  const printLeft = printTotal - count.prints - count.printFail;
+  say(`  left to do   ${faceLeft} profiles, ${printLeft} fingerprints`
+    + (halt ? '  (stood down early -- run again to finish)' : ''));
 }
 
 main().then(() => process.exit(0)).catch((err) => {

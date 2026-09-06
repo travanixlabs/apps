@@ -29,6 +29,7 @@ const path = require('path');
 const os = require('os');
 
 const engine = require('./face-engine');
+const priority = require('./priority');
 
 const log = (msg) => console.log(`[video-explorer] familiar faces: ${msg}`);
 
@@ -85,6 +86,8 @@ const state = {
   suggestions: new Map(), // video key -> [{ name, score, band, person }]
   queue: [],
   walking: false,
+  // Parked while the player builds a preview strip. See priority.js.
+  yielding: false,
   nextWalk: 0,
   running: false,
   enabled: true,
@@ -1271,6 +1274,17 @@ async function loop() {
       // profile has not loaded yet looks unread, and would be read again.
       if (state.loading) { await wait(250); continue; }
 
+      // The one thing that outranks this sweep: the player building its
+      // preview strip, with a person waiting on it. Checked between videos
+      // rather than during one -- a harvest already running is left to finish,
+      // since abandoning it would throw away the read and do it again later.
+      if (priority.busy()) {
+        state.yielding = true;
+        state.current = '';
+        try { await priority.settled(); } finally { state.yielding = false; }
+        continue;
+      }
+
       // Re-counted on a timer as well as when the queue runs dry. The library
       // is not fixed -- files are added, and freed up -- and on a fresh install
       // the first sweep can run before any folder has been opened, which would
@@ -1364,11 +1378,13 @@ function status() {
     current: state.current,
     // What it is doing right now, in one word, so the UI does not have to
     // reconstruct it from four booleans.
+    yielding: state.yielding,
     doing: !state.enabled ? 'paused'
       : state.loading ? 'loading'
-        : state.walking ? 'counting'
-          : state.current ? 'reading'
-            : state.running ? 'waiting' : 'stopped',
+        : state.yielding ? 'standing aside'
+          : state.walking ? 'counting'
+            : state.current ? 'reading'
+              : state.running ? 'waiting' : 'stopped',
     lastRead: state.lastRead,
     done: state.done,
     // Videos an hour, from this session's own work. Nothing to calibrate and it

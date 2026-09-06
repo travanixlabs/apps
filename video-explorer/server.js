@@ -22,6 +22,7 @@ try {
   graph = null;
 }
 
+const priority = require('./priority');
 const library = require('./library');
 const faces = require('./faces');
 const dupes = require('./dupes');
@@ -712,6 +713,11 @@ async function ensureSprite(file, stat) {
     return { file: out, frames: spriteFrameCount.get(out) };
   }
 
+  // Somebody has opened the player and is watching a spinner. For a cloud file
+  // this is ten seeks over the network, so the background sweeps stand aside
+  // until the strip is built -- see priority.js for why this, and only this.
+  const givePriorityBack = priority.hold(path.basename(file));
+
   return ffLimit(async () => {
     if (await exists(out)) {
       return { file: out, frames: spriteFrameCount.get(out) || frames };
@@ -778,7 +784,7 @@ async function ensureSprite(file, stat) {
     } finally {
       await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     }
-  });
+  }).finally(givePriorityBack);
 }
 
 /**
