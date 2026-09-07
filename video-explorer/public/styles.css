@@ -1164,6 +1164,8 @@ body.dragging .card { cursor: grabbing; }
   background-repeat: no-repeat;
   background-position-y: center;
   pointer-events: none;
+  /* Above the video, below the badge, which is explicit at 3. */
+  z-index: 1;
 }
 
 /* No play button over the preview. It covered the middle of the frame, which

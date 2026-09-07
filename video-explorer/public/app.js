@@ -3151,6 +3151,10 @@ const spriteObserver = new IntersectionObserver((entries) => {
     if (!entry.isIntersecting) continue;
     spriteObserver.unobserve(entry.target);
     loadPoster(entry.target);
+    // On screen, or 400px from it. Build its strip now, while nobody is
+    // waiting on it, so opening it later costs a read from disk.
+    const queued = state.files.find((f) => f.path === entry.target.dataset.path);
+    if (queued) queuePrebuild(queued);
   }
 }, { root: scrollRoot, rootMargin: '400px 0px' });
 
@@ -3235,6 +3239,13 @@ function loadSprite(filePath, previewEl) {
       // Cloud-only files are refused unless we say the user asked for this one.
       const allow = state.cloudOptIn.has(filePath) ? '&allowCloud=1' : '';
       const res = await fetch(`/api/sprite?path=${encodeURIComponent(filePath)}${allow}`);
+      if (res.status === 409) {
+        // Cloud-only and nobody has asked for this one: a refusal, not a
+        // failure. Recording it as a failure is what stopped the player ever
+        // getting a strip for a file whose tile had scrolled past first.
+        if (previewEl) previewEl.classList.remove('loading');
+        return null;
+      }
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || `sprite failed (${res.status})`);
@@ -3341,6 +3352,51 @@ function applyThumb(previewEl, url) {
   // the ☁ note in the details row still says it isn't downloaded.
   const placard = previewEl.querySelector('.cloud-mark');
   if (placard) placard.remove();
+}
+
+/**
+ * Strips built ahead of being wanted, so opening a cloud video is instant.
+ *
+ * Building one takes about twelve seconds and cannot be made faster -- the
+ * concurrency is already at its measured optimum. It can only be made earlier.
+ * Since the result is cached on disk forever, doing it while a tile is merely
+ * on screen turns every later opening into a 1ms read.
+ *
+ * Strictly one at a time: a single build is already four parallel range
+ * requests to one host, and stacking them collects connection refusals.
+ */
+const prebuild = { queue: [], seen: new Set(), running: false };
+
+function queuePrebuild(file, urgent = false) {
+  if (!file || !file.cloudOnly) return;
+  if (prebuild.seen.has(file.path)) {
+    // Already queued or done -- but a hover still deserves to jump the queue.
+    if (!urgent) return;
+    const at = prebuild.queue.findIndex((f) => f.path === file.path);
+    if (at > 0) prebuild.queue.unshift(...prebuild.queue.splice(at, 1));
+    return;
+  }
+  if (state.sprites.has(file.path)) return; // this session already has it
+  prebuild.seen.add(file.path);
+  if (urgent) prebuild.queue.unshift(file);
+  else prebuild.queue.push(file);
+  runPrebuild();
+}
+
+async function runPrebuild() {
+  if (prebuild.running) return;
+  prebuild.running = true;
+  try {
+    while (prebuild.queue.length) {
+      const file = prebuild.queue.shift();
+      // Watching is not required to build it, and building downloads nothing.
+      state.cloudOptIn.add(file.path);
+      state.failed.delete(file.path);
+      try { await loadSprite(file.path, null); } catch { /* try the next one */ }
+    }
+  } finally {
+    prebuild.running = false;
+  }
 }
 
 /**
@@ -3516,6 +3572,8 @@ function attachHover(previewEl, file) {
     // streaming URL resolved now. Playing a cloud file needs a Graph lookup
     // worth about three seconds, and hovering is the warning that it is coming.
     warmStream(file);
+    // The strongest hint about what is about to be clicked.
+    queuePrebuild(file, true);
     // Hovering must never trigger a multi-hundred-MB download.
     if (file.cloudOnly && !state.cloudOptIn.has(file.path)) return;
     // Opening the player moves the cursor onto the modal, which fires mouseenter
@@ -3961,6 +4019,8 @@ async function startStripPreview(file) {
   // Watching a file is consent enough to build its frames: the strip is read
   // over HTTPS and downloads nothing, so there is no placeholder to protect.
   state.cloudOptIn.add(file.path);
+  // A refusal recorded before consent says nothing about this request.
+  state.failed.delete(file.path);
 
   const entry = await loadSprite(file.path, null);
   // A slow build can outlive the modal, or land after the next video opened.
