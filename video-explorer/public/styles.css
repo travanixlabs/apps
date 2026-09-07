@@ -1154,6 +1154,10 @@ body.dragging .card { cursor: grabbing; }
 
 /* The stage is a positioning context so the preview badge and play button can
    sit over the video rather than beside it. */
+/* The third sweep's pill. Its own hue so three pills in a row can be told
+   apart at a glance, and otherwise identical to the two beside it. */
+.framing-pill .faces-dot { background: #7c6cf0; }
+
 .player-stage { background: #000; position: relative; }
 /* Sits exactly over the video. background-size is set per file, to
    frames x 100%, so a percentage position addresses frame i exactly -- the

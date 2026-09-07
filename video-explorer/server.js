@@ -26,6 +26,7 @@ const priority = require('./priority');
 const library = require('./library');
 const faces = require('./faces');
 const dupes = require('./dupes');
+const framing = require('./framing');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -507,7 +508,11 @@ function rememberRoot(dir) {
   config.rootsSeen[root.toLowerCase()] = Date.now();
   // Opening a folder inside one already authorised adds nothing to sweep; only
   // genuinely new ground makes the denominator wrong.
-  if (config.roots.length !== had) { faces.rootsChanged(); dupes.rootsChanged(); }
+  if (config.roots.length !== had) {
+    faces.rootsChanged();
+    dupes.rootsChanged();
+    framing.rootsChanged();
+  }
   config.lastDir = resolved;
   saveConfigSoon();
 }
@@ -637,6 +642,23 @@ function thumbCachePath(file, stat) {
 
 function spriteCachePath(file, stat) {
   return path.join(CACHE_DIR, cacheName(stat, spriteSalt()));
+}
+
+/**
+ * How many strips are on the disk, counted by their sidecars.
+ *
+ * A strip is the only cached artefact that writes a .json beside itself -- the
+ * frame count -- so counting those is one directory read rather than a stat per
+ * video. The framing sweep subtracts what it can account for to report the rest
+ * as kept for files no longer downloaded.
+ */
+async function countStrips() {
+  try {
+    const names = await fsp.readdir(CACHE_DIR);
+    return names.reduce((n, name) => (name.endsWith('.jpg.json') ? n + 1 : n), 0);
+  } catch {
+    return 0;
+  }
 }
 
 /**
@@ -785,7 +807,7 @@ async function cloudFrames(url, duration, frames, tmpDir, vf) {
  * box, so the client can address frame i with pure percentage maths and
  * portrait videos are never stretched.
  */
-async function ensureSprite(file, stat) {
+async function ensureSprite(file, stat, { background = false } = {}) {
   const frames = Math.max(2, Math.min(24, Number(config.frames) || 10));
   const { tileW, tileH } = tileDims();
 
@@ -804,7 +826,11 @@ async function ensureSprite(file, stat) {
   // Somebody has opened the player and is watching a spinner. For a cloud file
   // this is ten seeks over the network, so the background sweeps stand aside
   // until the strip is built -- see priority.js for why this, and only this.
-  const givePriorityBack = priority.hold(path.basename(file));
+  //
+  // Not when the framing sweep is the one asking. Nobody is waiting on those,
+  // and taking the hold would make the face and fingerprint sweeps stand aside
+  // for hours of background work -- the exact opposite of what the hold is for.
+  const givePriorityBack = background ? () => {} : priority.hold(path.basename(file));
 
   return ffLimit(async () => {
     if (await exists(out)) {
@@ -1758,6 +1784,15 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, body);
     }
 
+    if (req.method === 'GET' && route === '/api/framing/status') {
+      return sendJson(res, 200, framing.status());
+    }
+
+    if (req.method === 'POST' && route === '/api/framing/enabled') {
+      const body = await readBody(req);
+      return sendJson(res, 200, framing.setEnabled(body.enabled !== false));
+    }
+
     if (req.method === 'GET' && route === '/api/faces/status') {
       return sendJson(res, 200, faces.status());
     }
@@ -2088,6 +2123,25 @@ async function main() {
     .then(() => dupes.loadIndex())
     .then(() => log('duplicates: paused until you start it'))
     .catch(() => { });
+
+  // The third sweep. It owns no store of its own -- a strip lives in the
+  // preview cache like any other -- so all it needs is the way in.
+  framing.init({
+    // background: nobody is waiting on these, so they must not make the other
+    // two sweeps stand aside.
+    build: (file, stat) => ensureSprite(file, stat, { background: true }),
+    hasStrip: async (file, stat) => {
+      // adoptLegacyCache moves a strip built under the old naming across, so
+      // ask through it rather than for the new name alone: otherwise every
+      // pre-rename strip counts as missing and gets rebuilt.
+      const at = await adoptLegacyCache(file, stat, 'sprite');
+      return exists(at);
+    },
+    countCached: countStrips,
+    roots: () => [...config.roots, config.homeDir].filter(Boolean),
+    home: () => config.homeDir || ONEDRIVE_ROOT || '',
+  });
+  log('framing: paused until you start it');
 
   metaIndex = loadJsonSync(META_FILE, {});
   log(`${Object.keys(metaIndex).length} cached metadata entries`);

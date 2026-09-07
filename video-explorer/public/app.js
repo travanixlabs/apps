@@ -2619,6 +2619,99 @@ function keyOf(file) {
  * so they read the same way: a fraction, one word for what it is doing, and
  * the finding on the end. Clicking pauses, as it does for faces.
  */
+let framingStatus = null;
+async function pollFramingStatus() {
+  try {
+    framingStatus = await api('/api/framing/status');
+  } catch {
+    framingStatus = null;
+  }
+  renderFramingPill();
+}
+
+function renderFramingPill() {
+  const pill = $('#framingPill');
+  const text = $('#framingText');
+  if (!pill || !text) return;
+  if (!framingStatus || !framingStatus.available) {
+    pill.hidden = true;
+    return;
+  }
+  pill.hidden = false;
+  const {
+    framed, downloaded, counted, cached, remaining, doing, current, done, rate, failed,
+  } = framingStatus;
+  const n = (x) => Number(x || 0).toLocaleString();
+
+  const finished = counted && !remaining && downloaded > 0 && framed >= downloaded;
+  const busy = doing === 'framing' || doing === 'counting';
+
+  pill.classList.toggle('working', busy);
+  pill.classList.toggle('waiting', doing === 'waiting');
+  pill.classList.toggle('paused', doing === 'paused' || doing === 'stopped');
+  pill.classList.toggle('done', finished && !busy);
+
+  text.replaceChildren();
+  const said = {
+    counting: 'counting the library\u2026',
+    framing: 'framing\u2026',
+    'standing aside': 'standing aside\u2026',
+    waiting: 'waiting',
+    paused: 'paused',
+    stopped: 'stopped',
+  };
+  const main = document.createElement('span');
+  main.textContent = counted && downloaded ? `${n(framed)} / ${n(downloaded)}` : `${n(framed)}`;
+  text.appendChild(main);
+
+  const stateEl = document.createElement('span');
+  stateEl.className = 'faces-doing';
+  stateEl.textContent = ' ' + (finished && !busy ? 'all framed' : (said[doing] || 'framed'));
+  text.appendChild(stateEl);
+
+  // Strips kept for videos that have since gone back to the cloud: work that
+  // still counts for something, but not against this denominator. The pills
+  // either side of this one report their own the same way.
+  if (cached > 0) {
+    const kept = document.createElement('span');
+    kept.className = 'faces-cached';
+    kept.textContent = ` \u00b7 ${n(cached)} cached`;
+    text.appendChild(kept);
+  }
+
+  pill.title = [
+    doing === 'framing' ? `Building the preview frames for ${current}`
+      : doing === 'counting' ? 'Counting the library\u2026'
+        : doing === 'standing aside' ? 'Waiting for a preview you are looking at'
+          : doing === 'waiting' ? 'Ready \u2014 nothing left to frame'
+            : doing === 'paused' ? 'Paused \u2014 click to build the preview frames'
+              : 'Not running',
+    counted && downloaded
+      ? `${n(framed)} of ${n(downloaded)} downloaded videos framed`
+        + (remaining ? `, ${n(remaining)} to go` : '')
+      : `${n(framed)} framed, still counting the library`,
+    done ? `${n(done)} built this session${rate ? ` \u00b7 about ${n(rate)}/hour` : ''}` : '',
+    failed ? `${n(failed)} could not be read` : '',
+    'Ten frames per video, so opening one shows them at once instead of building them.',
+    'Cloud videos are framed as you browse them, not here.',
+  ].filter(Boolean).join('\n');
+}
+
+async function toggleFramingSweep() {
+  if (!framingStatus) return;
+  try {
+    framingStatus = await api('/api/framing/enabled', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !framingStatus.enabled }),
+    });
+    renderFramingPill();
+    toast(framingStatus.enabled ? 'Framing resumed' : 'Framing paused');
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
 let dupeStatus = null;
 async function pollDupeStatus() {
   try {
@@ -5224,6 +5317,7 @@ function wireEvents() {
 
   $('#facesPill').addEventListener('click', toggleFaceSweep);
   $('#dupesPill').addEventListener('click', toggleDupeSweep);
+  $('#framingPill').addEventListener('click', toggleFramingSweep);
   $('#faceAdd').addEventListener('click', () => {
     if (!lineupFor) return;
     const { sug, onPick } = lineupFor;
@@ -5269,6 +5363,8 @@ function wireEvents() {
   setInterval(pollFaceStatus, 2000);
   pollDupeStatus();
   setInterval(pollDupeStatus, 2000);
+  pollFramingStatus();
+  setInterval(pollFramingStatus, 2000);
 
   // settings
   $('#groupBtn').addEventListener('click', toggleGrouped);
