@@ -1,9 +1,12 @@
 /* Reads and fingerprints the library from outside the app.
  *
- *   node tools/sweep.js              three profilers, one fingerprinter
- *   node tools/sweep.js --faces 6    more profilers
- *   node tools/sweep.js --only faces
- *   node tools/sweep.js --dry        say what is outstanding, read nothing
+ *   node tools/sweep.js                   three profilers, one of each other
+ *   node tools/sweep.js --faces 6         more profilers
+ *   node tools/sweep.js --prints 3        more fingerprinters
+ *   node tools/sweep.js --strips 2        more strip builders
+ *   node tools/sweep.js --only dupes      one sweep only
+ *   node tools/sweep.js --only dupes,frames   or two of them
+ *   node tools/sweep.js --dry             say what is outstanding, read nothing
  *
  * The app does this too, but politely: one video at a time on each sweep,
  * because it is a background job competing with somebody browsing. With the app
@@ -32,6 +35,8 @@ const APP = path.join(__dirname, '..');
 const library = require(path.join(APP, 'library.js'));
 const faces = require(path.join(APP, 'faces.js'));
 const dupes = require(path.join(APP, 'dupes.js'));
+const framing = require(path.join(APP, 'framing.js'));
+const strips = require(path.join(APP, 'strips.js'));
 
 const PORT = Number(process.env.VIDEO_EXPLORER_PORT || 4321);
 
@@ -42,7 +47,10 @@ const flag = (name, fallback) => {
 };
 const FACE_WORKERS = Math.max(1, Number(flag('faces', 3)));
 const PRINT_WORKERS = Math.max(1, Number(flag('prints', 1)));
-const ONLY = flag('only', '');
+const STRIP_WORKERS = Math.max(1, Number(flag('strips', 1)));
+// A list, so "--only dupes,frames" can be asked for. Empty means all three.
+const ONLY = new Set(String(flag('only', '')).split(',').map((w) => w.trim()).filter(Boolean));
+const wanted = (name) => ONLY.size === 0 || ONLY.has(name);
 const DRY = argv.includes('--dry');
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -112,20 +120,26 @@ async function main() {
   const lib = await library.init(home);
   say(`library  : ${lib.count} records${lib.readOnly ? `  READ-ONLY: ${lib.readOnly}` : ''}`);
 
-  // init only. start() would set the app's own one-at-a-time loops going and
-  // they would race the pools below for the same queue.
-  const face = faces.init({
-    cacheDir: path.join(store, 'faces'),
-    library,
-    roots,
-    home: () => home,
-  });
-  if (!face.ok) say(`profiling: unavailable (${face.reason})`);
-  else say(`profiling: ${face.model}`);
+  // Only what this run will actually use. The face store is a few hundred
+  // megabytes and the fingerprint index is thousands of files, so a run asked
+  // for one sweep should not pay to open the other two -- which matters when a
+  // second copy of this tool is working alongside the first.
+  //
+  // init only, either way. start() would set the app's own one-at-a-time loops
+  // going and they would race the pools below for the same queue.
+  const face = wanted('faces')
+    ? faces.init({ cacheDir: path.join(store, 'faces'), library, roots, home: () => home })
+    : { ok: false, reason: 'not asked for' };
+  if (wanted('faces')) {
+    if (!face.ok) say(`profiling: unavailable (${face.reason})`);
+    else say(`profiling: ${face.model}`);
+  }
 
-  dupes.init({ cacheDir: store, roots, home: () => home });
-  await dupes.loadDigest();
-  await dupes.loadIndex();
+  if (wanted('dupes')) {
+    dupes.init({ cacheDir: store, roots, home: () => home });
+    await dupes.loadDigest();
+    await dupes.loadIndex();
+  }
 
   // The face store is read in the background and a video whose profile has not
   // loaded yet looks unread -- queueing before it lands reads everything twice.
@@ -138,24 +152,43 @@ async function main() {
     process.stdout.write('\n');
   }
 
-  const doFaces = face.ok && ONLY !== 'dupes';
-  const doPrints = ONLY !== 'faces';
+  const doFaces = face.ok && wanted('faces');
+  const doPrints = wanted('dupes');
+  const doStrips = wanted('frames') || wanted('strips');
+
+  // The strip sweep's own module owns the walk and the counting; it is handed
+  // the same two things the server hands it, pointed at the cache on disk.
+  const cacheDir = path.join(store, 'cache');
+  if (doStrips) {
+    framing.init({
+      build: (file, stat) => strips.build(cacheDir, file, stat, config),
+      hasStrip: (file, stat) => strips.has(cacheDir, file, stat, config),
+      roots,
+      home: () => home,
+    });
+  }
 
   const faceQueue = doFaces ? await faces.__queueForTest() : [];
   const printQueue = doPrints
     ? (await dupes.walkForWork()).filter((w) => !dupes.has(w.key))
     : [];
+  const stripQueue = doStrips ? await framing.walkForWork() : [];
 
   say(`to profile    : ${faceQueue.length}`);
   say(`to fingerprint: ${printQueue.length}`);
+  say(`to frame      : ${stripQueue.length}`);
 
   if (DRY) { say('dry run, nothing read'); return; }
-  if (!faceQueue.length && !printQueue.length) { say('nothing outstanding'); return; }
+  if (!faceQueue.length && !printQueue.length && !stripQueue.length) {
+    say('nothing outstanding');
+    return;
+  }
 
   const began = Date.now();
-  const count = { faces: 0, faceFail: 0, prints: 0, printFail: 0 };
+  const count = { faces: 0, faceFail: 0, prints: 0, printFail: 0, strips: 0, stripFail: 0 };
   const faceTotal = faceQueue.length;
   const printTotal = printQueue.length;
+  const stripTotal = stripQueue.length;
 
   let halt = false;
   const stoppers = [];
@@ -180,6 +213,7 @@ async function main() {
     const rate = mins > 0.2 ? Math.round((count.faces / mins) * 60) : 0;
     say(`profiled ${count.faces}/${faceTotal}`
       + `   fingerprinted ${count.prints}/${printTotal}`
+      + (stripTotal ? `   framed ${count.strips}/${stripTotal}` : '')
       + (rate ? `   ${rate} profiles/hr` : ''));
   };
 
@@ -199,8 +233,21 @@ async function main() {
     } catch { count.printFail += 1; }
   }, progress).then((stop) => stoppers.push(stop));
 
-  say(`reading with ${FACE_WORKERS} profiler(s) and ${PRINT_WORKERS} fingerprinter(s)`);
-  await Promise.all([runFaces, runPrints]);
+  const runStrips = pool(STRIP_WORKERS, stripQueue, async (item) => {
+    if (halt) return;
+    try {
+      await strips.build(cacheDir, item.file, item.stat, config);
+      count.strips += 1;
+    } catch { count.stripFail += 1; }
+  }, progress).then((stop) => stoppers.push(stop));
+
+  say('reading with '
+    + [
+      doFaces && faceTotal ? `${FACE_WORKERS} profiler(s)` : '',
+      doPrints && printTotal ? `${PRINT_WORKERS} fingerprinter(s)` : '',
+      doStrips && stripTotal ? `${STRIP_WORKERS} framer(s)` : '',
+    ].filter(Boolean).join(', '));
+  await Promise.all([runFaces, runPrints, runStrips]);
   clearInterval(watch);
 
   // Scoring is the loop's job in the app, and it was not running. One rebuild
@@ -225,7 +272,9 @@ async function main() {
   // it had skipped hundreds.
   const faceLeft = faceTotal - count.faces - count.faceFail;
   const printLeft = printTotal - count.prints - count.printFail;
-  say(`  left to do   ${faceLeft} profiles, ${printLeft} fingerprints`
+  const stripLeft = stripTotal - count.strips - count.stripFail;
+  say(`  framed       ${count.strips}${count.stripFail ? `  (${count.stripFail} failed)` : ''}`);
+  say(`  left to do   ${faceLeft} profiles, ${printLeft} fingerprints, ${stripLeft} strips`
     + (halt ? '  (stood down early -- run again to finish)' : ''));
 }
 
