@@ -4079,7 +4079,7 @@ function syncPlayerNav() {
  * preview rather than a playthrough, and their play button would be
  * indistinguishable from the seeking this does to render each segment.
  */
-const preview = { timer: null, index: 0, count: 10 };
+const preview = { timer: null, index: 0, count: 10, onMeta: null };
 
 /**
  * Whether the ten segments are still cycling.
@@ -4174,6 +4174,10 @@ function startPlayerPreview() {
   }
 
   const show = (index) => {
+    // Nobody is previewing any more -- the picture has been clicked and this is
+    // a playthrough. A seek from here would drag it back to a tenth of the way
+    // in, which is what "pressing play jumps to the second frame" was.
+    if (!previewing()) return;
     preview.index = index;
     const duration = Number.isFinite(player.duration) && player.duration > 0 ? player.duration : 0;
     if (duration <= 0) return; // metadata not in yet; the timer retries
@@ -4195,18 +4199,29 @@ function startPlayerPreview() {
   const file = state.playing;
   if (file && file.cloudOnly) startStripPreview(file);
 
-  player.addEventListener('loadedmetadata', () => show(0), { once: true });
-  if (player.readyState >= 1) show(0);
-
+  // The timer goes on first so that `previewing()` is already true by the time
+  // either path below calls show() -- both are guarded on it.
   preview.timer = setInterval(
     () => show((preview.index + 1) % preview.count),
     Number(state.config.dwellMs) || 1000,
   );
+
+  // A cloud file can take several seconds to report its duration, which is
+  // easily long enough to click the picture first. Held so it can be taken off
+  // again: a listener that never fires is never removed by `once`, and one per
+  // opening would pile up.
+  preview.onMeta = () => show(0);
+  player.addEventListener('loadedmetadata', preview.onMeta, { once: true });
+  if (player.readyState >= 1) show(0);
 }
 
 function stopPlayerPreview() {
   clearInterval(preview.timer);
   preview.timer = null;
+  if (preview.onMeta) {
+    $('#player').removeEventListener('loadedmetadata', preview.onMeta);
+    preview.onMeta = null;
+  }
   hidePlayerStrip();
 }
 
