@@ -1159,14 +1159,13 @@ body.dragging .card { cursor: grabbing; }
 .framing-pill .faces-dot { background: #7c6cf0; }
 
 .player-stage { background: #000; position: relative; }
-/* Sits exactly over the video. background-size is set per file, to
-   frames x 100%, so a percentage position addresses frame i exactly -- the
-   same arithmetic the grid tiles use. */
+/* Sits exactly over the video. Its size and position are set per frame, in
+   pixels, by paintStripFrame -- the stage is not the tiles' shape, so the
+   percentage arithmetic the grid uses would stretch them. */
 .player-strip {
   position: absolute;
   inset: 0;
   background-repeat: no-repeat;
-  background-position-y: center;
   pointer-events: none;
   /* Above the video, below the badge, which is explicit at 3. */
   z-index: 1;

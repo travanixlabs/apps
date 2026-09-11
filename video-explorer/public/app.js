@@ -4099,6 +4099,44 @@ function hidePlayerStrip() {
 }
 
 /**
+ * Puts frame `index` of a strip on the player's stage, at the frame's own shape.
+ *
+ * The grid's tiles are 16:9 boxes and the strip fills them exactly, which is why
+ * `applySprite` can size the sprite in percentages. The stage is not: it is
+ * whatever the window leaves between the title and the footer, and the <video>
+ * on it letterboxes itself with `object-fit: contain`. Filling the stage the
+ * same way stretched every frame to that shape, so the preview and the
+ * playthrough showed one picture at two proportions.
+ *
+ * So the tile is fitted and centred in pixels here, which is what `contain`
+ * would do to it. Measured on each paint: the window can be resized mid-preview.
+ */
+function paintStripFrame(strip, index, frames) {
+  const box = strip.getBoundingClientRect();
+  // The shape the builder cut them at, by the arithmetic in strips.js.
+  const tileW = Math.max(120, Math.min(640, Number(state.config.tileWidth) || 320));
+  const tileH = 2 * Math.round((tileW * 9 / 16) / 2);
+  const aspect = tileH > 0 ? tileW / tileH : 16 / 9;
+
+  if (!(box.width > 0) || !(box.height > 0)) {
+    // Not laid out yet. Fill it, as this used to, rather than paint nothing.
+    strip.style.backgroundSize = `${frames * 100}% 100%`;
+    strip.style.backgroundPosition = frames > 1
+      ? `${(index / (frames - 1)) * 100}% center`
+      : '0% center';
+    return;
+  }
+
+  let w = box.width;
+  let h = w / aspect;
+  if (h > box.height) { h = box.height; w = h * aspect; }
+
+  strip.style.backgroundSize = `${frames * w}px ${h}px`;
+  strip.style.backgroundPosition =
+    `${(box.width - w) / 2 - index * w}px ${(box.height - h) / 2}px`;
+}
+
+/**
  * The preview as a strip of frames rather than ten seeks.
  *
  * Resolves true if it took over the stage. False means there was no strip to
@@ -4127,8 +4165,6 @@ async function startStripPreview(file) {
   preview.timer = null;
 
   strip.style.backgroundImage = `url("${entry.url}")`;
-  strip.style.backgroundSize = `${entry.frames * 100}% 100%`;
-  strip.style.backgroundPositionX = '0%';
   strip.hidden = false;
 
   preview.count = entry.frames;
@@ -4140,9 +4176,7 @@ async function startStripPreview(file) {
 
   const show = (index) => {
     preview.index = index;
-    strip.style.backgroundPositionX = entry.frames > 1
-      ? `${(index / (entry.frames - 1)) * 100}%`
-      : '0%';
+    paintStripFrame(strip, index, entry.frames);
     const at = segmentTime(duration || Number(state.meta.get(file.path)?.duration) || 0,
       index, entry.frames);
     $('#playerBadge').textContent = `${index + 1}/${entry.frames}`
