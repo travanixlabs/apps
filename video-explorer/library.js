@@ -33,32 +33,31 @@ const EMPTY = {
   marks: [],
 };
 
-// A bookmark is a second, a glyph, and optionally a few words. Kept here rather
-// than in a file of its own because it is the same question the rating and the
-// tags answer -- what do I know about this video -- and because this store is
-// keyed by size and mtime, so a bookmark survives the file being renamed,
-// moved, or freed up to the cloud, which a timestamp in a sidecar would not.
+// A bookmark is a second and an icon. Kept here rather than in a file of its
+// own because it is the same question the rating and the tags answer -- what do
+// I know about this video -- and because this store is keyed by size and mtime,
+// so a bookmark survives the file being renamed, moved, or freed up to the
+// cloud, which a timestamp in a sidecar would not.
 const MARK_LIMIT = 200;
 
 /**
  * One bookmark, or null if there is nothing usable in it.
  *
  * The time is the identity: two marks at the same second are one mark, so
- * setting one twice moves the icon rather than stacking a second pip nobody
+ * setting one twice swaps the icon rather than stacking a second pip nobody
  * can click.
+ *
+ * The icon is stored as a NAME, not as the picture -- `star`, not the character
+ * or the file it is drawn with. public/icons.json decides what a name looks
+ * like, so replacing the artwork restyles every bookmark ever made instead of
+ * leaving old ones frozen as whatever was on screen the day they were saved.
  */
 function normaliseMark(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const at = Number(raw.t);
   if (!Number.isFinite(at) || at < 0) return null;
-  // A glyph, not a sentence: one emoji is often two or three code units, so
-  // this counts characters the way a person would rather than by .length.
-  const icon = [...String(raw.icon || '★').trim()].slice(0, 2).join('') || '★';
-  return {
-    t: Math.round(at * 10) / 10,
-    icon,
-    label: String(raw.label || '').trim().replace(/\s+/g, ' ').slice(0, 80),
-  };
+  const icon = String(raw.icon || '').trim().slice(0, 40) || 'star';
+  return { t: Math.round(at * 10) / 10, icon };
 }
 
 function normaliseMarks(list) {

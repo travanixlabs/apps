@@ -1381,11 +1381,23 @@ const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
-  '.json': 'application/manifest+json; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
 };
+
+/**
+ * The web manifest is the one .json with a type of its own. Every other one --
+ * the bookmark icon set, and whatever follows it -- is ordinary JSON, and
+ * serving those as a manifest was only ever true of the first .json there was.
+ */
+function typeFor(target) {
+  if (path.basename(target).toLowerCase() === 'manifest.json') {
+    return 'application/manifest+json; charset=utf-8';
+  }
+  return MIME[path.extname(target).toLowerCase()] || 'application/octet-stream';
+}
 
 async function serveStatic(res, relPath) {
   const target = path.join(PUBLIC_DIR, relPath);
@@ -1395,7 +1407,7 @@ async function serveStatic(res, relPath) {
   try {
     const data = await fsp.readFile(target);
     res.writeHead(200, {
-      'Content-Type': MIME[path.extname(target).toLowerCase()] || 'application/octet-stream',
+      'Content-Type': typeFor(target),
       'Content-Length': data.length,
       // no-store, not no-cache: a revalidating browser can still serve a stale
       // stylesheet from memory cache, which makes UI changes look like they

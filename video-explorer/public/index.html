@@ -234,13 +234,11 @@
               <button id="pbMarkDrop" class="pb-mark-drop" type="button" hidden
                       title="Remove this bookmark">Remove</button>
             </div>
+            <input id="pbMarkFind" class="pb-mark-find" type="text" maxlength="40"
+                   autocomplete="off" spellcheck="false"
+                   aria-label="Find an icon by name" placeholder="search icons…">
             <div id="pbMarkIcons" class="pb-mark-icons"></div>
-            <div class="pb-mark-row">
-              <input id="pbMarkOwn" class="pb-mark-own" type="text" maxlength="2"
-                     aria-label="Any other character" placeholder="or type one">
-              <input id="pbMarkLabel" class="pb-mark-label" type="text" maxlength="80"
-                     aria-label="Note" placeholder="note (optional)">
-            </div>
+            <p id="pbMarkNone" class="pb-mark-none" hidden>No icon by that name.</p>
           </div>
         </div>
 

@@ -4815,11 +4815,103 @@ function captureFrame(video, second) {
 // ---------------------------------------------------------------- bookmarks
 
 /**
- * The palette. Twelve, because a grid you can take in at a glance beats a list
- * of everything — and the box beside it takes any other character you want, so
- * this is a shortcut rather than a limit.
+ * The icons a bookmark can be given, and the names they answer to.
+ *
+ * Loaded from public/icons.json rather than written here, so replacing the set
+ * is a data change and not a code one. A bookmark stores the icon's NAME --
+ * `star`, not the character it is drawn with -- so swapping the artwork
+ * restyles every bookmark ever made rather than leaving old ones frozen as
+ * whatever was on screen the day they were saved.
+ *
+ * Search matches the name, the id, and the keywords, so "star" finds Star,
+ * Gold star and Sparkle without any of them having to be called the same thing.
  */
-const MARK_ICONS = ['★', '🔖', '❤️', '🔥', '😂', '👀', '⚠️', '✂️', '🎯', '💬', '🎵', '🏁'];
+const markIcons = { list: [], byId: new Map(), loaded: null };
+
+// Enough to draw a bookmark before the file arrives, or if it never does.
+const FALLBACK_ICON = { id: 'star', name: 'Star', glyph: '★', keywords: [] };
+
+function loadMarkIcons() {
+  if (markIcons.loaded) return markIcons.loaded;
+  markIcons.loaded = fetch('icons.json')
+    .then((res) => (res.ok ? res.json() : null))
+    .then((data) => {
+      const list = (data && Array.isArray(data.icons) ? data.icons : [])
+        .filter((icon) => icon && icon.id)
+        .map((icon) => ({
+          id: String(icon.id),
+          name: String(icon.name || icon.id),
+          glyph: icon.glyph ? String(icon.glyph) : '',
+          src: icon.src ? String(icon.src) : '',
+          keywords: (Array.isArray(icon.keywords) ? icon.keywords : []).map(String),
+        }))
+        .map((icon) => ({ ...icon, words: iconWords(icon) }));
+      markIcons.list = list.length ? list : [FALLBACK_ICON];
+      markIcons.byId = new Map(markIcons.list.map((icon) => [icon.id, icon]));
+    })
+    .catch(() => {
+      markIcons.list = [FALLBACK_ICON];
+      markIcons.byId = new Map([[FALLBACK_ICON.id, FALLBACK_ICON]]);
+    });
+  return markIcons.loaded;
+}
+
+/**
+ * The icon an id names.
+ *
+ * An id with no entry still draws: the id itself is used as the character,
+ * which is what makes a bookmark saved under an icon that has since been
+ * removed a slightly odd-looking pip rather than an invisible one.
+ */
+function iconFor(id) {
+  return markIcons.byId.get(id)
+    || { id, name: id, glyph: id, src: '', keywords: [], words: [] };
+}
+
+/** Puts an icon's picture inside an element, as an image or as a character. */
+function paintIcon(el, icon) {
+  el.innerHTML = '';
+  if (icon.src) {
+    const img = document.createElement('img');
+    img.src = icon.src;
+    img.alt = icon.name;
+    el.appendChild(img);
+  } else {
+    el.textContent = icon.glyph || icon.id;
+  }
+}
+
+/** Everything an icon can be found by, as separate words: name, id, keywords. */
+function iconWords(icon) {
+  return `${icon.name} ${icon.id} ${(icon.keywords || []).join(' ')}`
+    .toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+/**
+ * The icons matching what has been typed, the closest first.
+ *
+ * Matched at the START of a word rather than anywhere inside one. Anywhere
+ * inside is what makes "art" offer Start and Heart, which is noise — where
+ * word-start means half a word finds what you are reaching for as you type it.
+ *
+ * A word that matches something exactly outranks one that merely begins it, so
+ * "star" puts Star, Star outline and Gold star above Start. Every typed word
+ * has to match something, so a second word narrows rather than widens.
+ */
+function findIcons(query) {
+  const wanted = String(query || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  if (!wanted.length) return markIcons.list;
+
+  const hits = [];
+  for (const icon of markIcons.list) {
+    const have = icon.words || iconWords(icon);
+    if (!wanted.every((word) => have.some((had) => had.startsWith(word)))) continue;
+    hits.push({ icon, exact: wanted.filter((word) => have.includes(word)).length });
+  }
+  // Sort is stable, so within a rank the file's own order is kept -- which is
+  // the order whoever wrote the icon set chose.
+  return hits.sort((a, b) => b.exact - a.exact).map((hit) => hit.icon);
+}
 
 /** The bookmarks on the open video, earliest first. */
 function playerMarks() {
@@ -4842,14 +4934,14 @@ function drawMarks() {
   if (!(duration > 0)) return;
 
   for (const mark of playerMarks()) {
+    const icon = iconFor(mark.icon);
     const pip = document.createElement('button');
     pip.type = 'button';
     pip.className = 'pb-mark';
     pip.style.left = `${Math.min(100, Math.max(0, (mark.t / duration) * 100))}%`;
-    pip.textContent = mark.icon;
+    paintIcon(pip, icon);
     pip.dataset.at = String(mark.t);
-    pip.title = `${fmtDuration(mark.t)}${mark.label ? ' — ' + mark.label : ''}`
-      + '  (right-click to edit)';
+    pip.title = `${icon.name} at ${fmtDuration(mark.t)}  (right-click to change)`;
     pip.setAttribute('aria-label', pip.title);
     host.appendChild(pip);
   }
@@ -4877,22 +4969,17 @@ function openMarkMenu(seconds, clientX) {
   menu.dataset.at = String(at);
 
   $('#pbMarkTime').textContent = fmtDuration(at);
-  $('#pbMarkWhat').textContent = existing ? 'Edit this bookmark' : 'Bookmark this moment';
+  $('#pbMarkWhat').textContent = existing ? 'Change this bookmark' : 'Bookmark this moment';
   $('#pbMarkDrop').hidden = !existing;
-  $('#pbMarkLabel').value = existing ? existing.label || '' : '';
-  $('#pbMarkOwn').value = existing && !MARK_ICONS.includes(existing.icon) ? existing.icon : '';
-
-  const icons = $('#pbMarkIcons');
-  icons.innerHTML = '';
-  for (const glyph of MARK_ICONS) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.textContent = glyph;
-    btn.title = 'Bookmark with ' + glyph;
-    if (existing && existing.icon === glyph) btn.classList.add('on');
-    btn.addEventListener('click', () => saveMark(at, glyph));
-    icons.appendChild(btn);
-  }
+  // A fresh search every time it opens: the last thing you looked for is rarely
+  // the next thing, and a box that opens holding an old word looks empty of
+  // icons rather than filtered.
+  $('#pbMarkFind').value = '';
+  drawIconChoices();
+  // Usually already in hand -- the fetch runs at startup and the promise is
+  // kept -- but on the very first opening of a cold session this is what fills
+  // the grid a tick later rather than leaving it empty.
+  loadMarkIcons().then(() => { if (!$('#pbMarkMenu').hidden) drawIconChoices(); });
 
   // Held inside the track, the same way the hover preview is.
   const box = $('#pbSeek').getBoundingClientRect();
@@ -4902,7 +4989,38 @@ function openMarkMenu(seconds, clientX) {
   menu.style.transform = 'translateX(-50%)';
   menu.hidden = false;
   wakeBar();
-  $('#pbMarkLabel').focus();
+  // The search is where a choice starts, so the cursor is already in it.
+  $('#pbMarkFind').focus();
+}
+
+/**
+ * Fills the grid with whatever the search box leaves.
+ *
+ * Rebuilt on every keystroke. The set is small enough that the honest thing is
+ * cheaper than anything clever, and it keeps one path for both "opened fresh"
+ * and "narrowed to two".
+ */
+function drawIconChoices() {
+  const host = $('#pbMarkIcons');
+  const menu = $('#pbMarkMenu');
+  if (!host || !menu) return;
+
+  const at = Number(menu.dataset.at);
+  const chosen = markAt(at);
+  const found = findIcons($('#pbMarkFind').value);
+
+  host.innerHTML = '';
+  for (const icon of found) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.title = icon.name;
+    btn.setAttribute('aria-label', icon.name);
+    paintIcon(btn, icon);
+    if (chosen && chosen.icon === icon.id) btn.classList.add('on');
+    btn.addEventListener('click', () => saveMark(at, icon.id));
+    host.appendChild(btn);
+  }
+  $('#pbMarkNone').hidden = found.length > 0;
 }
 
 function closeMarkMenu() {
@@ -4910,14 +5028,11 @@ function closeMarkMenu() {
   if (menu) menu.hidden = true;
 }
 
-/** Writes one bookmark and closes up. The note comes from the box as it stands. */
+/** Writes one bookmark and closes up. */
 function saveMark(at, icon) {
   const file = state.playing;
   if (!file) return;
-  const own = $('#pbMarkOwn').value.trim();
-  editRecords([file.path], {
-    setMark: { t: at, icon: icon || own || '★', label: $('#pbMarkLabel').value.trim() },
-  });
+  editRecords([file.path], { setMark: { t: at, icon: icon || FALLBACK_ICON.id } });
   closeMarkMenu();
 }
 
@@ -6202,19 +6317,21 @@ function wireEvents() {
   $('#pbMarkDrop').addEventListener('click', () => {
     removeMark(Number($('#pbMarkMenu').dataset.at));
   });
-  // Typing your own character and pressing Enter is the same as picking one.
-  for (const id of ['#pbMarkOwn', '#pbMarkLabel']) {
-    $(id).addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') {
-        ev.preventDefault();
-        saveMark(Number($('#pbMarkMenu').dataset.at), $('#pbMarkOwn').value.trim());
-      } else if (ev.key === 'Escape') {
-        ev.preventDefault();
-        ev.stopPropagation();
-        closeMarkMenu();
-      }
-    });
-  }
+  // Narrowing the grid as you type, rather than on a button.
+  $('#pbMarkFind').addEventListener('input', drawIconChoices);
+  $('#pbMarkFind').addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      // Typed a name and there is only one thing it can mean: take it, rather
+      // than making you move to the mouse to click the single square left.
+      ev.preventDefault();
+      const found = findIcons($('#pbMarkFind').value);
+      if (found.length) saveMark(Number($('#pbMarkMenu').dataset.at), found[0].id);
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      closeMarkMenu();
+    }
+  });
   // Anywhere else closes it, including the picture behind it.
   document.addEventListener('pointerdown', (ev) => {
     if (!$('#pbMarkMenu').hidden && !ev.target.closest('#pbMarkMenu')) closeMarkMenu();
@@ -6223,6 +6340,9 @@ function wireEvents() {
   // a fraction of it, and before it lands there is nothing to be a fraction of.
   player.addEventListener('durationchange', drawMarks);
   player.addEventListener('loadedmetadata', drawMarks);
+  // And once the icon set is in, so a pip drawn before it landed stops showing
+  // its own name and starts showing its picture.
+  loadMarkIcons().then(() => { if (watching()) drawMarks(); });
 
   seekEl.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0) return;
