@@ -315,6 +315,10 @@ async function fetchThumbnail(absPath, oneDriveRoot) {
     if (res.status !== 404) {
       const err = new Error(`Graph thumbnail ${res.status}`);
       err.statusCode = res.status;
+      // Graph says how long to wait when it throttles. Carried up so the caller
+      // waits that long rather than guessing at it.
+      const after = Number(res.headers.get('retry-after'));
+      if (Number.isFinite(after) && after > 0) err.retryAfter = after;
       throw err;
     }
   }

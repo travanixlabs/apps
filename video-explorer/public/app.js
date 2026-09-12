@@ -3269,16 +3269,57 @@ async function embedSelection() {
  * fills first and the server's own ffmpeg limit is matched rather than buried
  * under a thousand simultaneous requests.
  */
-const posters = { queue: [], running: 0, limit: 6 };
+// `queued` is membership only. Scanning the array for it would be a linear
+// search per card, and a listing of twenty-six thousand does that twenty-six
+// thousand times before a single picture lands.
+const posters = { queue: [], queued: new Set(), running: 0, limit: 6 };
 
-function queuePoster(previewEl) {
-  posters.queue.push(previewEl);
+/**
+ * `urgent` is "this one is on screen".
+ *
+ * The queue is in card order, which is the right order to work through a
+ * library in but the wrong one to answer a scroll with: a cloud file's picture
+ * is a round trip to OneDrive, so a listing of twenty-six thousand of them is
+ * half an hour of work, and a tile four thousand cards down would have waited
+ * most of it out reading "cloud only". What you are looking at goes first.
+ */
+function queuePoster(previewEl, urgent = false) {
+  if (posters.queued.has(previewEl)) {
+    if (!urgent) return;               // already waiting its turn
+    const at = posters.queue.indexOf(previewEl);
+    if (at <= 0) return;               // already at the front, or in flight
+    posters.queue.splice(at, 1);
+  } else {
+    posters.queued.add(previewEl);
+  }
+  if (urgent) posters.queue.unshift(previewEl);
+  else posters.queue.push(previewEl);
   drainPosters();
+}
+
+/**
+ * Puts a tile back in the queue after OneDrive has asked us to wait.
+ *
+ * Three goes at widening intervals and then it is left alone: a service that is
+ * still saying no after half a minute of asking is not going to be talked round
+ * by a fourth request, and the tile can be filled by scrolling back to it.
+ */
+const retried = new Map(); // path -> how many times
+
+function retryPoster(previewEl, filePath, seconds) {
+  const goes = retried.get(filePath) || 0;
+  if (goes >= 3 || !previewEl) return;
+  retried.set(filePath, goes + 1);
+  setTimeout(() => {
+    // Its card may be long gone by now -- a different folder, or a filter.
+    if (previewEl.isConnected) queuePoster(previewEl);
+  }, Math.min(seconds * (goes + 1), 30) * 1000);
 }
 
 function drainPosters() {
   while (posters.running < posters.limit && posters.queue.length) {
     const el = posters.queue.shift();
+    posters.queued.delete(el);
     // Its card left the grid before its turn came -- a re-render, or a filter.
     if (!el.isConnected) continue;
     posters.running += 1;
@@ -3298,8 +3339,11 @@ const spriteObserver = new IntersectionObserver((entries) => {
   for (const entry of entries) {
     if (!entry.isIntersecting) continue;
     spriteObserver.unobserve(entry.target);
-    // On screen, or 400px from it. Build its strip now, while nobody is
-    // waiting on it, so opening it later costs a read from disk.
+    // On screen, or 400px from it: its picture jumps the queue. Everything is
+    // still fetched -- this only decides what is fetched next.
+    queuePoster(entry.target, true);
+    // Build its strip now, while nobody is waiting on it, so opening it later
+    // costs a read from disk.
     const queued = state.files.find((f) => f.path === entry.target.dataset.path);
     if (queued) queuePrebuild(queued);
   }
@@ -3464,6 +3508,15 @@ function loadThumb(filePath, previewEl, allowCloud = false) {
       if (res.status === 409) {
         // Cloud-only and not opted in: leave the tile as-is, no download.
         if (previewEl) previewEl.classList.remove('loading');
+        return null;
+      }
+      if (res.status === 503) {
+        // OneDrive is throttling, not refusing: it has a picture for this one.
+        // Asked for again shortly rather than left blank for the session, which
+        // is what a whole library asking at once used to come to.
+        if (previewEl) previewEl.classList.remove('loading');
+        const body = await res.json().catch(() => ({}));
+        retryPoster(previewEl, filePath, Number(body.retryAfter) || 5);
         return null;
       }
       if (!res.ok) {
@@ -4397,6 +4450,7 @@ function render() {
   // The cards these were waiting for are about to stop existing. What is
   // already in flight lands in the cache and costs the new grid nothing.
   posters.queue.length = 0;
+  posters.queued.clear();
   grid.innerHTML = '';
 
   renderBreadcrumb();

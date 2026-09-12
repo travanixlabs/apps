@@ -334,24 +334,45 @@ async function graphStreamUrl(file) {
  * for a cloud-only library without downloading it.
  */
 async function graphThumbnail(file) {
-  if (!graph || !ONEDRIVE_ROOT) return null;
-  if (graphMisses.has(file.toLowerCase())) return null;
-  if (!graph.isSignedIn()) return null;
+  if (!graph || !ONEDRIVE_ROOT) return { reason: 'no-onedrive' };
+  if (graphMisses.has(file.toLowerCase())) return { reason: 'no-thumbnail' };
+  if (!graph.isSignedIn()) return { reason: 'signed-out' };
 
-  try {
-    const buffer = await graphLimit(() => graph.fetchThumbnail(file, ONEDRIVE_ROOT));
-    if (!buffer || buffer.length === 0) {
-      graphMisses.add(file.toLowerCase());
-      return null;
+  // Throttling is not a missing thumbnail. Asking for a whole library's worth
+  // at once -- which is what the grid now does -- earns a 429 with a wait on
+  // it, and treating that as "this file has no picture" left tiles permanently
+  // blank for files OneDrive had a picture for all along.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const buffer = await graphLimit(() => graph.fetchThumbnail(file, ONEDRIVE_ROOT));
+      if (!buffer || buffer.length === 0) {
+        graphMisses.add(file.toLowerCase());
+        return { reason: 'no-thumbnail' };
+      }
+      return { buffer };
+    } catch (err) {
+      const status = Number(err.statusCode) || 0;
+      if (status === 404) {
+        graphMisses.add(file.toLowerCase());
+        return { reason: 'no-thumbnail' };
+      }
+      const transient = status === 429 || status === 408 || status >= 500;
+      if (!transient) return { reason: 'graph-error', status, error: err.message };
+      if (attempt === 2) return { reason: 'throttled', status, retryAfter: waitFor(err) };
+      await sleep(waitFor(err, attempt) * 1000);
     }
-    return buffer;
-  } catch (err) {
-    // 404 means no thumbnail exists; anything else is likely transient, so
-    // only the definite miss is remembered.
-    if (err.statusCode === 404) graphMisses.add(file.toLowerCase());
-    return null;
   }
+  return { reason: 'throttled' };
 }
+
+/** Seconds to wait, from what the service asked for, or a widening guess. */
+function waitFor(err, attempt = 2) {
+  const asked = Number(err && err.retryAfter);
+  if (Number.isFinite(asked) && asked > 0) return Math.min(asked, 30);
+  return [2, 5, 10][Math.min(attempt, 2)];
+}
+
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -1927,18 +1948,32 @@ const server = http.createServer(async (req, res) => {
       // has, which costs ~16KB and hydrates nothing.
       if (cloudOnly && !allowCloud && !(await exists(cachePath))) {
         const fromGraph = await graphThumbnail(target);
-        if (fromGraph) {
+        if (fromGraph.buffer) {
           await fsp.mkdir(path.dirname(cachePath), { recursive: true });
-          await fsp.writeFile(cachePath, fromGraph);
+          await fsp.writeFile(cachePath, fromGraph.buffer);
           res.writeHead(200, {
             'Content-Type': 'image/jpeg',
-            'Content-Length': fromGraph.length,
+            'Content-Length': fromGraph.buffer.length,
             'X-Thumb-Source': 'graph',
             'Cache-Control': 'private, max-age=86400',
           });
-          return res.end(fromGraph);
+          return res.end(fromGraph.buffer);
         }
-        return sendJson(res, 409, { error: 'cloud-only', cloudOnly: true, size: stat.size });
+        // Throttled or briefly down is a "come back", not a "there is none":
+        // answering 409 for it made a tile blank for the rest of the session.
+        if (fromGraph.reason === 'throttled' || fromGraph.reason === 'graph-error') {
+          const wait = Number(fromGraph.retryAfter) || 5;
+          res.writeHead(503, {
+            'Content-Type': 'application/json',
+            'Retry-After': String(wait),
+          });
+          return res.end(JSON.stringify({
+            error: 'thumbnail unavailable', ...fromGraph, retryAfter: wait,
+          }));
+        }
+        return sendJson(res, 409, {
+          error: 'cloud-only', cloudOnly: true, size: stat.size, reason: fromGraph.reason,
+        });
       }
 
       const data = await fsp.readFile(await ensureThumb(target, stat));
