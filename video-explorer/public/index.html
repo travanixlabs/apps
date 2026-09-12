@@ -190,6 +190,65 @@
       <!-- The ten-frame strip, shown instead of seeking a cloud video. -->
       <div id="playerStrip" class="player-strip" hidden></div>
       <span id="playerBadge" class="badge badge-frame player-badge"></span>
+
+      <!-- Our own controls. The browser's native bar gives no way to ask where
+           the pointer is on its timeline, and a seek you cannot preview is a
+           guess — so the bar is ours and the preview hangs off it. -->
+      <div id="playerBar" class="player-bar" hidden>
+        <button id="pbPlay" class="pb-btn" aria-label="Play" title="Play/pause (Space)">
+          <svg class="pb-icon-play" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+            <path d="M4.5 2.6 12.8 8 4.5 13.4z" fill="currentColor"/>
+          </svg>
+          <svg class="pb-icon-pause" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+            <rect x="4" y="2.8" width="3.1" height="10.4" rx="1" fill="currentColor"/>
+            <rect x="8.9" y="2.8" width="3.1" height="10.4" rx="1" fill="currentColor"/>
+          </svg>
+        </button>
+        <span id="pbNow" class="pb-time mono">0:00</span>
+
+        <div id="pbSeek" class="pb-seek" role="slider" tabindex="0"
+             aria-label="Seek" aria-valuemin="0" aria-valuenow="0">
+          <div class="pb-track">
+            <div id="pbBuffered" class="pb-buffered"></div>
+            <div id="pbPlayed" class="pb-played"></div>
+            <div id="pbKnob" class="pb-knob"></div>
+          </div>
+          <!-- Where you would land. Positioned in pixels as the pointer moves. -->
+          <div id="pbHover" class="pb-hover" hidden>
+            <div id="pbHoverShot" class="pb-hover-shot">
+              <video id="pbHoverVideo" class="pb-hover-video" muted playsinline
+                     preload="metadata" disablepictureinpicture hidden></video>
+            </div>
+            <span id="pbHoverTime" class="pb-hover-time mono">0:00</span>
+          </div>
+        </div>
+
+        <span id="pbDur" class="pb-time mono">0:00</span>
+
+        <button id="pbMute" class="pb-btn" aria-label="Mute" title="Mute (M)">
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+            <path d="M3 6.1h2.4L8.6 3.3v9.4L5.4 9.9H3z" fill="currentColor"/>
+            <g class="pb-waves" fill="none" stroke="currentColor" stroke-width="1.3"
+               stroke-linecap="round">
+              <path d="M10.6 6.2a2.6 2.6 0 0 1 0 3.6"/>
+              <path d="M12.4 4.5a5 5 0 0 1 0 7"/>
+            </g>
+            <g class="pb-cross" fill="none" stroke="currentColor" stroke-width="1.4"
+               stroke-linecap="round">
+              <path d="M10.9 6.2 14.2 9.8M14.2 6.2 10.9 9.8"/>
+            </g>
+          </svg>
+        </button>
+        <input id="pbVol" class="pb-vol" type="range" min="0" max="100" step="1"
+               value="100" aria-label="Volume">
+
+        <button id="pbFull" class="pb-btn" aria-label="Fullscreen" title="Fullscreen (F)">
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="none"
+               stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+            <path d="M2.4 5.9V2.4h3.5M10.1 2.4h3.5v3.5M13.6 10.1v3.5h-3.5M5.9 13.6H2.4v-3.5"/>
+          </svg>
+        </button>
+      </div>
     </div>
     <footer class="modal-foot">
       <div class="player-nav">

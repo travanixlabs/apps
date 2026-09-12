@@ -1237,6 +1237,172 @@ body.dragging .card { cursor: grabbing; }
 .player-badge[hidden] { display: none; }
 #player { width: 100%; max-height: 68vh; background: #000; display: block; }
 
+/* ----------------------------------------------------------- the control bar
+
+   Over the bottom of the picture rather than under it: the stage is already
+   competing with a three-row footer for a short window, and a bar that took
+   its own strip of height would come out of the video every time. It fades
+   while you are watching and something is moving, and stays put whenever it
+   is wanted -- paused, hovered, or being used. */
+.player-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 16px 12px 9px;
+  background: linear-gradient(to top, rgba(0, 0, 0, .82), rgba(0, 0, 0, 0));
+  transition: opacity .18s;
+}
+.player-bar[hidden] { display: none; }
+/* Only while the video is actually running: a paused bar that faded out would
+   leave no way back to it but a guess at where it was. */
+.player-stage.bar-idle .player-bar { opacity: 0; pointer-events: none; }
+
+.pb-btn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+}
+.pb-btn:hover { background: rgba(255, 255, 255, .16); }
+.pb-btn:focus-visible { outline: 2px solid var(--accent, #58a6ff); outline-offset: 1px; }
+/* One button, two glyphs: whichever the state is not, is not drawn. */
+.pb-icon-pause,
+.player-stage.paused .pb-icon-play { display: block; }
+.pb-icon-play,
+.player-stage.paused .pb-icon-pause { display: none; }
+
+.pb-time {
+  flex: none;
+  color: #e9eef5;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .7);
+}
+
+/* The hit area is taller than the line you see, so the bar can be grabbed
+   without having to land on four pixels. */
+.pb-seek {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 60px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  touch-action: none;
+}
+.pb-seek:focus-visible { outline: 2px solid var(--accent, #58a6ff); outline-offset: 2px; }
+.pb-track {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, .26);
+  transition: height .12s;
+}
+.pb-seek:hover .pb-track,
+.pb-seek.dragging .pb-track { height: 6px; }
+.pb-buffered,
+.pb-played {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+}
+.pb-buffered { background: rgba(255, 255, 255, .3); }
+.pb-played { background: var(--accent, #58a6ff); }
+.pb-knob {
+  position: absolute;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  margin-left: -5.5px;
+  border-radius: 50%;
+  background: #fff;
+  transform: translateY(-50%) scale(0);
+  transition: transform .12s;
+}
+.pb-seek:hover .pb-knob,
+.pb-seek.dragging .pb-knob,
+.pb-seek:focus-visible .pb-knob { transform: translateY(-50%) scale(1); }
+
+/* ---- where you would land -------------------------------------------------
+
+   The strip frame appears at once, on every video including the cloud ones,
+   because it is already on disk. For a file that is really on this machine a
+   second video seeks the exact moment and replaces it a beat later. */
+.pb-hover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  /* left is set per pointer position, clamped to the track. */
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  pointer-events: none;
+}
+.pb-hover[hidden] { display: none; }
+.pb-hover-shot {
+  width: 168px;
+  aspect-ratio: 16 / 9;
+  position: relative;
+  overflow: hidden;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, .28);
+  background-color: #0b0d11;
+  background-repeat: no-repeat;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .6);
+}
+.pb-hover-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #0b0d11;
+}
+.pb-hover-video[hidden] { display: none; }
+.pb-hover-time {
+  color: #fff;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .9);
+}
+
+.pb-vol {
+  flex: none;
+  width: 74px;
+  accent-color: var(--accent, #58a6ff);
+  cursor: pointer;
+}
+/* Muted is the crossed speaker; otherwise the waves. */
+.pb-cross { display: none; }
+.player-bar.muted .pb-cross { display: block; }
+.player-bar.muted .pb-waves { display: none; }
+
+/* Fullscreen is the stage, not the video, so the bar goes with it. */
+.player-stage:fullscreen { background: #000; }
+.player-stage:fullscreen #player { max-height: none; height: 100%; }
+
+/* A narrow window loses the volume slider before it loses the seek bar, and
+   the preview shrinks rather than hanging off the side. */
+@media (max-width: 620px) {
+  .pb-vol { display: none; }
+  .pb-hover-shot { width: 124px; }
+}
+
 /* The card's rating and labels, repeated here so a video can be judged while
    you are watching it rather than only from the grid. */
 .player-record { flex: none; }

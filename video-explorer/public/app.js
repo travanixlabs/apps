@@ -1240,7 +1240,7 @@ let soundOn = false;
 function setSoundOn(next) {
   soundOn = Boolean(next);
   const player = $('#player');
-  if (player && player.controls) {
+  if (player && watching()) {
     player.muted = !soundOn;
     if (soundOn) player.volume = masterVolume();
   }
@@ -4017,6 +4017,11 @@ function closePicker() {
 function releasePlayer() {
   const player = $('#player');
   stopPlayerPreview(); // a timer left running would seek a released element
+  hidePlayerBar();
+  // The captured frames belong to the file that is going away, and the second
+  // video would otherwise hold a stream open behind a closed dialog.
+  releaseBarPreview();
+  scrub.path = null;
   player.pause();
   player.removeAttribute('src');
   player.load();
@@ -4356,6 +4361,9 @@ function startPlayerPreview() {
   preview.mode = 'live';   // until a strip arrives and takes the stage
 
   player.controls = false;
+  // A preview is not a playthrough: no bar over it, and the picture itself is
+  // the only thing to click.
+  hidePlayerBar();
   player.muted = true; // a preview that blares audio is not a preview
   player.loop = false;
   $('#playerBadge').hidden = false;
@@ -4427,11 +4435,399 @@ function stopPlayerPreview() {
   hidePlayerStrip();
 }
 
+// ------------------------------------------------------------ the control bar
+
 /**
- * A click on the picture turns the preview into a real playthrough: controls
- * back, from the top, and audible only if the session has sound. A muted
+ * Our own bar, because the browser's will not say where your pointer is.
+ *
+ * Chromium's native controls are a closed shadow tree: there is no event, no
+ * measurement, no way to ask "which second is under the cursor" -- so a seek
+ * bar you can preview has to be one we draw. Everything the native bar did is
+ * here: play/pause, scrub, time, volume, mute, fullscreen, and the keys.
+ *
+ * `shots` is the reason a second pass over the same stretch is instant: every
+ * exact frame that renders is captured once and kept for the life of the
+ * opening, keyed by the second it came from.
+ */
+const scrub = {
+  video: null,        // the second <video>, which seeks so the first need not
+  path: null,         // the file it is pointed at
+  strip: null,        // { url, frames } -- the coarse preview, always available
+  shots: new Map(),   // second -> object URL of an exact frame already rendered
+  want: null,         // the time the pointer is asking for right now
+  timer: null,        // rest-before-seek
+  idle: null,         // fade the bar out while the video runs
+  dragging: false,
+  onSeeked: null,
+  canCapture: true,   // false once a cross-origin stream has tainted a canvas
+};
+
+/** Whether this is a playthrough rather than a preview. */
+const watching = () => !$('#playerBar').hidden;
+
+/**
+ * True if `video` already holds the bytes for `time`.
+ *
+ * This is the whole answer to "use the download where there is one". A cloud
+ * video is streamed, not downloaded, but the part of it that has come over the
+ * wire is exactly what `buffered` describes -- so the stretch you can preview
+ * frame-accurately grows as you watch, and the strip covers the rest.
+ */
+function bufferedHas(video, time) {
+  if (!video) return false;
+  const ranges = video.buffered;
+  for (let i = 0; i < ranges.length; i += 1) {
+    // A hair inside each end: seeking to the exact boundary asks for the next
+    // byte, which is the round trip this test exists to avoid.
+    if (time >= ranges.start(i) + 0.15 && time <= ranges.end(i) - 0.15) return true;
+  }
+  return false;
+}
+
+function playerDuration() {
+  const player = $('#player');
+  const live = Number(player.duration);
+  if (Number.isFinite(live) && live > 0) return live;
+  const known = state.playing && state.meta.get(state.playing.path);
+  return Number(known && known.duration) || 0;
+}
+
+/**
+ * Shows the bar and keeps it shown until the video is running and settled.
+ *
+ * The strip is fetched here rather than on the first hover so the preview is
+ * ready before it is wanted -- it is one small image already on disk.
+ */
+function showPlayerBar() {
+  const bar = $('#playerBar');
+  if (!bar) return;
+  bar.hidden = false;
+  barSync();
+  wakeBar();
+
+  const file = state.playing;
+  if (!file) return;
+  if (scrub.path !== file.path) releaseBarPreview();
+  scrub.path = file.path;
+  // Watching a file is consent enough to build its frames, the same rule the
+  // stage preview goes by.
+  state.cloudOptIn.add(file.path);
+  state.failed.delete(file.path);
+  loadSprite(file.path, null).then((entry) => {
+    if (state.playing && state.playing.path === file.path) scrub.strip = entry;
+  }).catch(() => { /* no strip is just no coarse preview */ });
+}
+
+function hidePlayerBar() {
+  const bar = $('#playerBar');
+  if (bar) bar.hidden = true;
+  hideHover();
+  clearTimeout(scrub.idle);
+  scrub.idle = null;
+  scrub.dragging = false;
+  const seek = $('#pbSeek');
+  if (seek) seek.classList.remove('dragging');
+}
+
+/** Drops the second video and every captured frame. Called when the file changes. */
+function releaseBarPreview() {
+  clearTimeout(scrub.timer);
+  scrub.timer = null;
+  scrub.want = null;
+  scrub.strip = null;
+  scrub.canCapture = true; // the next file may well be one we can read back
+  if (scrub.video) {
+    if (scrub.onSeeked) scrub.video.removeEventListener('seeked', scrub.onSeeked);
+    scrub.video.removeAttribute('src');
+    // And forget what it was pointed at, or reopening the same file would find
+    // the name still matching and never re-attach the stream it just dropped.
+    delete scrub.video.dataset.for;
+    scrub.video.load();
+  }
+  scrub.onSeeked = null;
+  for (const url of scrub.shots.values()) URL.revokeObjectURL(url);
+  scrub.shots.clear();
+  const shot = $('#pbHoverVideo');
+  if (shot) shot.hidden = true;
+}
+
+/**
+ * The bar fades while the video is running, and never while it is not.
+ *
+ * It sits over the bottom of the picture, so leaving it up permanently would
+ * cost a strip of every video. Anything that counts as using it -- moving the
+ * pointer over the stage, pausing, dragging -- brings it back and restarts the
+ * count.
+ */
+function wakeBar() {
+  const stage = $('#player').closest('.player-stage');
+  if (!stage) return;
+  stage.classList.remove('bar-idle');
+  clearTimeout(scrub.idle);
+  scrub.idle = null;
+  if (!watching()) return;
+  const player = $('#player');
+  if (player.paused || scrub.dragging) return;
+  scrub.idle = setTimeout(() => {
+    const now = $('#player');
+    if (watching() && !now.paused && !scrub.dragging) stage.classList.add('bar-idle');
+  }, 2500);
+}
+
+/** Times, fill widths, and which of the paired glyphs is drawn. */
+function barSync() {
+  if (!watching()) return;
+  const player = $('#player');
+  const duration = playerDuration();
+  const at = Number(player.currentTime) || 0;
+
+  $('#pbNow').textContent = fmtDuration(at);
+  $('#pbDur').textContent = duration > 0 ? fmtDuration(duration) : '--:--';
+
+  const done = duration > 0 ? Math.min(1, at / duration) : 0;
+  $('#pbPlayed').style.width = `${done * 100}%`;
+  $('#pbKnob').style.left = `${done * 100}%`;
+
+  // How much of it is here. For a cloud file this is the line that grows as it
+  // streams, and it is the same measurement the exact preview is gated on.
+  let ahead = 0;
+  if (duration > 0) {
+    for (let i = 0; i < player.buffered.length; i += 1) {
+      if (player.buffered.start(i) <= at && player.buffered.end(i) >= at) {
+        ahead = player.buffered.end(i) / duration;
+        break;
+      }
+    }
+  }
+  $('#pbBuffered').style.width = `${Math.min(1, Math.max(done, ahead)) * 100}%`;
+
+  const seek = $('#pbSeek');
+  seek.setAttribute('aria-valuemax', String(Math.round(duration)));
+  seek.setAttribute('aria-valuenow', String(Math.round(at)));
+  seek.setAttribute('aria-valuetext', fmtDuration(at));
+
+  const stage = player.closest('.player-stage');
+  if (stage) stage.classList.toggle('paused', player.paused);
+  $('#pbPlay').setAttribute('aria-label', player.paused ? 'Play' : 'Pause');
+  $('#playerBar').classList.toggle('muted', player.muted || player.volume === 0);
+  const vol = $('#pbVol');
+  if (document.activeElement !== vol) {
+    vol.value = String(Math.round((player.muted ? 0 : player.volume) * 100));
+  }
+}
+
+/** Where on the track a pointer sits, as a fraction of the running time. */
+function seekFractionAt(clientX) {
+  const box = $('#pbSeek').getBoundingClientRect();
+  if (!(box.width > 0)) return 0;
+  return Math.min(1, Math.max(0, (clientX - box.left) / box.width));
+}
+
+function hideHover() {
+  const hover = $('#pbHover');
+  if (hover) hover.hidden = true;
+  clearTimeout(scrub.timer);
+  scrub.timer = null;
+  scrub.want = null;
+}
+
+/**
+ * Paints the coarse frame -- the one from the cached strip -- for a time.
+ *
+ * Ten frames across the whole video means each covers a tenth of it, so this
+ * says which part you are landing in rather than which moment. It is instant
+ * and it works for a file that has never been streamed at all, which is why it
+ * is what shows first and what everything falls back to.
+ */
+function paintHoverStrip(time, duration) {
+  const shot = $('#pbHoverShot');
+  const entry = scrub.strip;
+  if (!entry || !(duration > 0)) {
+    shot.style.backgroundImage = '';
+    return;
+  }
+  const frames = Math.max(1, entry.frames);
+  // segmentTime puts frame i at duration*(i+1)/frames, so invert that.
+  const index = Math.min(frames - 1,
+    Math.max(0, Math.round((time * frames) / duration) - 1));
+  shot.style.backgroundImage = `url("${entry.url}")`;
+  shot.style.backgroundSize = `${frames * 100}% 100%`;
+  shot.style.backgroundPosition = frames > 1
+    ? `${(index / (frames - 1)) * 100}% center`
+    : '0% center';
+}
+
+/**
+ * Moves the preview to wherever the pointer is and asks for the best frame
+ * available there.
+ */
+function showHoverAt(clientX) {
+  const duration = playerDuration();
+  const hover = $('#pbHover');
+  const seek = $('#pbSeek');
+  if (!hover || !(duration > 0)) return;
+
+  const fraction = seekFractionAt(clientX);
+  const time = fraction * duration;
+  const box = seek.getBoundingClientRect();
+  const shotW = $('#pbHoverShot').getBoundingClientRect().width || 168;
+
+  // Centred on the pointer, but never hanging off either end of the track.
+  const half = shotW / 2;
+  const left = Math.min(box.width - half, Math.max(half, fraction * box.width));
+  hover.style.left = `${left}px`;
+  hover.style.transform = 'translateX(-50%)';
+  hover.hidden = false;
+  $('#pbHoverTime').textContent = fmtDuration(time);
+
+  paintHoverStrip(time, duration);
+  wantExactFrame(time);
+}
+
+/**
+ * Upgrades the coarse frame to the real one, where the bytes are already here.
+ *
+ * Three sources, cheapest first: a frame captured on an earlier pass, the
+ * stretch the player has buffered, and -- for a file that is genuinely on this
+ * machine -- anywhere at all, since a local seek costs nothing. A cloud video
+ * outside its buffer keeps the strip: fetching a fresh range for every hover is
+ * the juddering this whole preview exists to avoid.
+ */
+function wantExactFrame(time) {
+  const shot = $('#pbHoverVideo');
+  const second = Math.round(time);
+  scrub.want = time;
+
+  // A frame rendered earlier is painted as the tile's own picture, over the
+  // strip frame paintHoverStrip just put there. The video element is for a
+  // frame being fetched now; a still we already hold needs no decoder.
+  const had = scrub.shots.get(second);
+  if (had) {
+    const tile = $('#pbHoverShot');
+    tile.style.backgroundImage = `url("${had}")`;
+    tile.style.backgroundSize = 'cover';
+    tile.style.backgroundPosition = 'center';
+    shot.hidden = true;
+    clearTimeout(scrub.timer);
+    scrub.timer = null;
+    return;
+  }
+
+  const file = state.playing;
+  const player = $('#player');
+  const reachable = (file && !file.cloudOnly) || bufferedHas(player, time);
+  if (!reachable) {
+    shot.hidden = true;
+    clearTimeout(scrub.timer);
+    scrub.timer = null;
+    return;
+  }
+
+  // Rest first. Sweeping the pointer across an hour-long video would otherwise
+  // ask for a hundred seeks nobody looked at.
+  clearTimeout(scrub.timer);
+  scrub.timer = setTimeout(() => seekExactFrame(time), 140);
+}
+
+function ensureHoverVideo() {
+  const shot = $('#pbHoverVideo');
+  if (!shot || !state.playing) return null;
+  if (scrub.video !== shot) {
+    scrub.video = shot;
+    shot.muted = true;
+    shot.volume = 0;
+  }
+  const want = `/api/video?path=${encodeURIComponent(state.playing.path)}`;
+  if (shot.dataset.for !== state.playing.path) {
+    shot.dataset.for = state.playing.path;
+    shot.src = want;
+  }
+  return shot;
+}
+
+function seekExactFrame(time) {
+  const shot = ensureHoverVideo();
+  if (!shot || scrub.want === null) return;
+  if (scrub.onSeeked) shot.removeEventListener('seeked', scrub.onSeeked);
+
+  scrub.onSeeked = () => {
+    shot.removeEventListener('seeked', scrub.onSeeked);
+    scrub.onSeeked = null;
+    // The pointer moved on while this was in flight; that frame is not the one
+    // being asked about any more.
+    if (scrub.want === null || Math.abs(scrub.want - time) > 0.75) return;
+    shot.hidden = false;
+    captureFrame(shot, Math.round(time));
+  };
+  shot.addEventListener('seeked', scrub.onSeeked);
+  try { shot.currentTime = time; } catch { /* not seekable yet */ }
+}
+
+/**
+ * Keeps a rendered frame so the second pass over the same stretch is free.
+ *
+ * Bounded, and oldest-first: scrubbing back and forth across a long video would
+ * otherwise accumulate a bitmap per second of it.
+ */
+function captureFrame(video, second) {
+  if (!scrub.canCapture || scrub.shots.has(second) || !(video.videoWidth > 0)) return;
+  const canvas = document.createElement('canvas');
+  canvas.width = 320;
+  canvas.height = Math.max(1, Math.round((320 * video.videoHeight) / video.videoWidth));
+  try {
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob((blob) => {
+      if (!blob || scrub.shots.has(second)) return;
+      // Bounded, oldest first: scrubbing back and forth across a long video
+      // would otherwise accumulate a bitmap per second of it.
+      if (scrub.shots.size >= 240) {
+        const oldest = scrub.shots.keys().next().value;
+        URL.revokeObjectURL(scrub.shots.get(oldest));
+        scrub.shots.delete(oldest);
+      }
+      scrub.shots.set(second, URL.createObjectURL(blob));
+    }, 'image/jpeg', 0.72);
+  } catch {
+    // A cloud file is streamed straight from OneDrive, which is another origin,
+    // and that taints the canvas for good. Reading frames back is a local-file
+    // luxury; the cloud path simply re-seeks, which is what it was doing anyway.
+    scrub.canCapture = false;
+  }
+}
+
+function togglePlayback() {
+  const player = $('#player');
+  if (player.paused) {
+    const played = player.play();
+    if (played && played.catch) played.catch(() => {});
+  } else {
+    player.pause();
+  }
+  wakeBar();
+}
+
+function seekBy(seconds) {
+  const player = $('#player');
+  const duration = playerDuration();
+  if (!(duration > 0)) return;
+  const next = Math.min(duration - 0.05, Math.max(0, (Number(player.currentTime) || 0) + seconds));
+  try { player.currentTime = next; } catch { /* not seekable yet */ }
+  barSync();
+  wakeBar();
+}
+
+function toggleFullscreen() {
+  const stage = $('#player').closest('.player-stage');
+  if (!stage) return;
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else stage.requestFullscreen().catch(() => {});
+}
+
+/**
+ * A click on the picture turns the preview into a real playthrough: the bar
+ * appears, from the top, and audible only if the session has sound. A muted
  * playthrough is still the whole video rather than ten sampled seconds, and the
- * native controls are there to unmute if that is what you meant.
+ * bar is there to unmute if that is what you meant.
  */
 function beginPlayback() {
   stopPlayerPreview();
@@ -4442,12 +4838,15 @@ function beginPlayback() {
     stage.classList.remove('previewing');
     stage.title = '';
   }
-  player.controls = true;
+  // The native bar stays off for good: it cannot be asked where the pointer is,
+  // and two sets of controls over one video is worse than either.
+  player.controls = false;
   player.muted = !soundOn;
   player.volume = masterVolume();
   try { player.currentTime = 0; } catch { /* not seekable yet; it will start at 0 anyway */ }
   const played = player.play();
   if (played && played.catch) played.catch(() => {});
+  showPlayerBar();
 }
 
 function closePlayer() {
@@ -5364,7 +5763,8 @@ function wireEvents() {
   // writes back rather than being a second, private volume.
   $('#player').addEventListener('volumechange', () => {
     const player = $('#player');
-    if (!player.controls) return; // a preview mutes itself; that is not a choice
+    barSync();
+    if (!watching()) return; // a preview mutes itself; that is not a choice
     if (player.muted !== !soundOn) { setSoundOn(!player.muted); return; }
     if (player.muted) return;
     if (Math.abs(player.volume - masterVolume()) < 0.005) return;
@@ -5588,11 +5988,91 @@ function wireEvents() {
   // preview still running: afterwards the element belongs to the native
   // controls, and a click meaning "pause" must not mean "start again from the
   // beginning".
-  $('#playerModal .player-stage').addEventListener('click', () => {
-    if (previewing()) beginPlayback();
+  $('#playerModal .player-stage').addEventListener('click', (ev) => {
+    if (previewing()) { beginPlayback(); return; }
+    // Clicking the bar is not clicking the picture.
+    if (ev.target.closest('.player-bar')) return;
+    if (watching()) togglePlayback();
   });
   $('#playerPrev').addEventListener('click', () => playSibling(-1));
   $('#playerNext').addEventListener('click', () => playSibling(1));
+
+  // ---- the control bar ----------------------------------------------------
+
+  const player = $('#player');
+  // Everything the bar draws comes from the element, so the element is what it
+  // listens to -- rather than a timer guessing at the same numbers.
+  for (const type of ['timeupdate', 'progress', 'durationchange', 'play',
+    'pause', 'seeked', 'ended', 'loadedmetadata']) {
+    player.addEventListener(type, barSync);
+  }
+  player.addEventListener('play', wakeBar);
+  player.addEventListener('pause', wakeBar);
+  // Moving over the picture is asking for the controls back.
+  $('#playerModal .player-stage').addEventListener('pointermove', wakeBar);
+  $('#playerBar').addEventListener('pointerenter', wakeBar);
+
+  $('#pbPlay').addEventListener('click', togglePlayback);
+  $('#pbFull').addEventListener('click', toggleFullscreen);
+  $('#pbMute').addEventListener('click', () => setSoundOn(!soundOn));
+  $('#pbVol').addEventListener('input', (ev) => {
+    const level = Number(ev.target.value) / 100;
+    setMasterVolume(level);
+    if (level > 0 && !soundOn) setSoundOn(true);
+    else if (level === 0 && soundOn) setSoundOn(false);
+    wakeBar();
+  });
+
+  // ---- scrubbing, with a preview of where you would land -------------------
+
+  const seekEl = $('#pbSeek');
+  const commitSeek = (clientX) => {
+    const duration = playerDuration();
+    if (!(duration > 0)) return;
+    try { player.currentTime = seekFractionAt(clientX) * duration; } catch { /* not seekable */ }
+    barSync();
+  };
+
+  seekEl.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    scrub.dragging = true;
+    seekEl.classList.add('dragging');
+    // Captured, so a drag that leaves the track keeps scrubbing rather than
+    // stopping wherever the pointer crossed the edge.
+    seekEl.setPointerCapture(ev.pointerId);
+    commitSeek(ev.clientX);
+    showHoverAt(ev.clientX);
+    wakeBar();
+  });
+  seekEl.addEventListener('pointermove', (ev) => {
+    showHoverAt(ev.clientX);
+    if (scrub.dragging) commitSeek(ev.clientX);
+    wakeBar();
+  });
+  seekEl.addEventListener('pointerup', (ev) => {
+    if (!scrub.dragging) return;
+    scrub.dragging = false;
+    seekEl.classList.remove('dragging');
+    if (seekEl.hasPointerCapture(ev.pointerId)) seekEl.releasePointerCapture(ev.pointerId);
+    commitSeek(ev.clientX);
+    wakeBar();
+  });
+  seekEl.addEventListener('pointerleave', () => {
+    if (!scrub.dragging) hideHover();
+  });
+  seekEl.addEventListener('keydown', (ev) => {
+    const duration = playerDuration();
+    if (ev.key === 'ArrowLeft') { ev.preventDefault(); seekBy(-5); }
+    else if (ev.key === 'ArrowRight') { ev.preventDefault(); seekBy(5); }
+    else if (ev.key === 'Home') { ev.preventDefault(); seekBy(-duration); }
+    else if (ev.key === 'End') { ev.preventDefault(); seekBy(duration); }
+    else if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); togglePlayback(); }
+  });
+
+  // Leaving fullscreen any way at all -- Escape, the button, the OS -- has to
+  // put the bar back where it belongs.
+  document.addEventListener('fullscreenchange', wakeBar);
 
   // modal chrome
   for (const btn of document.querySelectorAll('.modal-close')) {
@@ -5654,6 +6134,10 @@ function playerHasKeys() {
 function onKeyDown(ev) {
   // Escape always unwinds one layer: topmost modal first, then the selection.
   if (ev.key === 'Escape') {
+    // Fullscreen is a layer of its own, and the outermost one. Closing the
+    // player from under it would leave the screen owned by a dialog that is
+    // no longer there.
+    if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
     if (!$('#volMenu').hidden) { toggleVolumeMenu(false); return; }
     // The lineup opens over the player and over the label dialog, so it is the
     // first layer Escape takes off.
@@ -5691,13 +6175,42 @@ function onKeyDown(ev) {
   }
 
   // Arrows step through the listing while the player is open. Once playback has
-  // started the bare arrows belong to the video element, which seeks with them,
-  // so from then on stepping needs Shift.
+  // started the bare arrows seek the video instead, as they always did when the
+  // browser owned the controls, so from then on stepping needs Shift.
   if (!ev.ctrlKey && !ev.metaKey && !$('#playerModal').hidden
       && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) {
     if (previewing() || ev.shiftKey) {
       ev.preventDefault();
       playSibling(ev.key === 'ArrowLeft' ? -1 : 1);
+      return;
+    }
+    if (watching() && !isTyping()) {
+      ev.preventDefault();
+      seekBy(ev.key === 'ArrowLeft' ? -5 : 5);
+      return;
+    }
+  }
+
+  // What the native bar answered for, now that it is ours to answer: space or K
+  // to hold it, M for sound, F for the whole screen. Skipped when the focus is
+  // on one of the bar's own buttons, where space is already that button.
+  if (playerHasKeys() && watching() && !isTyping()
+      && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+    const onButton = document.activeElement
+      && document.activeElement.closest('.player-bar button');
+    if ((ev.key === ' ' || ev.key === 'k' || ev.key === 'K') && !onButton) {
+      ev.preventDefault();
+      togglePlayback();
+      return;
+    }
+    if (ev.key === 'm' || ev.key === 'M') {
+      ev.preventDefault();
+      setSoundOn(!soundOn);
+      return;
+    }
+    if (ev.key === 'f' || ev.key === 'F') {
+      ev.preventDefault();
+      toggleFullscreen();
       return;
     }
   }
