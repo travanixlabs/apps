@@ -1726,6 +1726,22 @@ const BAND_LABEL = {
   near: 'below the bar',
 };
 
+/**
+ * Drops the names already credited on the video.
+ *
+ * A suggestion is a recommendation, and recommending somebody already on the
+ * video is not one -- it was a tile that could not be clicked, taking up a
+ * place in a row where every other tile was a decision waiting to be made.
+ *
+ * Only the display is thinned. `file.suggested` still holds every name the
+ * recogniser offered, which is what the "a suggested name is credited" filter
+ * and the grouped-by-suggested listing are counting.
+ */
+function uncredited(file, list) {
+  const named = new Set((file.models || []).map((m) => m.toLowerCase()));
+  return (list || []).filter((s) => !named.has(String(s.name).toLowerCase()));
+}
+
 /** One suggestion: the face it came from, the name, and how sure it is. */
 function buildFaceChip(file, sug, { onPick, showFace = true } = {}) {
   const chip = document.createElement('button');
@@ -2012,8 +2028,6 @@ function buildFaceTile(file, sug, { onPick, best }) {
   const tile = document.createElement('button');
   tile.type = 'button';
   tile.className = `similar-tile face-tile band-${sug.band || 'near'}`;
-  const already = (file.models || []).some((m) => m.toLowerCase() === sug.name.toLowerCase());
-  if (already) tile.classList.add('confirmed');
 
   const shot = document.createElement('span');
   shot.className = 'similar-shot preview';
@@ -2047,10 +2061,12 @@ function buildFaceTile(file, sug, { onPick, best }) {
   pct.textContent = `${Math.round(sug.score * 100)}%`;
   shot.appendChild(pct);
 
-  // Credited or not, on the picture, where the row can be read at a glance.
+  // On the picture, where the row can be read at a glance. Always a plus:
+  // every tile here is a name not yet on the video, because uncredited() took
+  // the rest out before the row was built.
   const mark = document.createElement('span');
   mark.className = 'similar-mark';
-  mark.textContent = already ? '\u2713' : '+';
+  mark.textContent = '+';
   shot.appendChild(mark);
 
   const name = document.createElement('span');
@@ -2071,13 +2087,13 @@ function buildFaceTile(file, sug, { onPick, best }) {
       : null,
     best && best.path ? `Pictured: ${best.name}, her video most like this one` : null,
     'Hover to compare the faces',
-    already ? 'Already credited on this video' : 'Click to add her',
+    'Click to add her',
   ].filter(Boolean).join('\n');
 
   tile.addEventListener('click', (ev) => {
     ev.stopPropagation();
     ev.preventDefault();
-    if (!already) onPick(sug.name);
+    onPick(sug.name);
   });
   attachFaceHover(tile, file, sug);
   return tile;
@@ -2104,18 +2120,22 @@ async function picturesFor(file, names) {
 /**
  * The suggestion strip under the player.
  *
- * Shown for a credited video as well as an uncredited one: a face that agrees
- * with the name is a confirmation, and one that disagrees is the most useful
- * thing this feature can tell you.
+ * Only names that are not on the video yet. The recogniser still ranks a
+ * credited performer and still agrees with the label -- that agreement is just
+ * not a recommendation, and a tile you cannot click was taking a place in a row
+ * where every other one is a decision waiting to be made.
  *
- * A row of thumbnails, like the one below it. No heading: the ✓ on a tile says
- * credited, its absence says not, and how many there are is the row's length.
+ * A row of thumbnails, like the one below it. No heading: every tile is a name
+ * to add, and how many there are is the row's length. A video whose faces are
+ * all credited falls through to the near-misses below the bar, if there are
+ * any, which is the next useful thing it could say.
  */
 async function buildPlayerSuggestions(file) {
   const host = $('#playerSuggest');
   if (!host) return;
   const current = state.files.find((f) => f.path === file.path) || file;
-  const suggested = (current.suggested || []).filter((s) => s.score >= FACE_FLOOR);
+  const suggested = uncredited(
+    current, (current.suggested || []).filter((s) => s.score >= FACE_FLOOR));
   // These chips are about to be replaced, and a card left open would be
   // anchored to one that no longer exists.
   closeFaceHover();
@@ -2423,7 +2443,7 @@ async function explainNothing(host, file) {
   // was defensible when the answer was a name in a line of text; a picture
   // invites a click, and a 40% face is not worth inviting one on. The row
   // below draws its line in the same place.
-  const near = (info.near || []).filter((n) => n.score >= FACE_FLOOR);
+  const near = uncredited(file, (info.near || []).filter((n) => n.score >= FACE_FLOOR));
   if (!near.length) return;
 
   const pictures = await picturesFor(file, near.map((n) => n.name));
@@ -2466,7 +2486,9 @@ function renderDialogSuggestions(files) {
   const single = files.length === 1;
   const pooled = new Map();
   for (const file of files) {
-    for (const sug of file.suggested || []) {
+    // Across a selection nobody is "already credited" -- a name can be on one
+    // of them and wanted on the rest -- so only a single file is thinned.
+    for (const sug of (single ? uncredited(file, file.suggested) : file.suggested || [])) {
       const seen = pooled.get(sug.name);
       if (!seen || sug.score > seen.sug.score) pooled.set(sug.name, { file, sug });
     }

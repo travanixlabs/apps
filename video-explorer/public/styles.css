@@ -1638,9 +1638,7 @@ body.dragging .card { cursor: grabbing; }
   background: rgba(0, 0, 0, .72);
   color: #fff;
 }
-.face-tile.confirmed .similar-mark { background: #1f7a4d; }
-.face-tile:not(.confirmed) .similar-mark { background: rgba(59, 130, 246, .92); }
-.face-tile.confirmed .similar-shot { border-color: #1f7a4d; }
+.face-tile .similar-mark { background: rgba(59, 130, 246, .92); }
 
 /* Below the recogniser's bar but above the row's floor: shown, clickable, and
    visibly less sure than the rest. */
