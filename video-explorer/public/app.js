@@ -535,6 +535,9 @@ function renderBreadcrumb() {
 function renderFolders() {
   const section = $('#foldersSection');
   const wrap = $('#folders');
+  // The tile it belongs to is about to stop existing, and pointerleave does not
+  // fire for an element that was removed from under the cursor.
+  hideFolderPop();
   wrap.innerHTML = '';
 
   // The filter box narrows folders by name too, not just videos. A folder has
@@ -559,7 +562,8 @@ function renderFolders() {
     const downloaded = folder.videoCount - (folder.cloudCount || 0);
     const tile = document.createElement('button');
     tile.className = 'folder-tile' + (folder.videoCount === 0 ? ' no-videos' : '');
-    tile.title = `${folder.path}\nDrop videos here to move them · hold Ctrl to copy`;
+    // No `title`: the hover card below says all of this and more, and a native
+    // tooltip would fade in on top of it a second later.
     tile.addEventListener('click', () => navigateTo(folder.path));
     attachDropTarget(tile, folder.path, folder.name);
 
@@ -588,15 +592,121 @@ function renderFolders() {
     } else if (folder.cloudCount) {
       // Lead with what's actually usable offline.
       meta.textContent = `${downloaded.toLocaleString()} downloaded of ${folder.videoCount.toLocaleString()}`;
-      meta.title = `${folder.cloudCount.toLocaleString()} cloud-only · ${fmtBytes(folder.totalSize)} total`;
     } else {
       meta.textContent = `${folder.videoCount.toLocaleString()} video${folder.videoCount === 1 ? '' : 's'} · ${fmtBytes(folder.totalSize)}`;
     }
     body.appendChild(meta);
 
     tile.appendChild(body);
+    tile.addEventListener('pointerenter', () => showFolderPop(tile, folder));
+    tile.addEventListener('pointerleave', hideFolderPop);
     wrap.appendChild(tile);
   }
+}
+
+/**
+ * What the three sweeps have done to a folder, on hover.
+ *
+ * The same three facts the toolbar pills carry for the whole library, asked of
+ * one folder -- because "how far along is this?" is a question you have while
+ * looking at a folder, and the toolbar can only answer it for everything at
+ * once. Same order and same dot colours as the pills, so the two read as one
+ * thing seen at two scales.
+ *
+ * Cloud or downloaded does not change whether this appears; it changes what it
+ * can say. None of the three sweeps touches a placeholder -- framing one would
+ * download it, and so would the other two -- so the denominator is the
+ * downloaded count, and a folder that is entirely in the cloud says that
+ * instead of showing three bars stuck at nothing.
+ *
+ * One shared card rather than one per tile: the tile clips its own overflow and
+ * so does the scrolling strip they sit in, so this is positioned against the
+ * window, and a library of two hundred folders builds one of these, not two
+ * hundred.
+ */
+function showFolderPop(tile, folder) {
+  const pop = $('#folderPop');
+  if (!pop) return;
+  const downloaded = folder.videoCount - (folder.cloudCount || 0);
+
+  pop.replaceChildren();
+  const line = (text, cls = 'folder-pop-head') => {
+    const el = document.createElement('div');
+    el.className = cls;
+    el.textContent = text;
+    pop.appendChild(el);
+    return el;
+  };
+
+  line(folder.name, 'folder-pop-title');
+  if (folder.videoCount === 0) {
+    line('No videos in here.', 'folder-pop-none');
+  } else {
+    line(folder.cloudCount
+      ? `${downloaded.toLocaleString()} downloaded · ${folder.cloudCount.toLocaleString()} cloud-only`
+      : `${folder.videoCount.toLocaleString()} downloaded`);
+    line(fmtBytes(folder.totalSize) + ' total');
+
+    if (downloaded === 0) {
+      // Not a gap to be filled: there is nothing here to sweep until something
+      // is downloaded, so an empty bar would be reporting a problem that is not.
+      line('Nothing downloaded, so nothing to sweep yet.', 'folder-pop-none');
+    } else {
+      for (const [kind, label, count] of [
+        ['framing', 'framed', Number(folder.framed || 0)],
+        ['prints', 'fingerprinted', Number(folder.printed || 0)],
+        ['faces', 'profiled', Number(folder.profiled || 0)],
+      ]) {
+        const row = document.createElement('div');
+        row.className = `folder-pop-row ${kind}` + (count >= downloaded ? ' done' : '');
+
+        const dot = document.createElement('span');
+        dot.className = 'faces-dot ' + kind;
+        row.appendChild(dot);
+
+        const what = document.createElement('span');
+        what.className = 'folder-pop-what';
+        what.textContent = label;
+        row.appendChild(what);
+
+        const num = document.createElement('span');
+        num.className = 'folder-pop-num';
+        num.textContent = `${count.toLocaleString()} / ${downloaded.toLocaleString()}`;
+        row.appendChild(num);
+
+        const bar = document.createElement('span');
+        bar.className = 'folder-pop-bar';
+        const fill = document.createElement('span');
+        fill.style.width = `${Math.min(100, (count / downloaded) * 100)}%`;
+        bar.appendChild(fill);
+        row.appendChild(bar);
+
+        pop.appendChild(row);
+      }
+    }
+  }
+  line(folder.path, 'folder-pop-path');
+  line('Drop videos here to move them · hold Ctrl to copy', 'folder-pop-none');
+
+  // Below the tile if it fits, above it if it does not, and never off either
+  // side. Measured after filling: the height depends on what was just written.
+  pop.hidden = false;
+  const box = tile.getBoundingClientRect();
+  const own = pop.getBoundingClientRect();
+  const gap = 8;
+  const below = box.bottom + gap;
+  const top = below + own.height > window.innerHeight - 8
+    ? Math.max(8, box.top - gap - own.height)
+    : below;
+  const left = Math.min(window.innerWidth - own.width - 8,
+    Math.max(8, box.left + (box.width - own.width) / 2));
+  pop.style.top = `${top}px`;
+  pop.style.left = `${left}px`;
+}
+
+function hideFolderPop() {
+  const pop = $('#folderPop');
+  if (pop) pop.hidden = true;
 }
 
 // -------------------------------------------------------------- filter/sort

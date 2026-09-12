@@ -390,6 +390,85 @@ kbd {
   white-space: nowrap;
 }
 
+/* How far the three sweeps have got through the folder under the cursor.
+   Fixed rather than absolute: the tile clips its own overflow and the strip of
+   them scrolls, so anything positioned inside one gets cut off. */
+.folder-pop {
+  position: fixed;
+  z-index: 40;
+  width: 268px;
+  display: grid;
+  gap: 5px;
+  padding: 9px 11px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-elev-2);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .55);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  pointer-events: none;   /* it follows the cursor's tile; it is not a target */
+}
+.folder-pop[hidden] { display: none; }
+.folder-pop-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.folder-pop-head { font-variant-numeric: tabular-nums; }
+.folder-pop-none { color: var(--text-faint); }
+.folder-pop-path {
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 11px;
+  /* A long path wraps rather than stretching the card off the screen. */
+  overflow-wrap: anywhere;
+}
+
+/* A row per sweep: its dot, its name, the fraction, and the bar. Named and
+   coloured to match the toolbar pills — the same three facts, one folder at a
+   time instead of the whole library at once. */
+.folder-pop-row {
+  display: grid;
+  grid-template-columns: 6px auto 1fr;
+  align-items: center;
+  gap: 6px;
+}
+.folder-pop-row .faces-dot { background: currentColor; }
+.folder-pop-row .faces-dot.framing { background: #7c6cf0; }
+.folder-pop-row .faces-dot.prints { background: #c3b6ec; }
+.folder-pop-row .faces-dot.faces { background: #7fb5ff; }
+.folder-pop-what { color: var(--text-dim); }
+.folder-pop-num {
+  justify-self: end;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.folder-pop-bar {
+  grid-column: 1 / -1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--bg-elev);
+  overflow: hidden;
+}
+/* The bar is the dot's colour, so the row reads as one thing. */
+.folder-pop-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: #7fb5ff;
+}
+.folder-pop-row.framing .folder-pop-bar span { background: #7c6cf0; }
+.folder-pop-row.prints .folder-pop-bar span { background: #c3b6ec; }
+.folder-pop-row.faces .folder-pop-bar span { background: #7fb5ff; }
+/* Finished reads at a glance, the way a done pill does. */
+.folder-pop-row.done .folder-pop-num { color: #7fd1a3; }
+.folder-pop-row.done .folder-pop-bar span { background: #7fd1a3; }
+
 /* -------------------------------------------------------------------- grid */
 
 main { padding: 16px; }

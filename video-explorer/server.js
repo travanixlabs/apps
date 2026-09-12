@@ -1076,14 +1076,58 @@ async function collectVideos(dir) {
   return videos;
 }
 
+/**
+ * Every strip currently on disk, as a set of file names.
+ *
+ * One directory listing answers "is this one framed?" for the whole library.
+ * Asking the filesystem per video is what the framing sweep does, and it is
+ * fine there -- it walks once, in the background, and is the only thing
+ * waiting. A scan has a person waiting on it and 28,000 files to answer for.
+ *
+ * The name is derived from size and mtime alone, so membership is a lookup.
+ * Strips built under the old naming were renamed across once (`cacheNamesV2`),
+ * and any that were missed are adopted the next time one is actually drawn.
+ */
+async function cachedStripNames() {
+  try {
+    const names = await fsp.readdir(CACHE_DIR);
+    return new Set(names);
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * What the three sweeps have done to one video.
+ *
+ * All three skip cloud-only files by design -- framing would have to download
+ * one, and so would fingerprinting and profiling -- so a placeholder is not
+ * "not done yet", it is "not applicable", and counting it as outstanding would
+ * make every folder look permanently unfinished.
+ */
+function sweepState(video, strips) {
+  if (video.cloudOnly) return null;
+  return {
+    framed: strips.has(cacheName(video, spriteSalt())),
+    printed: dupes.has(dupes.keyFor(video)),
+    profiled: faces.decorate(video).profiled === true,
+  };
+}
+
 /** Immediate subfolders of `dir`, each annotated with what's inside it. */
-async function listSubfolders(dir, videos) {
+async function listSubfolders(dir, videos, strips = new Set()) {
   let entries;
   try {
     entries = await fsp.readdir(dir, { withFileTypes: true });
   } catch {
     return [];
   }
+
+  // Worked out once per video rather than once per (folder, video) pair: the
+  // outer loop below already costs folders x videos, and three index lookups
+  // inside it would multiply by that again.
+  const done = videos.map((video) => sweepState(video, strips));
+  const lowerPath = videos.map((video) => path.resolve(video.path).toLowerCase());
 
   const folders = [];
   for (const entry of entries) {
@@ -1096,14 +1140,23 @@ async function listSubfolders(dir, videos) {
     let totalSize = 0;
     let latestMtimeMs = 0;
     let cover = null;
-    for (const video of videos) {
-      if (!path.resolve(video.path).toLowerCase().startsWith(prefix)) continue;
+    let framed = 0;
+    let printed = 0;
+    let profiled = 0;
+    for (let i = 0; i < videos.length; i += 1) {
+      if (!lowerPath[i].startsWith(prefix)) continue;
+      const video = videos[i];
       count += 1;
       if (video.cloudOnly) cloudCount += 1;
       totalSize += video.size;
       if (video.mtimeMs > latestMtimeMs) latestMtimeMs = video.mtimeMs;
       // Only a locally-present file can be a cover; a cloud one would download.
       if (!cover && !video.cloudOnly) cover = video.path;
+      const state = done[i];
+      if (!state) continue;
+      if (state.framed) framed += 1;
+      if (state.printed) printed += 1;
+      if (state.profiled) profiled += 1;
     }
 
     folders.push({
@@ -1114,6 +1167,12 @@ async function listSubfolders(dir, videos) {
       totalSize,
       latestMtimeMs,
       cover,
+      // How far the three sweeps have got through this folder. Out of the
+      // downloaded count, which is videoCount - cloudCount: the sweeps never
+      // touch a placeholder, so that is the honest denominator.
+      framed,
+      printed,
+      profiled,
     });
   }
 
@@ -1193,7 +1252,7 @@ function describeVideo(video, dir) {
 
 async function scanDirectory(dir, recursive, includeCloud) {
   const videos = await collectVideos(dir);
-  const folders = await listSubfolders(dir, videos);
+  const folders = await listSubfolders(dir, videos, await cachedStripNames());
 
   const target = path.resolve(dir).toLowerCase();
   const atThisLevel = recursive
