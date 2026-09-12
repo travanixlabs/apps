@@ -347,7 +347,8 @@ function toast(message, kind = '') {
     el.style.transition = 'opacity .25s';
     el.style.opacity = '0';
     setTimeout(() => el.remove(), 260);
-  }, kind === 'err' ? 6000 : 3200);
+    // A message that asks you to do something has to outlast a glance.
+  }, kind === 'err' || kind === 'warn' ? 6000 : 3200);
 }
 
 function setStatus(text) {
@@ -1435,22 +1436,27 @@ function updateAdvMatch() {
 /**
  * Narrows the listing to whatever state.adv now says.
  *
- * A filter can only narrow what has been scanned, and a scan is one level deep
- * -- so filtering below a folder whose videos live in subfolders would find
- * nothing, exactly as a search there used to. Clearing the filter does not
- * switch back: that would silently undo a flatten the user can see.
+ * A filter can only narrow what has been scanned, and a scan is one level deep,
+ * so filtering below a folder whose videos live in subfolders finds little or
+ * nothing. This used to tick Flatten on your behalf and rescan -- but a box
+ * that ticks itself is a box you can no longer trust, and the listing then
+ * covered a different scope than the one you were standing in. So the scope is
+ * yours: the filter runs over what is scanned, and when that leaves nothing
+ * while there are videos further down, it says so and names the box to tick.
  */
 async function commitFilter() {
-  const needsRecursive = advActive() && state.totalBelow > state.files.length;
-  if (needsRecursive && !$('#recursiveToggle').checked) {
-    $('#recursiveToggle').checked = true;
-    await scan(state.dir, { record: false });
-  } else {
-    render();
-  }
+  render();
 
   const shown = state.view.length;
-  toast(advActive() ? `${shown} match${shown === 1 ? '' : 'es'}` : 'Filters cleared', 'ok');
+  if (!advActive()) { toast('Filters cleared', 'ok'); return; }
+
+  const below = state.totalBelow - state.files.length;
+  if (shown === 0 && below > 0) {
+    toast(`No matches in this folder — ${below.toLocaleString()} more videos are `
+      + 'in subfolders. Tick Flatten to include them.', 'warn');
+    return;
+  }
+  toast(`${shown} match${shown === 1 ? '' : 'es'}`, 'ok');
 }
 
 /**

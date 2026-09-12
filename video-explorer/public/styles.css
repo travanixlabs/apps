@@ -1366,6 +1366,8 @@ body.dragging .card { cursor: grabbing; }
 }
 .toast.ok { border-left-color: var(--ok); }
 .toast.err { border-left-color: var(--danger); }
+/* Not a failure — the filter worked, there was just nothing here to find. */
+.toast.warn { border-left-color: #e3b341; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
 
 /* ---------------------------------------------------------- familiar faces */
