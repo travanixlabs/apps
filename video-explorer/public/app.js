@@ -4201,8 +4201,17 @@ const preview = { timer: null, index: 0, count: 10, onMeta: null, onPlay: null, 
  */
 const previewing = () => preview.timer !== null;
 
-/** Hides the strip and gives the stage back to the video. */
+/**
+ * Hides the strip and gives the stage back to the video.
+ *
+ * One or the other has the stage, never both: the strip is up and the video is
+ * not on screen, or the video is and the strip is gone. Everything that takes
+ * the stage for the strip goes through startStripPreview, and everything that
+ * gives it back goes through here.
+ */
 function hidePlayerStrip() {
+  const player = $('#player');
+  if (player) player.style.visibility = '';
   const strip = $('#playerStrip');
   if (!strip) return;
   strip.hidden = true;
@@ -4303,6 +4312,11 @@ async function startStripPreview(file) {
   const video = $('#player');
   // Stop it seeking the network behind the strip.
   try { video.pause(); } catch { /* nothing playing yet */ }
+  // And take it off the stage. Pausing is not enough: the strip is cropped to
+  // the one frame it is showing, so everything the crop does not cover is the
+  // video underneath, still there, still the wrong picture. Hidden rather than
+  // removed, so it goes on buffering for the click that is coming.
+  video.style.visibility = 'hidden';
   // And hold it still. Buffering behind the strip is the point -- the click is
   // meant to be instant -- but nothing may start it playing while a picture is
   // over it, whoever asks and however late.
