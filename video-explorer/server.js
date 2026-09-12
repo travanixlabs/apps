@@ -27,6 +27,9 @@ const library = require('./library');
 const faces = require('./faces');
 const dupes = require('./dupes');
 const framing = require('./framing');
+// The same file the page loads as a script. What "matches the advanced
+// filter" means is one definition, not two that would have to agree.
+const filter = require('./public/filter');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -1120,13 +1123,36 @@ function sweepState(video, strips, printsReady) {
 }
 
 /** Immediate subfolders of `dir`, each annotated with what's inside it. */
-async function listSubfolders(dir, videos, strips = new Set()) {
+/**
+ * The immediate subfolders of `dir`, each with the prefix that says whether a
+ * video lives somewhere beneath it. Shared by the listing and by the filtered
+ * count, which would otherwise each decide for themselves which folders are
+ * worth showing -- and the count would be attached to a folder that is not
+ * there, or missing from one that is.
+ */
+async function subfolderEntries(dir) {
   let entries;
   try {
     entries = await fsp.readdir(dir, { withFileTypes: true });
   } catch {
     return [];
   }
+  const subs = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || shouldSkipDir(entry.name)) continue;
+    const full = path.join(dir, entry.name);
+    subs.push({
+      name: entry.name,
+      path: full,
+      prefix: path.resolve(full).toLowerCase() + path.sep,
+    });
+  }
+  subs.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  return subs;
+}
+
+async function listSubfolders(dir, videos, strips = new Set()) {
+  const subs = await subfolderEntries(dir);
 
   // Worked out once per video rather than once per (folder, video) pair: the
   // outer loop below already costs folders x videos, and three index lookups
@@ -1136,10 +1162,8 @@ async function listSubfolders(dir, videos, strips = new Set()) {
   const lowerPath = videos.map((video) => path.resolve(video.path).toLowerCase());
 
   const folders = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory() || shouldSkipDir(entry.name)) continue;
-    const full = path.join(dir, entry.name);
-    const prefix = path.resolve(full).toLowerCase() + path.sep;
+  for (const sub of subs) {
+    const prefix = sub.prefix;
 
     let count = 0;
     let cloudCount = 0;
@@ -1164,8 +1188,8 @@ async function listSubfolders(dir, videos, strips = new Set()) {
     }
 
     folders.push({
-      name: entry.name,
-      path: full,
+      name: sub.name,
+      path: sub.path,
       videoCount: count,
       cloudCount,
       totalSize,
@@ -1182,7 +1206,6 @@ async function listSubfolders(dir, videos, strips = new Set()) {
     });
   }
 
-  folders.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   return folders;
 }
 
@@ -1231,17 +1254,17 @@ async function migrateCacheNames() {
  * a folder nobody has opened -- and two builders that had to agree would not
  * have, the first time one of them gained a field.
  */
-function describeVideo(video, dir) {
-  // Every listing teaches the face index where its profiled videos are, which
-  // is what lets "more of her" offer a thumbnail you can click. Free: the scan
-  // is already holding this stat.
-  faces.notePath(video, video.path);
+/**
+ * Everything about a video that a filter can ask about, and nothing else.
+ *
+ * Split out of describeVideo because counting a folder needs exactly this and
+ * none of the rest: no name, no folder, and in particular no notePath -- a
+ * count is not a listing, and telling the face index that 28,000 videos were
+ * just "seen" because a checkbox changed would be a lie it then acts on.
+ */
+function filterView(video) {
   return {
     path: video.path,
-    name: path.basename(video.path),
-    folder: path.dirname(video.path),
-    relFolder: dir ? (path.relative(dir, path.dirname(video.path)) || '.') : '',
-    ext: path.extname(video.path).toLowerCase(),
     size: video.size,
     mtimeMs: video.mtimeMs,
     cloudOnly: video.cloudOnly,
@@ -1256,8 +1279,60 @@ function describeVideo(video, dir) {
   };
 }
 
+function describeVideo(video, dir) {
+  // Every listing teaches the face index where its profiled videos are, which
+  // is what lets "more of her" offer a thumbnail you can click. Free: the scan
+  // is already holding this stat.
+  faces.notePath(video, video.path);
+  return {
+    name: path.basename(video.path),
+    folder: path.dirname(video.path),
+    relFolder: dir ? (path.relative(dir, path.dirname(video.path)) || '.') : '',
+    ext: path.extname(video.path).toLowerCase(),
+    ...filterView(video),
+  };
+}
+
+/**
+ * How many videos under each subfolder of `dir` the filter keeps.
+ *
+ * The page cannot work this out: it holds the videos of the folder it is
+ * standing in, and this is a question about the ones it was never sent. So the
+ * filter comes here and runs against the same matcher the page uses, over the
+ * walk the scan already did.
+ */
+function countUnderFolders(dir, videos, subs, adv) {
+  const favSet = new Set(library.favouriteModels().map((n) => String(n).toLowerCase()));
+  const counts = {};
+  for (const sub of subs) counts[sub.path] = 0;
+  for (const video of videos) {
+    const lower = path.resolve(video.path).toLowerCase();
+    // Cheapest test first: most videos are under none of these when the page is
+    // standing in a folder that holds its own files.
+    let hit = null;
+    for (const sub of subs) {
+      if (lower.startsWith(sub.prefix)) { hit = sub; break; }
+    }
+    if (!hit) continue;
+    if (!filter.matchesAdvanced(filterView(video), adv, { favSet })) continue;
+    counts[hit.path] += 1;
+  }
+  return counts;
+}
+
+/**
+ * What the last scan walked, so a filter change can be counted against the same
+ * snapshot the tiles were drawn from.
+ *
+ * The walk is the scan's whole cost -- 28,000 stats at the library root -- and
+ * changing a filter is not a rescan. Counting against the snapshot is also the
+ * honest answer: the tiles beside the count came from it too.
+ */
+let lastWalk = { key: '', videos: [] };
+
 async function scanDirectory(dir, recursive, includeCloud) {
   const videos = await collectVideos(dir);
+  lastWalk = { key: path.resolve(dir).toLowerCase(), videos };
   const folders = await listSubfolders(dir, videos, await cachedStripNames());
 
   const target = path.resolve(dir).toLowerCase();
@@ -1685,6 +1760,31 @@ const server = http.createServer(async (req, res) => {
         includeCloud,
         ...scanned,
       });
+    }
+
+    // How many videos under each subfolder survive the advanced filter.
+    //
+    // Asked separately from the scan rather than folded into it, because
+    // changing a filter does not rescan: the tiles are already on screen and
+    // only their numbers move. Against the walk the scan kept, so this costs
+    // no stats at all -- and describes the same snapshot the tiles came from.
+    if (req.method === 'POST' && route === '/api/folders/counts') {
+      const body = await readBody(req);
+      const dir = authoriseOrThrow(String(body.dir || ''));
+      const adv = filter.unpackFilter(body.filter);
+      // An empty filter has nothing to say: every video matches, and the page
+      // already knows each folder's total. Refused rather than answered, so a
+      // bug on either side shows up as a missing count instead of a wrong one.
+      if (!filter.filterActive(adv)) {
+        return sendJson(res, 400, { error: 'No filter to count' });
+      }
+      const key = path.resolve(dir).toLowerCase();
+      const videos = lastWalk.key === key ? lastWalk.videos : await collectVideos(dir);
+      const subs = await subfolderEntries(dir);
+      const started = Date.now();
+      const counts = countUnderFolders(dir, videos, subs, adv);
+      log(`counted ${subs.length} folders under ${dir} in ${Date.now() - started}ms`);
+      return sendJson(res, 200, { dir, counts });
     }
 
     if (req.method === 'GET' && route === '/api/sprite') {

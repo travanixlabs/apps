@@ -580,6 +580,10 @@
 
 <div id="toasts" class="toasts"></div>
 
+<!-- What "matches the advanced filter" means, shared with the server so the
+     folder tiles can be counted where the videos actually are. Must load
+     first: app.js reads its tables while it is still being evaluated. -->
+<script src="/filter.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

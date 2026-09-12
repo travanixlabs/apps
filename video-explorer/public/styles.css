@@ -255,15 +255,12 @@ kbd {
 .section { margin-bottom: 22px; }
 .section[hidden], .folders-pane[hidden] { display: none; }
 
-/* Pinned folders pane. Capped at 38vh while videos are competing for space,
-   so it can't push them off screen. */
+/* Pinned folders pane. The grid inside it is capped at three rows and scrolls
+   on its own, so this is only the frame around it. */
 .folders-pane {
   padding: 12px 16px 13px;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
-  max-height: 38vh;
-  overflow-y: auto;
-  overscroll-behavior: contain;
 }
 
 /* Nothing but folders here — take the whole window instead of scrolling
@@ -315,6 +312,11 @@ kbd {
 /* ------------------------------------------------------------ folder tiles */
 
 .folder-grid {
+  /* A tile is its 36px cover plus 8px of padding and a 1px border on each
+     side. Named so the three-row cap below is derived from the tile rather
+     than from a number someone measured once. */
+  --folder-row: 54px;
+  --folder-gap: 11px;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
   /* Every row here is implicit. min-content keeps a row as tall as its tallest
@@ -323,7 +325,20 @@ kbd {
      only where the pane is .expanded and has spare pixels to give away. */
   grid-auto-rows: min-content;
   align-content: start;
-  gap: 11px;
+  gap: var(--folder-gap);
+  /* Three rows, then this scrolls. A folder of folders was showing seven rows
+     and taking half the window before a single video had a chance to appear.
+     The cap is on the grid rather than the pane so the heading -- which says
+     how many there are, and so is the reason to scroll -- stays put. */
+  max-height: calc(var(--folder-row) * 3 + var(--folder-gap) * 2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* Except where there are no videos at all: then the folders are the listing,
+   and three rows in an otherwise empty window would be perverse. */
+.folders-pane.expanded .folder-grid {
+  max-height: none;
+  overflow-y: visible;
 }
 
 .folder-tile {
@@ -388,7 +403,13 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Same-width digits, so a column of tiles lines up and the eye can run down
+     the totals instead of re-reading each one. */
+  font-variant-numeric: tabular-nums;
 }
+/* With a filter on, the left-hand number is the answer to a question you just
+   asked, so it stops being furniture. */
+.folder-meta.filtered { color: var(--text-dim); }
 
 /* How far the three sweeps have got through the folder under the cursor.
    Fixed rather than absolute: the tile clips its own overflow and the strip of
@@ -419,6 +440,10 @@ kbd {
 }
 .folder-pop-head { font-variant-numeric: tabular-nums; }
 .folder-pop-none { color: var(--text-faint); }
+.folder-pop-match {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
 .folder-pop-path {
   margin-top: 2px;
   padding-top: 6px;

@@ -7,82 +7,12 @@ const $ = (sel) => document.querySelector(sel);
 /** The only scrolling element — observers must measure against it, not the page. */
 const scrollRoot = document.getElementById('scrollArea');
 
-// Declared before `state`, whose filter maps are built from it: a const read
-// above its own line throws, and the page would then define nothing at all.
-/**
- * The one-question facets, each answer a predicate.
- *
- * These used to be single values with an 'all' meaning no constraint. As maps
- * they behave exactly like tags and models do -- include some, exclude others,
- * empty means no constraint -- so one matcher serves all of them and the dialog
- * has no special cases left.
- *
- * Predicates rather than "derive the video's one value", because the last of
- * them is not exclusive: accepted and rejected can both be true of a video.
- */
-const CHOICES = {
-  favourite: {
-    yes: (f) => hasFavouriteModel(f),
-    no: (f) => !hasFavouriteModel(f),
-  },
-  link: {
-    yes: (f) => Boolean(f.url),
-    no: (f) => !f.url,
-  },
-  cloud: {
-    downloaded: (f) => !f.cloudOnly,
-    cloud: (f) => Boolean(f.cloudOnly),
-  },
-  suggested: {
-    match: (f) => suggestionMatch(f, 'match'),
-    nomatch: (f) => suggestionMatch(f, 'nomatch'),
-    faceless: (f) => suggestionMatch(f, 'faceless'),
-    unprofiled: (f) => suggestionMatch(f, 'unprofiled'),
-  },
-  suggestedCount: {
-    one: (f) => suggestedCountMatch(f, 'one'),
-    many: (f) => suggestedCountMatch(f, 'many'),
-  },
-  suggestedAct: {
-    // A suggested name that is credited. Whether you clicked it or it was
-    // already there is not recorded and does not matter -- the fact is that
-    // the recogniser and the credits agree about her.
-    accepted: (f) => {
-      const named = new Set((f.models || []).map((m) => m.toLowerCase()));
-      return (f.suggested || []).some((s) => named.has(s.name.toLowerCase()));
-    },
-    rejected: (f) => (f.notModels || []).length > 0,
-    // A suggestion you have not answered yet. Refused names are already out of
-    // the ranking, so anything still offered and not credited is undecided.
-    //
-    // It needs a suggestion to be pending: a video with nothing offered is not
-    // awaiting a decision, it is empty, and sweeping the unprofiled and the
-    // faceless in here would turn a work queue into a junk drawer. That is why
-    // this is not simply "neither accepted nor rejected".
-    //
-    // Not exclusive with accepted, on purpose: two names offered, one credited
-    // and one not, is both -- and it is the co-star case worth finding.
-    pending: (f) => {
-      const named = new Set((f.models || []).map((m) => m.toLowerCase()));
-      return (f.suggested || []).some((s) => !named.has(s.name.toLowerCase()));
-    },
-  },
-  // Which signal found this video's copy. Sound and picture each catch what
-  // the other cannot -- a re-dub defeats the sound, a re-crop defeats the
-  // picture -- so "matched" is three questions, not one. `both` is a subset of
-  // each of the other two, by construction.
-  duplicate: {
-    sound: (f) => Boolean(f.dupeKinds && f.dupeKinds.sound),
-    picture: (f) => Boolean(f.dupeKinds && f.dupeKinds.picture),
-    both: (f) => Boolean(f.dupeKinds && f.dupeKinds.both),
-    // Not "the only copy": a cloud video was never fingerprinted, so nothing
-    // is known about it either way. Only a video that was read and found
-    // unique can honestly answer no.
-    no: (f) => !f.duplicate && !f.cloudOnly,
-  },
-};
-
-const CHOICE_FACETS = Object.keys(CHOICES);
+// The facet tables, the filter object and the matcher live in filter.js, which
+// the page loads before this file and the server requires. They were here until
+// the folder tiles had to say how many videos in a subfolder match -- a question
+// only the server can answer, since it is the only one holding those videos.
+// Read them as globals below: CHOICES, CHOICE_FACETS, FACETS, LABEL_FACETS,
+// NOTHING, SINGLE_VALUED, newAdvFilter, picked, choiceMatch, matchesAdvanced.
 
 const state = {
   config: {},
@@ -129,41 +59,6 @@ const state = {
   adv: newAdvFilter(), // the advanced filter currently applied
 };
 
-/**
- * The advanced filter. Each facet is a Map of value → 'in' | 'out': clicking a
- * chip cycles include → exclude → gone. An empty map means "no constraint"
- * rather than "match nothing", so a fresh filter is transparent and the UI never
- * has to special-case "everything is unchecked".
- */
-function newAdvFilter() {
-  const adv = {
-    tags: new Map(),
-    models: new Map(),
-    studio: new Map(),
-    // The reference's letter code, one per video like the studio.
-    production: new Map(),
-    // Per facet, because "all of these tags" and "any of these performers" is a
-    // reasonable thing to ask for and one shared switch could not express it.
-    // Exclusions are always all-of: "not this" means not this either way.
-    // Studio is absent on purpose — one studio per video makes all-of empty.
-    mode: { tags: 'all', models: 'all' },
-    ratings: new Map(),   // 0 means unrated
-  };
-  // The one-question facets -- favourite, source link, availability, where a
-  // video stands with the face index, how many names came out of it, what was
-  // done about them, whether it is one of several copies -- take their maps
-  // from the CHOICES table below rather than a line each here.
-  //
-  // They were listed in both places until a facet was added to the table and
-  // not to this list, and the dialog read `undefined.get(...)` the moment it
-  // tried to draw the row. Two lists that must agree are one list.
-  //
-  // All of them were one-of-N pickers once and are maps now, so every row
-  // cycles include -> exclude -> off. "Exclude not profiled" is a thing you can
-  // want and could not previously say.
-  for (const facet of CHOICE_FACETS) adv[facet] = new Map();
-  return adv;
-}
 
 
 /**
@@ -233,50 +128,8 @@ const CHOICE_ROWS = [
   ]],
 ];
 
-/**
- * Included if it matches any included answer, and out if it matches an excluded
- * one. Exclusion wins, the way it does for tags: "not this" means not this.
- */
-function choiceMatch(picked, facet, file) {
-  if (!picked || !picked.size) return true;
-  const tests = CHOICES[facet];
-  let wanted = false;
-  let hit = false;
-  for (const [value, mode] of picked) {
-    const test = tests[value];
-    if (!test) continue;
-    const is = test(file);
-    if (mode === 'out' && is) return false;
-    if (mode === 'in') { wanted = true; if (is) hit = true; }
-  }
-  return !wanted || hit;
-}
-
-const FACETS = ['tags', 'models', 'studio', 'production', 'ratings'];
-
-/** The label facets, in the order they appear on a card and in the dialog. */
-const LABEL_FACETS = ['studio', 'production', 'models', 'tags'];
-
 /** Which radio group drives which facet's all/any. Studio has none. */
 const MODE_INPUTS = [['tags', 'tagMode'], ['models', 'modelMode']];
-
-/**
- * The "no tags" / "no models" chip lives in the same map as the values, under a
- * key no tag can have. A separate field would need its own copying, clearing,
- * counting and emptiness test; a NUL key gets all of that for free, and
- * `picked()` filters it out of the value lists.
- */
-const NOTHING = '\u0000';
-
-/**
- * The values a facet includes, or excludes — the two are always read apart, and
- * the emptiness chip is not a value, so it never appears here.
- */
-function picked(facet, want) {
-  return [...facet]
-    .filter(([value, mode]) => mode === want && value !== NOTHING)
-    .map(([value]) => value);
-}
 
 /**
  * How the listing is set up, as opposed to how the app is configured. A refresh
@@ -300,10 +153,18 @@ function resetView() {
   syncAdvBadge();
 }
 
+/** The applied filter, unless asked about another one -- the draft, usually. */
 function advActive(adv = state.adv) {
-  return CHOICE_FACETS.some((f) => adv[f].size > 0)
-    || FACETS.some((f) => adv[f].size > 0);
+  return filterActive(adv);
 }
+
+/**
+ * The one fact the shared matcher cannot work out from a video: which
+ * performers are marked as favourites. The server reads the same list off the
+ * library when it counts a folder, so both sides answer "a favourite is in it"
+ * the same way.
+ */
+const filterCtx = () => ({ favSet: state.favSet });
 
 // ----------------------------------------------------------------- utilities
 
@@ -532,6 +393,96 @@ function renderBreadcrumb() {
   });
 }
 
+/**
+ * How many videos in each subfolder survive the advanced filter.
+ *
+ * The page cannot work this out. It holds the videos of the folder it is
+ * standing in; a subfolder's videos were never sent, and at the library root
+ * there are 28,000 of them. So the filter goes to the server, which is holding
+ * the walk the scan already did, and comes back as one number per folder.
+ *
+ * `key` is the folder and the filter together: a render that changed neither
+ * costs nothing, and one that changed either asks again exactly once. `counts`
+ * being null with a key set means the answer is still in flight -- which the
+ * tile says, rather than showing a number it does not have yet.
+ */
+const folderCounts = { key: '', counts: null };
+
+/** The folder and filter a count would be for, or '' when nothing is filtered. */
+function folderCountKey() {
+  if (!advActive()) return '';
+  return state.dir + '\u0000' + JSON.stringify(packFilter(state.adv));
+}
+
+/**
+ * Whether the question has changed, and an answer has to be fetched.
+ *
+ * Separate from the fetching, and called BEFORE the tiles are drawn, because
+ * the store still holds the last folder's answer at that point -- counts filed
+ * under paths that are no longer on screen. Drawing first showed every tile as
+ * uncounted for a frame before the request even went out.
+ */
+function folderCountsStale() {
+  const key = folderCountKey();
+  if (key === folderCounts.key) return false;
+  folderCounts.key = key;
+  folderCounts.counts = null;
+  // Nothing filtered: every video in a folder matches, and the tile already
+  // knows how many that is. No request at all.
+  return key !== '';
+}
+
+async function fetchFolderCounts() {
+  const key = folderCounts.key;
+  let counts = null;
+  try {
+    const data = await api('/api/folders/counts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dir: state.dir, filter: packFilter(state.adv) }),
+    });
+    counts = data.counts || {};
+  } catch {
+    // A folder that cannot be counted says so on its tile. Nothing else about
+    // the listing depends on this, so a failure here is not worth a toast.
+    counts = null;
+  }
+  // Another folder, or another filter, was asked for while this was in the air.
+  if (folderCounts.key !== key) return;
+  folderCounts.counts = counts;
+  renderFolders();
+}
+
+/**
+ * What a folder's tile and card say about how many videos are in it.
+ *
+ * Three numbers, always in the same order: how many match, how many there are,
+ * and how many of those are on this machine. With no filter applied the first
+ * two are the same number -- deliberately, so the shape of the line never
+ * changes and the total is always the one on the right.
+ */
+function folderTally(folder) {
+  const total = folder.videoCount;
+  const downloaded = total - (folder.cloudCount || 0);
+  if (!folderCounts.key) return { total, downloaded, matched: total, waiting: false };
+  const counts = folderCounts.counts;
+  if (!counts) return { total, downloaded, matched: null, waiting: true };
+  const matched = counts[folder.path];
+  return {
+    total,
+    downloaded,
+    matched: typeof matched === 'number' ? matched : null,
+    waiting: false,
+  };
+}
+
+/** "3 / 91 (12 DL)" — matching, of everything in it, of which this many are here. */
+function folderTallyText(folder) {
+  const { total, downloaded, matched, waiting } = folderTally(folder);
+  const left = matched === null ? (waiting ? '…' : '?') : matched.toLocaleString();
+  return `${left} / ${total.toLocaleString()} (${downloaded.toLocaleString()} DL)`;
+}
+
 function renderFolders() {
   const section = $('#foldersSection');
   const wrap = $('#folders');
@@ -553,13 +504,16 @@ function renderFolders() {
   section.classList.toggle('collapsed', state.config.foldersCollapsed === true);
   // With no videos listed, folders get the full window rather than 38vh.
   section.classList.toggle('expanded', state.files.length === 0);
+  // The grid is the thing that scrolls now -- three rows of it, then a bar --
+  // so a new folder starts at its own top rather than wherever the last one
+  // was left.
   section.scrollTop = 0;
+  wrap.scrollTop = 0;
   $('#folderCount').textContent = folders.length === state.folders.length
     ? `(${state.folders.length})`
     : `(${folders.length} of ${state.folders.length})`;
 
   for (const folder of folders) {
-    const downloaded = folder.videoCount - (folder.cloudCount || 0);
     const tile = document.createElement('button');
     tile.className = 'folder-tile' + (folder.videoCount === 0 ? ' no-videos' : '');
     // No `title`: the hover card below says all of this and more, and a native
@@ -589,11 +543,13 @@ function renderFolders() {
     meta.className = 'folder-meta';
     if (folder.videoCount === 0) {
       meta.textContent = 'no videos';
-    } else if (folder.cloudCount) {
-      // Lead with what's actually usable offline.
-      meta.textContent = `${downloaded.toLocaleString()} downloaded of ${folder.videoCount.toLocaleString()}`;
     } else {
-      meta.textContent = `${folder.videoCount.toLocaleString()} video${folder.videoCount === 1 ? '' : 's'} · ${fmtBytes(folder.totalSize)}`;
+      // One shape whether or not anything is filtered and whether or not any of
+      // it is downloaded, so the total is always the number on the right and
+      // the line never has to be re-read. The size moved to the hover card:
+      // "how big is this" is a question you ask of one folder, not of forty.
+      meta.textContent = folderTallyText(folder);
+      meta.classList.toggle('filtered', folderCounts.key !== '');
     }
     body.appendChild(meta);
 
@@ -613,11 +569,13 @@ function renderFolders() {
  * once. Same order and same dot colours as the pills, so the two read as one
  * thing seen at two scales.
  *
- * Cloud or downloaded does not change whether this appears; it changes what it
- * can say. None of the three sweeps touches a placeholder -- framing one would
- * download it, and so would the other two -- so the denominator is the
- * downloaded count, and a folder that is entirely in the cloud says that
- * instead of showing three bars stuck at nothing.
+ * Cloud or downloaded does not change whether this appears, and it does not
+ * change the denominator either. The sweeps decline to BUILD for a placeholder
+ * -- framing one would download it, and so would the other two -- but all three
+ * stores are keyed by size and mtime, and freeing a file to the cloud changes
+ * neither. So a folder swept before it was freed reads as finished, which it
+ * is: counting only the downloaded ones hid the most complete folders there
+ * were.
  *
  * One shared card rather than one per tile: the tile clips its own overflow and
  * so does the scrolling strip they sit in, so this is positioned against the
@@ -627,7 +585,7 @@ function renderFolders() {
 function showFolderPop(tile, folder) {
   const pop = $('#folderPop');
   if (!pop) return;
-  const downloaded = folder.videoCount - (folder.cloudCount || 0);
+  const { total: allOfThem, downloaded, matched } = folderTally(folder);
 
   pop.replaceChildren();
   const line = (text, cls = 'folder-pop-head') => {
@@ -642,7 +600,15 @@ function showFolderPop(tile, folder) {
   if (folder.videoCount === 0) {
     line('No videos in here.', 'folder-pop-none');
   } else {
-    const total = folder.videoCount;
+    const total = allOfThem;
+    // The tile's line, spelled out: which of these numbers is which is obvious
+    // here and has to be remembered there.
+    if (folderCounts.key) {
+      line(matched === null
+        ? `counting ${total.toLocaleString()} against the filter…`
+        : `${matched.toLocaleString()} of ${total.toLocaleString()} match the filter`,
+      'folder-pop-match');
+    }
     line(folder.cloudCount
       ? `${downloaded.toLocaleString()} downloaded · ${folder.cloudCount.toLocaleString()} cloud-only`
       : `${total.toLocaleString()} downloaded`);
@@ -757,11 +723,6 @@ function parseQuery(query) {
 }
 
 /** Whether anyone named in this video is marked a favourite. */
-function hasFavouriteModel(file) {
-  if (!state.favSet.size) return false;
-  return (file.models || []).some((name) => state.favSet.has(String(name).toLowerCase()));
-}
-
 const isFavouriteModel = (name) => state.favSet.has(String(name || '').trim().toLowerCase());
 
 /** Keeps the lower-cased lookup set in step with the list the server sent. */
@@ -788,100 +749,6 @@ async function toggleFavouriteModel(name) {
     return isFavouriteModel(name);
   }
   return on;
-}
-
-/**
- * The advanced filter, on top of whatever the quick filter box says. Every
- * populated facet has to match; an empty one is ignored.
- */
-function matchesAdvanced(file, adv) {
-  // Tags and models are matched the same way, but each facet on its own: two
-  // models and one tag means "those models AND that tag", not one merged pool.
-  // The all/any switch governs the included tags; exclusions are always all-of,
-  // since "not this" means not this whichever way that switch is set.
-  for (const field of LABEL_FACETS) {
-    if (!adv[field].size) continue;
-    // The studio is one value rather than a list, so it is wrapped.
-    const held = file[field];
-    const have = new Set((Array.isArray(held) ? held : (held ? [held] : []))
-      .map((t) => t.toLowerCase()));
-
-    // "Has none at all" is its own question, asked before any value is compared:
-    // include it to see only the unlabelled, exclude it to drop them.
-    const nothing = adv[field].get(NOTHING);
-    if (nothing === 'in' && have.size) return false;
-    if (nothing === 'out' && !have.size) return false;
-
-    const wanted = picked(adv[field], 'in').map((t) => t.toLowerCase());
-    if (wanted.length) {
-      // A video holds one studio and one production code, so several of them
-      // can only mean "any".
-      const any = LABEL_FIELDS[field].single || (adv.mode || {})[field] === 'any';
-      const hit = any ? wanted.some((t) => have.has(t)) : wanted.every((t) => have.has(t));
-      if (!hit) return false;
-    }
-    if (picked(adv[field], 'out').map((t) => t.toLowerCase()).some((t) => have.has(t))) return false;
-  }
-
-  if (adv.ratings.size) {
-    const rating = file.rating || 0;
-    const wanted = picked(adv.ratings, 'in');
-    if (wanted.length && !wanted.includes(rating)) return false;
-    if (picked(adv.ratings, 'out').includes(rating)) return false;
-  }
-
-  for (const facet of CHOICE_FACETS) {
-    if (!choiceMatch(adv[facet], facet, file)) return false;
-  }
-
-  return true;
-}
-
-/**
- * Where a video stands with the face index.
- *
- * Three states that cover the listing and do not overlap: not read yet, read
- * and settled, read and not. "Nothing was recognised" is not a fourth -- a
- * video whose faces matched nobody still has work outstanding, so it belongs
- * with the rest of the work.
- *
- * Matching is asked per NAME, not per video. Credited to A with A, B and C all
- * recognised in it, the interesting fact is that B and C are missing -- and
- * "does any suggestion match" would call that a match and hide it. So a match
- * means EVERY recognised face is already credited: nothing left to do here.
- */
-function suggestionMatch(file, want) {
-  const profiled = file.profiled === true;
-  if (want === 'unprofiled') return !profiled;
-  if (!profiled) return false;
-  // Read, and it gave the recogniser nothing to work with: shot from behind, in
-  // the dark, or with one face where two are needed to be sure of a group. The
-  // player has said this for a while and nothing could list them.
-  const faceless = !(file.people || 0);
-  if (want === 'faceless') return faceless;
-  const suggested = file.suggested || [];
-  const named = new Set((file.models || []).map((m) => m.toLowerCase()));
-  const settled = suggested.length > 0
-    && suggested.every((sug) => named.has(sug.name.toLowerCase()));
-  // A faceless video is not an unnamed performer. It used to fall in here and
-  // made the one filter that means "there is work to do" mostly not that.
-  if (want === 'nomatch') return !faceless && !settled;
-  return settled;
-}
-
-/**
- * How many performers the faces in a video were matched to.
- *
- * One name is the ordinary case. Two or more means the faces clustered into
- * several people and each cluster found somebody -- which is where a co-star
- * goes missing from the credits, and the reason this is worth asking separately
- * from whether the names are already on it.
- */
-function suggestedCountMatch(file, want) {
-  const count = (file.suggested || []).length;
-  if (want === 'one') return count === 1;
-  if (want === 'many') return count > 1;
-  return true;
 }
 
 function matchesQuery(file, terms) {
@@ -941,7 +808,7 @@ function applyFilterSort() {
   let list = state.files;
   const terms = parseQuery(query);
   if (terms.length) list = list.filter((f) => matchesQuery(f, terms));
-  if (advActive()) list = list.filter((f) => matchesAdvanced(f, state.adv));
+  if (advActive()) list = list.filter((f) => matchesAdvanced(f, state.adv, filterCtx()));
 
   list = list.slice().sort((a, b) => {
     let cmp;
@@ -1752,7 +1619,7 @@ function pruneFiltered(paths) {
   for (const path of paths) {
     const file = state.files.find((f) => f.path === path);
     if (!file) continue;
-    const keep = matchesQuery(file, terms) && (!advActive() || matchesAdvanced(file, state.adv));
+    const keep = matchesQuery(file, terms) && (!advActive() || matchesAdvanced(file, state.adv, filterCtx()));
     if (!keep) gone.add(path);
   }
   if (!gone.size) return;
@@ -3131,7 +2998,6 @@ const LABEL_FIELDS = {
     empty: '+ studio',
     chip: 'chip chip-studio',
     values: (f) => (f.studio ? [f.studio] : []),
-    single: true,
   },
   // The series within a house: Model Media ships MD, MDX, MCY, TZ and MSD, and
   // "which of those is this" is a question the studio cannot answer.
@@ -3139,9 +3005,15 @@ const LABEL_FIELDS = {
     empty: '+ production',
     chip: 'chip chip-production',
     values: (f) => (f.production ? [f.production] : []),
-    single: true,
   },
 };
+
+// Which of them hold one value rather than a list -- the matcher's list, read
+// here rather than restated, because "several studios can only mean any" is a
+// fact about the data and not about this dialog.
+for (const [field, spec] of Object.entries(LABEL_FIELDS)) {
+  spec.single = SINGLE_VALUED[field] === true;
+}
 
 /**
  * `add` puts an editing affordance on the row. Only tags carry one: two on a card
@@ -5257,7 +5129,12 @@ function render() {
   grid.innerHTML = '';
 
   renderBreadcrumb();
+  // Asked before the tiles are drawn, so they show this folder's state rather
+  // than the last one's numbers. Does nothing unless the folder or the filter
+  // has actually changed.
+  const counting = folderCountsStale();
   renderFolders();
+  if (counting) fetchFolderCounts();
 
   state.rendered = 0;
   $('#filesSection').hidden = state.files.length === 0;
