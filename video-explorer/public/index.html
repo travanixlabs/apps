@@ -211,6 +211,8 @@
           <div class="pb-track">
             <div id="pbBuffered" class="pb-buffered"></div>
             <div id="pbPlayed" class="pb-played"></div>
+            <!-- Bookmarked moments, one pip each, drawn from the record. -->
+            <div id="pbMarks" class="pb-marks"></div>
             <div id="pbKnob" class="pb-knob"></div>
           </div>
           <!-- Where you would land. Positioned in pixels as the pointer moves. -->
@@ -220,6 +222,25 @@
                      preload="metadata" disablepictureinpicture hidden></video>
             </div>
             <span id="pbHoverTime" class="pb-hover-time mono">0:00</span>
+          </div>
+
+          <!-- Right-clicking the timeline bookmarks that moment. Opens here, at
+               the second under the pointer, so the choice of icon is the only
+               thing left to make. -->
+          <div id="pbMarkMenu" class="pb-mark-menu" hidden>
+            <div class="pb-mark-head">
+              <span id="pbMarkTime" class="mono">0:00</span>
+              <span id="pbMarkWhat" class="pb-mark-what">Bookmark this moment</span>
+              <button id="pbMarkDrop" class="pb-mark-drop" type="button" hidden
+                      title="Remove this bookmark">Remove</button>
+            </div>
+            <div id="pbMarkIcons" class="pb-mark-icons"></div>
+            <div class="pb-mark-row">
+              <input id="pbMarkOwn" class="pb-mark-own" type="text" maxlength="2"
+                     aria-label="Any other character" placeholder="or type one">
+              <input id="pbMarkLabel" class="pb-mark-label" type="text" maxlength="80"
+                     aria-label="Note" placeholder="note (optional)">
+            </div>
           </div>
         </div>
 

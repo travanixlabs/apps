@@ -1381,6 +1381,110 @@ body.dragging .card { cursor: grabbing; }
   text-shadow: 0 1px 3px rgba(0, 0, 0, .9);
 }
 
+/* ---- bookmarks -----------------------------------------------------------
+
+   A pip per bookmarked moment, sitting on the track rather than beside it, so
+   the timeline says where the interesting parts are without being asked. */
+.pb-marks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.pb-mark {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  transform: translateY(-50%);
+  background: rgba(10, 12, 16, .82);
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .82);
+  color: #fff;
+  font-size: 9px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  /* The track itself ignores the pointer so a drag is not interrupted; the
+     pips take it back, since clicking one is the whole point of drawing it. */
+  pointer-events: auto;
+  transition: transform .12s;
+}
+.pb-mark:hover,
+.pb-mark:focus-visible { transform: translateY(-50%) scale(1.45); outline: none; }
+
+/* The picker, and the same panel reused to edit a mark that already exists. */
+.pb-mark-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  z-index: 7;
+  width: 236px;
+  display: grid;
+  gap: 7px;
+  padding: 9px 10px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-elev-2);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .6);
+  cursor: default;
+}
+.pb-mark-menu[hidden] { display: none; }
+.pb-mark-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+.pb-mark-what { flex: 1 1 auto; min-width: 0; }
+.pb-mark-drop {
+  flex: none;
+  padding: 2px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--danger);
+  font-size: 11px;
+  cursor: pointer;
+}
+.pb-mark-drop:hover { background: rgba(244, 104, 95, .14); }
+.pb-mark-drop[hidden] { display: none; }
+
+.pb-mark-icons {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 3px;
+}
+.pb-mark-icons button {
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--bg-elev-1, #161b22);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.pb-mark-icons button:hover { border-color: var(--accent, #58a6ff); }
+.pb-mark-icons button.on { border-color: var(--accent, #58a6ff); background: #1d2a3d; }
+
+.pb-mark-row { display: flex; gap: 5px; }
+.pb-mark-own,
+.pb-mark-label {
+  min-width: 0;
+  padding: 4px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-elev-1, #161b22);
+  color: var(--text, #e9eef5);
+  font-size: 12px;
+}
+.pb-mark-own { flex: 0 0 64px; text-align: center; }
+.pb-mark-label { flex: 1 1 auto; }
+
 .pb-vol {
   flex: none;
   width: 74px;

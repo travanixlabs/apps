@@ -1571,6 +1571,13 @@ async function editRecords(paths, patch) {
     state.productionVocab = data.productions || state.productionVocab;
     for (const [filePath, record] of Object.entries(data.records || {})) {
       if (record.error) { toast(record.error, 'err'); continue; }
+      // The open video first, and before the listing lookup: it is watchable
+      // from outside the current listing -- an anchor, a sibling walked past a
+      // filter -- and its timeline must redraw either way.
+      if (state.playing && state.playing.path === filePath) {
+        if (record.marks !== undefined) state.playing.marks = record.marks;
+        drawMarks();
+      }
       const file = state.files.find((f) => f.path === filePath);
       if (!file) continue;
       file.rating = record.rating;
@@ -1587,6 +1594,9 @@ async function editRecords(paths, patch) {
       file.studio = record.studio;
       file.production = record.production;
       file.url = record.url;
+      // Bookmarked moments. Copied back so the timeline redraws from the store
+      // rather than from what the click optimistically assumed.
+      if (record.marks !== undefined) file.marks = record.marks;
       file.updated = record.updated || 0;
       refreshCardRecord(file);
     }
@@ -4503,6 +4513,7 @@ function showPlayerBar() {
   if (!bar) return;
   bar.hidden = false;
   barSync();
+  drawMarks();
   wakeBar();
 
   const file = state.playing;
@@ -4522,6 +4533,7 @@ function hidePlayerBar() {
   const bar = $('#playerBar');
   if (bar) bar.hidden = true;
   hideHover();
+  closeMarkMenu();
   clearTimeout(scrub.idle);
   scrub.idle = null;
   scrub.dragging = false;
@@ -4567,10 +4579,15 @@ function wakeBar() {
   scrub.idle = null;
   if (!watching()) return;
   const player = $('#player');
-  if (player.paused || scrub.dragging) return;
+  // Paused, scrubbing, or in the middle of writing a bookmark: all three are
+  // the bar being used, and one that faded out from under any of them would
+  // take the thing you were using with it.
+  if (player.paused || scrub.dragging || !$('#pbMarkMenu').hidden) return;
   scrub.idle = setTimeout(() => {
     const now = $('#player');
-    if (watching() && !now.paused && !scrub.dragging) stage.classList.add('bar-idle');
+    if (watching() && !now.paused && !scrub.dragging && $('#pbMarkMenu').hidden) {
+      stage.classList.add('bar-idle');
+    }
   }, 2500);
 }
 
@@ -4793,6 +4810,130 @@ function captureFrame(video, second) {
     // luxury; the cloud path simply re-seeks, which is what it was doing anyway.
     scrub.canCapture = false;
   }
+}
+
+// ---------------------------------------------------------------- bookmarks
+
+/**
+ * The palette. Twelve, because a grid you can take in at a glance beats a list
+ * of everything — and the box beside it takes any other character you want, so
+ * this is a shortcut rather than a limit.
+ */
+const MARK_ICONS = ['★', '🔖', '❤️', '🔥', '😂', '👀', '⚠️', '✂️', '🎯', '💬', '🎵', '🏁'];
+
+/** The bookmarks on the open video, earliest first. */
+function playerMarks() {
+  const file = state.playing;
+  return (file && Array.isArray(file.marks) ? file.marks : []).slice()
+    .sort((a, b) => a.t - b.t);
+}
+
+/**
+ * Draws a pip per bookmark on the track.
+ *
+ * Rebuilt rather than patched: there are a handful of these, the list arrives
+ * whole from the store, and a diff would be more code than the thing it saved.
+ */
+function drawMarks() {
+  const host = $('#pbMarks');
+  if (!host) return;
+  host.innerHTML = '';
+  const duration = playerDuration();
+  if (!(duration > 0)) return;
+
+  for (const mark of playerMarks()) {
+    const pip = document.createElement('button');
+    pip.type = 'button';
+    pip.className = 'pb-mark';
+    pip.style.left = `${Math.min(100, Math.max(0, (mark.t / duration) * 100))}%`;
+    pip.textContent = mark.icon;
+    pip.dataset.at = String(mark.t);
+    pip.title = `${fmtDuration(mark.t)}${mark.label ? ' — ' + mark.label : ''}`
+      + '  (right-click to edit)';
+    pip.setAttribute('aria-label', pip.title);
+    host.appendChild(pip);
+  }
+}
+
+/** The bookmark at a second, if there is one. */
+function markAt(seconds) {
+  return playerMarks().find((m) => Math.abs(m.t - seconds) < 0.06) || null;
+}
+
+/**
+ * Opens the picker over a moment.
+ *
+ * The same panel both bookmarks a new moment and edits one that is already
+ * there — an existing mark fills in its icon and note and grows a Remove
+ * button, so there is one thing to learn rather than two.
+ */
+function openMarkMenu(seconds, clientX) {
+  const menu = $('#pbMarkMenu');
+  if (!menu || !(playerDuration() > 0)) return;
+  hideHover();
+
+  const existing = markAt(seconds);
+  const at = existing ? existing.t : Math.round(seconds * 10) / 10;
+  menu.dataset.at = String(at);
+
+  $('#pbMarkTime').textContent = fmtDuration(at);
+  $('#pbMarkWhat').textContent = existing ? 'Edit this bookmark' : 'Bookmark this moment';
+  $('#pbMarkDrop').hidden = !existing;
+  $('#pbMarkLabel').value = existing ? existing.label || '' : '';
+  $('#pbMarkOwn').value = existing && !MARK_ICONS.includes(existing.icon) ? existing.icon : '';
+
+  const icons = $('#pbMarkIcons');
+  icons.innerHTML = '';
+  for (const glyph of MARK_ICONS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = glyph;
+    btn.title = 'Bookmark with ' + glyph;
+    if (existing && existing.icon === glyph) btn.classList.add('on');
+    btn.addEventListener('click', () => saveMark(at, glyph));
+    icons.appendChild(btn);
+  }
+
+  // Held inside the track, the same way the hover preview is.
+  const box = $('#pbSeek').getBoundingClientRect();
+  const half = menu.offsetWidth ? menu.offsetWidth / 2 : 118;
+  const wanted = clientX === undefined ? (at / playerDuration()) * box.width : clientX - box.left;
+  menu.style.left = `${Math.min(box.width - half, Math.max(half, wanted))}px`;
+  menu.style.transform = 'translateX(-50%)';
+  menu.hidden = false;
+  wakeBar();
+  $('#pbMarkLabel').focus();
+}
+
+function closeMarkMenu() {
+  const menu = $('#pbMarkMenu');
+  if (menu) menu.hidden = true;
+}
+
+/** Writes one bookmark and closes up. The note comes from the box as it stands. */
+function saveMark(at, icon) {
+  const file = state.playing;
+  if (!file) return;
+  const own = $('#pbMarkOwn').value.trim();
+  editRecords([file.path], {
+    setMark: { t: at, icon: icon || own || '★', label: $('#pbMarkLabel').value.trim() },
+  });
+  closeMarkMenu();
+}
+
+function removeMark(at) {
+  const file = state.playing;
+  if (!file) return;
+  editRecords([file.path], { removeMark: at });
+  closeMarkMenu();
+}
+
+/** Jumps to a bookmark and keeps playing if it was playing. */
+function goToMark(at) {
+  const player = $('#player');
+  try { player.currentTime = at; } catch { /* not seekable yet */ }
+  barSync();
+  wakeBar();
 }
 
 function togglePlayback() {
@@ -6033,8 +6174,60 @@ function wireEvents() {
     barSync();
   };
 
+  // ---- bookmarks ----------------------------------------------------------
+
+  // Right-click the timeline to bookmark the second under the pointer; right-
+  // click an existing pip to edit or remove it. The browser menu is not useful
+  // over a seek bar, so this takes its place rather than sitting beside it.
+  seekEl.addEventListener('contextmenu', (ev) => {
+    ev.preventDefault();
+    const duration = playerDuration();
+    if (!(duration > 0)) return;
+    const pip = ev.target.closest('.pb-mark');
+    openMarkMenu(pip ? Number(pip.dataset.at) : seekFractionAt(ev.clientX) * duration,
+      ev.clientX);
+  });
+  // A left-click on a pip goes there. It is on the track, so without this it
+  // would seek to roughly the same place -- roughly is not what a bookmark is.
+  seekEl.addEventListener('click', (ev) => {
+    const pip = ev.target.closest('.pb-mark');
+    if (!pip) return;
+    ev.stopPropagation();
+    goToMark(Number(pip.dataset.at));
+  });
+  // The panel is inside the track, so without this every click in it would
+  // scrub the video underneath.
+  $('#pbMarkMenu').addEventListener('pointerdown', (ev) => ev.stopPropagation());
+  $('#pbMarkMenu').addEventListener('click', (ev) => ev.stopPropagation());
+  $('#pbMarkDrop').addEventListener('click', () => {
+    removeMark(Number($('#pbMarkMenu').dataset.at));
+  });
+  // Typing your own character and pressing Enter is the same as picking one.
+  for (const id of ['#pbMarkOwn', '#pbMarkLabel']) {
+    $(id).addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        saveMark(Number($('#pbMarkMenu').dataset.at), $('#pbMarkOwn').value.trim());
+      } else if (ev.key === 'Escape') {
+        ev.preventDefault();
+        ev.stopPropagation();
+        closeMarkMenu();
+      }
+    });
+  }
+  // Anywhere else closes it, including the picture behind it.
+  document.addEventListener('pointerdown', (ev) => {
+    if (!$('#pbMarkMenu').hidden && !ev.target.closest('#pbMarkMenu')) closeMarkMenu();
+  });
+  // Redraw when the video's own length finally arrives: the pips are placed as
+  // a fraction of it, and before it lands there is nothing to be a fraction of.
+  player.addEventListener('durationchange', drawMarks);
+  player.addEventListener('loadedmetadata', drawMarks);
+
   seekEl.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0) return;
+    // A pip is a button in its own right; scrubbing starts on the track.
+    if (ev.target.closest('.pb-mark')) return;
     ev.preventDefault();
     scrub.dragging = true;
     seekEl.classList.add('dragging');
@@ -6046,6 +6239,9 @@ function wireEvents() {
     wakeBar();
   });
   seekEl.addEventListener('pointermove', (ev) => {
+    // The picker sits inside the track, so moving across it must not put a
+    // preview thumbnail over the top of what you are reading.
+    if (!$('#pbMarkMenu').hidden && ev.target.closest('#pbMarkMenu')) return;
     showHoverAt(ev.clientX);
     if (scrub.dragging) commitSeek(ev.clientX);
     wakeBar();
@@ -6137,6 +6333,7 @@ function onKeyDown(ev) {
     // Fullscreen is a layer of its own, and the outermost one. Closing the
     // player from under it would leave the screen owned by a dialog that is
     // no longer there.
+    if (!$('#pbMarkMenu').hidden) { closeMarkMenu(); return; }
     if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
     if (!$('#volMenu').hidden) { toggleVolumeMenu(false); return; }
     // The lineup opens over the player and over the label dialog, so it is the

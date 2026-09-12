@@ -30,7 +30,47 @@ const os = require('os');
 // a different shape of fact from "any number of these apply".
 const EMPTY = {
   rating: 0, tags: [], models: [], studio: '', production: '', url: '', notModels: [],
+  marks: [],
 };
+
+// A bookmark is a second, a glyph, and optionally a few words. Kept here rather
+// than in a file of its own because it is the same question the rating and the
+// tags answer -- what do I know about this video -- and because this store is
+// keyed by size and mtime, so a bookmark survives the file being renamed,
+// moved, or freed up to the cloud, which a timestamp in a sidecar would not.
+const MARK_LIMIT = 200;
+
+/**
+ * One bookmark, or null if there is nothing usable in it.
+ *
+ * The time is the identity: two marks at the same second are one mark, so
+ * setting one twice moves the icon rather than stacking a second pip nobody
+ * can click.
+ */
+function normaliseMark(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const at = Number(raw.t);
+  if (!Number.isFinite(at) || at < 0) return null;
+  // A glyph, not a sentence: one emoji is often two or three code units, so
+  // this counts characters the way a person would rather than by .length.
+  const icon = [...String(raw.icon || '★').trim()].slice(0, 2).join('') || '★';
+  return {
+    t: Math.round(at * 10) / 10,
+    icon,
+    label: String(raw.label || '').trim().replace(/\s+/g, ' ').slice(0, 80),
+  };
+}
+
+function normaliseMarks(list) {
+  const byTime = new Map();
+  for (const raw of Array.isArray(list) ? list : []) {
+    const mark = normaliseMark(raw);
+    if (mark) byTime.set(mark.t, mark);
+  }
+  return [...byTime.values()]
+    .sort((a, b) => a.t - b.t)
+    .slice(0, MARK_LIMIT);
+}
 
 // notModels is the answer to a suggestion: not who is in this video, but who
 // the recogniser was told is not. It behaves like the other lists -- add,
@@ -217,6 +257,9 @@ function decorate(stat) {
     // Where this video came from, when that is known: a page about it rather
     // than a copy of it.
     url: record.url || '',
+    // Bookmarked moments, earliest first, so the player can draw them on the
+    // timeline the instant it opens rather than asking for them separately.
+    marks: record.marks || [],
     // When the labels last changed. Travels with the listing so "date modified"
     // can mean the video *or* what is known about it, whichever happened later.
     updated: record.updated || 0,
@@ -363,11 +406,32 @@ function apply(stat, name, patch) {
     }
   }
 
+  // Bookmarks. `marks` replaces the lot; setMark and removeMark move one, which
+  // is what the timeline does -- sending the whole list back for every pip
+  // would lose any mark added from another window between read and write.
+  if (Array.isArray(patch.marks)) next.marks = normaliseMarks(patch.marks);
+  if (patch.setMark) {
+    const mark = normaliseMark(patch.setMark);
+    if (mark) {
+      next.marks = normaliseMarks([
+        ...(next.marks || []).filter((m) => Math.abs(m.t - mark.t) > 0.05),
+        mark,
+      ]);
+    }
+  }
+  if (patch.removeMark !== undefined) {
+    const at = Number(patch.removeMark);
+    if (Number.isFinite(at)) {
+      next.marks = (next.marks || []).filter((m) => Math.abs(m.t - at) > 0.05);
+    }
+  }
+
   // An empty record is noise in a file that syncs; drop it instead. A rejection
   // counts as content: "not her" is a decision, and dropping the record would
-  // hand the same suggestion straight back.
+  // hand the same suggestion straight back. So does a bookmark: it is a place
+  // somebody chose to remember.
   if (!next.rating && !(next.tags || []).length && !(next.models || []).length
-    && !(next.notModels || []).length
+    && !(next.notModels || []).length && !(next.marks || []).length
     && !next.studio && !next.production && !next.url) {
     delete data.records[key];
     save();
@@ -384,6 +448,7 @@ function apply(stat, name, patch) {
     studio: next.studio || '',
     production: next.production || '',
     url: next.url || '',
+    marks: next.marks || [],
     updated: next.updated,
   };
 }
