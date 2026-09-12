@@ -4131,7 +4131,13 @@ function syncPlayerNav() {
  * preview rather than a playthrough, and their play button would be
  * indistinguishable from the seeking this does to render each segment.
  */
-const preview = { timer: null, index: 0, count: 10, onMeta: null };
+/**
+ * `mode` is which of the two previews owns the stage: 'live' seeks and plays the
+ * video itself, 'strip' paints a picture over it and the video must be still.
+ * Nothing may play while it is 'strip' -- that is a playing video behind a
+ * photograph, which is neither of the two things the stage is meant to show.
+ */
+const preview = { timer: null, index: 0, count: 10, onMeta: null, onPlay: null, mode: null };
 
 /**
  * Whether the ten segments are still cycling.
@@ -4225,6 +4231,16 @@ async function startStripPreview(file) {
   // stage from it rather than leaving two things driving the same badge.
   clearInterval(preview.timer);
   preview.timer = null;
+  preview.mode = 'strip';
+  // And take its listener off with it. A cloud file reports its duration late
+  // -- often after the strip has already landed -- and that late event ran the
+  // live show(), which seeks and plays. That was the video playing on behind
+  // the picture: the strip owned the stage and something else was still
+  // driving the element underneath it.
+  if (preview.onMeta) {
+    $('#player').removeEventListener('loadedmetadata', preview.onMeta);
+    preview.onMeta = null;
+  }
 
   strip.style.backgroundImage = `url("${entry.url}")`;
   strip.hidden = false;
@@ -4234,6 +4250,13 @@ async function startStripPreview(file) {
   const video = $('#player');
   // Stop it seeking the network behind the strip.
   try { video.pause(); } catch { /* nothing playing yet */ }
+  // And hold it still. Buffering behind the strip is the point -- the click is
+  // meant to be instant -- but nothing may start it playing while a picture is
+  // over it, whoever asks and however late.
+  preview.onPlay = () => {
+    if (preview.mode === 'strip') video.pause();
+  };
+  video.addEventListener('play', preview.onPlay);
   const duration = Number(video.duration) > 0 ? video.duration : 0;
 
   const show = (index) => {
@@ -4257,6 +4280,7 @@ function startPlayerPreview() {
   const player = $('#player');
   preview.count = Math.max(2, Number(state.config.frames) || 10);
   preview.index = 0;
+  preview.mode = 'live';   // until a strip arrives and takes the stage
 
   player.controls = false;
   player.muted = true; // a preview that blares audio is not a preview
@@ -4274,6 +4298,9 @@ function startPlayerPreview() {
     // a playthrough. A seek from here would drag it back to a tenth of the way
     // in, which is what "pressing play jumps to the second frame" was.
     if (!previewing()) return;
+    // Or the strip took the stage while this was waiting its turn. Seeking and
+    // playing now would put a moving video behind a still picture.
+    if (preview.mode !== 'live') return;
     preview.index = index;
     const duration = Number.isFinite(player.duration) && player.duration > 0 ? player.duration : 0;
     if (duration <= 0) return; // metadata not in yet; the timer retries
@@ -4314,9 +4341,15 @@ function startPlayerPreview() {
 function stopPlayerPreview() {
   clearInterval(preview.timer);
   preview.timer = null;
+  preview.mode = null;
+  const player = $('#player');
   if (preview.onMeta) {
-    $('#player').removeEventListener('loadedmetadata', preview.onMeta);
+    player.removeEventListener('loadedmetadata', preview.onMeta);
     preview.onMeta = null;
+  }
+  if (preview.onPlay) {
+    player.removeEventListener('play', preview.onPlay);
+    preview.onPlay = null;
   }
   hidePlayerStrip();
 }
