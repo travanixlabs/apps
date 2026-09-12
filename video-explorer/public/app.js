@@ -5180,62 +5180,6 @@ function selectedPaths() {
   return state.files.filter((f) => state.selected.has(f.path)).map((f) => f.path);
 }
 
-// -------------------------------------------------------------- build queue
-
-/** The button does different work per engine, so it says which. */
-function syncBuildAllLabel() {
-  const btn = $('#buildAllBtn');
-  if (!btn) return;
-  const sprite = state.config.previewMode === 'sprite';
-  btn.textContent = sprite ? 'Build all previews' : 'Build all thumbnails';
-  btn.title = sprite
-    ? 'Pre-render the 10-frame sprite strip for every video listed, instead of waiting for each hover'
-    : 'Pre-render the still thumbnail for every video listed, instead of waiting to scroll to each one. Hover previews need no pre-building.';
-}
-
-async function buildAllPreviews() {
-  const sprite = state.config.previewMode === 'sprite';
-  const have = sprite ? state.sprites : state.thumbs;
-  // Cloud files are skipped — building one would download it.
-  const targets = state.view
-    .filter((f) => !f.cloudOnly && !have.has(f.path) && !state.failed.has(f.path))
-    .map((f) => f.path);
-
-  const skipped = state.view.filter((f) => f.cloudOnly).length;
-  if (!targets.length) {
-    toast(skipped ? `Nothing to build — ${skipped} are cloud-only` : 'Already built', 'ok');
-    return;
-  }
-  if (targets.length > 200 && !window.confirm(
-    `Build ${targets.length} ${sprite ? 'previews' : 'posters'}?\n\n`
-    + `Roughly ${Math.ceil(targets.length * (sprite ? 0.9 : 0.1) / 60)} min of processing.`,
-  )) return;
-
-  const btn = $('#buildAllBtn');
-  btn.disabled = true;
-  let done = 0;
-  const CONCURRENCY = 4;
-  let cursor = 0;
-
-  const worker = async () => {
-    while (cursor < targets.length) {
-      const filePath = targets[cursor];
-      cursor += 1;
-      const el = document.querySelector(`.preview[data-path="${CSS.escape(filePath)}"]`);
-      if (sprite) await loadSprite(filePath, el);
-      else await loadThumb(filePath, el);
-      done += 1;
-      setStatus(`Building ${sprite ? 'previews' : 'posters'}… ${done}/${targets.length}`);
-    }
-  };
-
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, targets.length) }, worker));
-  btn.disabled = false;
-  const failures = targets.filter((p) => state.failed.has(p)).length;
-  render();
-  toast(failures ? `Built ${done - failures}, ${failures} failed` : `Built ${done}`, failures ? 'err' : 'ok');
-}
-
 // ---------------------------------------------------------------- listeners
 
 function wireEvents() {
@@ -5307,9 +5251,6 @@ function wireEvents() {
     $('#dwellLabel').textContent = (Number(ev.target.value) / 1000).toFixed(1) + 's';
   });
   $('#dwellMs').addEventListener('change', (ev) => saveConfig({ dwellMs: Number(ev.target.value) }));
-
-  $('#buildAllBtn').addEventListener('click', buildAllPreviews);
-  syncBuildAllLabel();
 
   // batch actions
   for (const btn of document.querySelectorAll('[data-batch]')) {
@@ -5487,9 +5428,8 @@ function wireEvents() {
     }
     if (changed) {
       clearSprites();
-      syncBuildAllLabel();
       render();
-      toast(previewMode === 'live' ? 'Live hover previews active' : 'Cached stills will build as you scroll', 'ok');
+      toast(previewMode === 'live' ? 'Live hover previews active' : 'Cached stills will build for every video listed', 'ok');
     }
   });
   $('#clearCacheBtn').addEventListener('click', async () => {
