@@ -3726,7 +3726,7 @@ function startLive(previewEl, file) {
 
   live.timer = setInterval(
     () => show((live.index + 1) % count),
-    Number(state.config.dwellMs) || 1000,
+    Number(state.config.dwellMs) || 2000,
   );
 }
 
@@ -3794,7 +3794,7 @@ function attachHover(previewEl, file) {
     timer = setInterval(() => {
       index = (index + 1) % (Number(previewEl.dataset.frames) || 1);
       showSpriteFrame(previewEl, index);
-    }, Number(state.config.dwellMs) || 1000);
+    }, Number(state.config.dwellMs) || 2000);
   });
 
   previewEl.addEventListener('pointermove', (ev) => {
@@ -4337,7 +4337,7 @@ async function startStripPreview(file) {
   show(0);
   preview.timer = setInterval(
     () => show((preview.index + 1) % entry.frames),
-    Number(state.config.dwellMs) || 1000,
+    Number(state.config.dwellMs) || 2000,
   );
   return true;
 }
@@ -4393,7 +4393,7 @@ function startPlayerPreview() {
   // either path below calls show() -- both are guarded on it.
   preview.timer = setInterval(
     () => show((preview.index + 1) % preview.count),
-    Number(state.config.dwellMs) || 1000,
+    Number(state.config.dwellMs) || 2000,
   );
 
   // A cloud file can take several seconds to report its duration, which is
@@ -5759,7 +5759,7 @@ async function init() {
     state.config = await api('/api/config');
   } catch {
     state.config = {
-      previewMode: 'live', frames: 10, dwellMs: 1000, tileWidth: 640, cardWidth: 520,
+      previewMode: 'live', frames: 10, dwellMs: 2000, tileWidth: 640, cardWidth: 200,
       recursive: false, grouped: '', sortDir: 'desc', sort: 'rating',
     };
   }
@@ -5792,14 +5792,14 @@ async function init() {
   if (state.grouped === 'dupes') fetchOtherCopies().then(() => render());
   $('#sortSelect').value = state.config.sort || 'name';
   syncSortButton();
-  $('#cardWidth').value = state.config.cardWidth || 520;
-  document.documentElement.style.setProperty('--card-width', (state.config.cardWidth || 520) + 'px');
+  $('#cardWidth').value = state.config.cardWidth || 200;
+  document.documentElement.style.setProperty('--card-width', (state.config.cardWidth || 200) + 'px');
   syncVolumeUI();
   // Bound once. The row that pages as you scroll is rebuilt for every video
   // played, and a listener added with it would be a listener leaked with it.
   watchSimilarScroll();
-  $('#dwellMs').value = state.config.dwellMs || 1000;
-  $('#dwellLabel').textContent = ((state.config.dwellMs || 1000) / 1000).toFixed(1) + 's';
+  $('#dwellMs').value = state.config.dwellMs || 2000;
+  $('#dwellLabel').textContent = ((state.config.dwellMs || 2000) / 1000).toFixed(1) + 's';
 
   // The vocabularies are library-wide, so they load once rather than per scan.
   api('/api/library').then((data) => {

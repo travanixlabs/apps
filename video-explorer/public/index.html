@@ -100,14 +100,6 @@
            placeholder="Filter by name, subfolder, or tag — #tag for tags only"
            title="Terms are ANDed. A bare term matches the filename, subfolder, or any tag. Prefix with # or tag: to match tags only.">
 
-    <label class="field">Card size
-      <input id="cardWidth" type="range" min="200" max="520" step="20" value="520">
-    </label>
-
-    <label class="field">Frame dwell <span id="dwellLabel" class="mono">1.0s</span>
-      <input id="dwellMs" type="range" min="1000" max="5000" step="250" value="1000">
-    </label>
-
     <button id="framingPill" class="faces-pill framing-pill" hidden
             title="Framing: how many downloaded videos have their ten preview frames built">
       <span class="faces-dot"></span><span id="framingText">framing</span>
@@ -486,6 +478,14 @@
       <label class="field-row check">
         <input id="setScrub" type="checkbox"> Scrub frames with mouse position instead of a timer
       </label>
+      <label class="field-row">Card size
+        <input id="cardWidth" type="range" min="200" max="520" step="20" value="200">
+      </label>
+      <label class="field-row">Frame dwell <span id="dwellLabel" class="mono">2.0s</span>
+        <input id="dwellMs" type="range" min="1000" max="5000" step="250" value="2000">
+      </label>
+      <p class="hint">Both take effect as you drag them, so the grid behind this can be
+        judged while you set them. They are remembered without pressing Save.</p>
       <p class="hint">Changing frame count or tile width rebuilds previews on next hover. Existing sprites stay cached under <span class="mono">.cache</span>.</p>
       <button id="clearCacheBtn" class="btn btn-danger">Clear preview cache</button>
     </div>

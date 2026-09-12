@@ -82,9 +82,9 @@ const DEFAULT_CONFIG = {
   recentDests: [],    // recent move/copy destinations
   previewMode: 'live', // 'live' = seek+play the real file; 'sprite' = pre-rendered stills
   frames: 10,         // preview segments per video
-  dwellMs: 1000,      // ms per segment while hovering
+  dwellMs: 2000,      // ms per segment while hovering
   tileWidth: 640,     // poster/sprite tile width; matches the largest card size
-  cardWidth: 520,     // largest tile: biggest preview per video
+  cardWidth: 200,     // smallest tile: the most videos on screen at once
   volume: 1,          // master playback volume, 0..1 — a preference, not a view
   foldersCollapsed: false,
   recursive: false,   // explorer-style by default: one folder level at a time

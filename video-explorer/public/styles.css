@@ -12,7 +12,7 @@
   --danger: #f4685f;
   --ok: #56d364;
   --menu: #29323e;   /* native popups: light enough to read as a menu */
-  --card-width: 520px;
+  --card-width: 200px;
   --radius: 10px;
   /* Draw browser widgets -- scrollbars, option lists -- from the dark palette. */
   color-scheme: dark;
