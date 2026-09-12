@@ -642,47 +642,65 @@ function showFolderPop(tile, folder) {
   if (folder.videoCount === 0) {
     line('No videos in here.', 'folder-pop-none');
   } else {
+    const total = folder.videoCount;
     line(folder.cloudCount
       ? `${downloaded.toLocaleString()} downloaded · ${folder.cloudCount.toLocaleString()} cloud-only`
-      : `${folder.videoCount.toLocaleString()} downloaded`);
+      : `${total.toLocaleString()} downloaded`);
     line(fmtBytes(folder.totalSize) + ' total');
 
-    if (downloaded === 0) {
-      // Not a gap to be filled: there is nothing here to sweep until something
-      // is downloaded, so an empty bar would be reporting a problem that is not.
-      line('Nothing downloaded, so nothing to sweep yet.', 'folder-pop-none');
-    } else {
-      for (const [kind, label, count] of [
-        ['framing', 'framed', Number(folder.framed || 0)],
-        ['prints', 'fingerprinted', Number(folder.printed || 0)],
-        ['faces', 'profiled', Number(folder.profiled || 0)],
-      ]) {
-        const row = document.createElement('div');
-        row.className = `folder-pop-row ${kind}` + (count >= downloaded ? ' done' : '');
+    // Out of every video in the folder, cloud or not. A file freed up to the
+    // cloud keeps everything already learned about it -- the three stores are
+    // keyed by size and mtime, and neither changes when the bytes go -- so a
+    // folder swept before it was freed reads as finished, which it is.
+    let short = 0;
+    for (const [kind, label, raw] of [
+      ['framing', 'framed', folder.framed],
+      ['prints', 'fingerprinted', folder.printed],
+      ['faces', 'profiled', folder.profiled],
+    ]) {
+      // null means the store behind it had not finished loading when this was
+      // scanned. Saying "none" would be a different and wrong answer.
+      const waiting = raw === null || raw === undefined;
+      const count = waiting ? 0 : Number(raw);
+      if (!waiting && count < total) short = Math.max(short, total - count);
 
-        const dot = document.createElement('span');
-        dot.className = 'faces-dot ' + kind;
-        row.appendChild(dot);
+      const row = document.createElement('div');
+      row.className = `folder-pop-row ${kind}`
+        + (!waiting && count >= total ? ' done' : '')
+        + (waiting ? ' waiting' : '');
 
-        const what = document.createElement('span');
-        what.className = 'folder-pop-what';
-        what.textContent = label;
-        row.appendChild(what);
+      const dot = document.createElement('span');
+      dot.className = 'faces-dot ' + kind;
+      row.appendChild(dot);
 
-        const num = document.createElement('span');
-        num.className = 'folder-pop-num';
-        num.textContent = `${count.toLocaleString()} / ${downloaded.toLocaleString()}`;
-        row.appendChild(num);
+      const what = document.createElement('span');
+      what.className = 'folder-pop-what';
+      what.textContent = label;
+      row.appendChild(what);
 
-        const bar = document.createElement('span');
-        bar.className = 'folder-pop-bar';
-        const fill = document.createElement('span');
-        fill.style.width = `${Math.min(100, (count / downloaded) * 100)}%`;
-        bar.appendChild(fill);
-        row.appendChild(bar);
+      const num = document.createElement('span');
+      num.className = 'folder-pop-num';
+      num.textContent = waiting
+        ? 'still loading…'
+        : `${count.toLocaleString()} / ${total.toLocaleString()}`;
+      row.appendChild(num);
 
-        pop.appendChild(row);
-      }
+      const bar = document.createElement('span');
+      bar.className = 'folder-pop-bar';
+      const fill = document.createElement('span');
+      fill.style.width = waiting ? '0%' : `${Math.min(100, (count / total) * 100)}%`;
+      bar.appendChild(fill);
+      row.appendChild(bar);
+
+      pop.appendChild(row);
+    }
+
+    // The one thing the bars cannot say: what is missing here cannot be swept
+    // from here. A sweep will not download a placeholder to read it, so those
+    // have to come back down before the gap can close.
+    if (short > 0 && folder.cloudCount >= short) {
+      line('What is missing is cloud-only — download it to sweep it.',
+        'folder-pop-none');
     }
   }
   line(folder.path, 'folder-pop-path');

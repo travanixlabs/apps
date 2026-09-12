@@ -468,6 +468,11 @@ kbd {
 /* Finished reads at a glance, the way a done pill does. */
 .folder-pop-row.done .folder-pop-num { color: #7fd1a3; }
 .folder-pop-row.done .folder-pop-bar span { background: #7fd1a3; }
+/* Not counted yet, which is not the same as none. Dimmed, and the dot breathes
+   the way the toolbar's does while a sweep is still getting started. */
+.folder-pop-row.waiting { opacity: .55; }
+.folder-pop-row.waiting .folder-pop-num { color: var(--text-faint); }
+.folder-pop-row.waiting .faces-dot { animation: faces-breathe 3s ease-in-out infinite; }
 
 /* -------------------------------------------------------------------- grid */
 

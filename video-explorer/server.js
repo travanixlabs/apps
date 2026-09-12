@@ -1098,18 +1098,23 @@ async function cachedStripNames() {
 }
 
 /**
- * What the three sweeps have done to one video.
+ * What the three sweeps have done to one video -- cloud or not.
  *
- * All three skip cloud-only files by design -- framing would have to download
- * one, and so would fingerprinting and profiling -- so a placeholder is not
- * "not done yet", it is "not applicable", and counting it as outstanding would
- * make every folder look permanently unfinished.
+ * Deliberately NOT skipping placeholders. The sweeps decline to *build* for a
+ * cloud file, since that would mean downloading it, and it is tempting to read
+ * that as "a placeholder has nothing to show". It is the opposite: all three
+ * stores are keyed by size and mtime, and freeing a file to the cloud changes
+ * neither, so everything learned while it was downloaded is still here and
+ * still correct. Skipping them hid the folders that were 100% done.
  */
-function sweepState(video, strips) {
-  if (video.cloudOnly) return null;
+function sweepState(video, strips, printsReady) {
   return {
     framed: strips.has(cacheName(video, spriteSalt())),
-    printed: dupes.has(dupes.keyFor(video)),
+    // Only meaningful once the index is in. It is nine thousand small files
+    // read one at a time, so a scan in the first seconds of a session would
+    // otherwise report a fraction of the fingerprints that exist and show it
+    // as a half-finished folder rather than as an answer not ready yet.
+    printed: printsReady ? dupes.has(dupes.keyFor(video)) : null,
     profiled: faces.decorate(video).profiled === true,
   };
 }
@@ -1126,7 +1131,8 @@ async function listSubfolders(dir, videos, strips = new Set()) {
   // Worked out once per video rather than once per (folder, video) pair: the
   // outer loop below already costs folders x videos, and three index lookups
   // inside it would multiply by that again.
-  const done = videos.map((video) => sweepState(video, strips));
+  const printsReady = dupes.status().ready === true;
+  const done = videos.map((video) => sweepState(video, strips, printsReady));
   const lowerPath = videos.map((video) => path.resolve(video.path).toLowerCase());
 
   const folders = [];
@@ -1152,11 +1158,9 @@ async function listSubfolders(dir, videos, strips = new Set()) {
       if (video.mtimeMs > latestMtimeMs) latestMtimeMs = video.mtimeMs;
       // Only a locally-present file can be a cover; a cloud one would download.
       if (!cover && !video.cloudOnly) cover = video.path;
-      const state = done[i];
-      if (!state) continue;
-      if (state.framed) framed += 1;
-      if (state.printed) printed += 1;
-      if (state.profiled) profiled += 1;
+      if (done[i].framed) framed += 1;
+      if (done[i].printed) printed += 1;
+      if (done[i].profiled) profiled += 1;
     }
 
     folders.push({
@@ -1167,11 +1171,13 @@ async function listSubfolders(dir, videos, strips = new Set()) {
       totalSize,
       latestMtimeMs,
       cover,
-      // How far the three sweeps have got through this folder. Out of the
-      // downloaded count, which is videoCount - cloudCount: the sweeps never
-      // touch a placeholder, so that is the honest denominator.
+      // How far the three sweeps have got through this folder, out of
+      // videoCount -- every video in it, cloud or not. What was learned about a
+      // file does not go away when the bytes do.
       framed,
-      printed,
+      // null, not 0, while the fingerprint index is still being read: a folder
+      // saying "not yet counted" is honest, and one saying "none" is not.
+      printed: printsReady ? printed : null,
       profiled,
     });
   }
