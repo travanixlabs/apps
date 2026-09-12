@@ -4148,6 +4148,7 @@ function hidePlayerStrip() {
   if (!strip) return;
   strip.hidden = true;
   strip.style.backgroundImage = '';
+  strip.style.clipPath = '';
 }
 
 /**
@@ -4176,6 +4177,7 @@ function paintStripFrame(strip, index, frames) {
     strip.style.backgroundPosition = frames > 1
       ? `${(index / (frames - 1)) * 100}% center`
       : '0% center';
+    strip.style.clipPath = '';
     return;
   }
 
@@ -4183,9 +4185,17 @@ function paintStripFrame(strip, index, frames) {
   let h = w / aspect;
   if (h > box.height) { h = box.height; w = h * aspect; }
 
+  const x = (box.width - w) / 2;
+  const y = (box.height - h) / 2;
   strip.style.backgroundSize = `${frames * w}px ${h}px`;
-  strip.style.backgroundPosition =
-    `${(box.width - w) / 2 - index * w}px ${(box.height - h) / 2}px`;
+  strip.style.backgroundPosition = `${x - index * w}px ${y}px`;
+  // The image is ten frames wide and the box is the whole stage, so fitting one
+  // frame into the middle of it leaves the frames AFTER it sitting in the margin
+  // to the right -- three or four small pictures along the top of a wide window,
+  // over a video playing behind them. Cropped to the one frame.
+  strip.style.clipPath = x > 0.5 || y > 0.5
+    ? `inset(${y}px ${box.width - w - x}px ${box.height - h - y}px ${x}px)`
+    : '';
 }
 
 /**
