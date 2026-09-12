@@ -566,7 +566,7 @@ function renderFolders() {
     cover.className = 'folder-cover';
     if (folder.cover) {
       cover.dataset.path = folder.cover;
-      folderObserver.observe(cover);
+      loadFolderCover(cover);
     } else {
       cover.textContent = '📁';
     }
@@ -3239,11 +3239,43 @@ async function embedSelection() {
 
 // ------------------------------------------------------------------ sprites
 
+/**
+ * Every tile's picture is fetched, on screen or not: the listing arrives whole,
+ * so the pictures do too.
+ *
+ * Six at a time and in the order the cards were built, so the top of the grid
+ * fills first and the server's own ffmpeg limit is matched rather than buried
+ * under a thousand simultaneous requests.
+ */
+const posters = { queue: [], running: 0, limit: 6 };
+
+function queuePoster(previewEl) {
+  posters.queue.push(previewEl);
+  drainPosters();
+}
+
+function drainPosters() {
+  while (posters.running < posters.limit && posters.queue.length) {
+    const el = posters.queue.shift();
+    // Its card left the grid before its turn came -- a re-render, or a filter.
+    if (!el.isConnected) continue;
+    posters.running += 1;
+    Promise.resolve(loadPoster(el))
+      .catch(() => { /* a failed tile marks itself; the queue carries on */ })
+      .then(() => { posters.running -= 1; drainPosters(); });
+  }
+}
+
+/**
+ * Prebuilding a cloud video's strip is still driven by what you can see. In
+ * live mode the tile only ever wanted one frame, and a strip is ten of them
+ * over about twelve seconds of range requests -- so doing the whole library's
+ * worth the moment a folder opens is a different thing from loading it.
+ */
 const spriteObserver = new IntersectionObserver((entries) => {
   for (const entry of entries) {
     if (!entry.isIntersecting) continue;
     spriteObserver.unobserve(entry.target);
-    loadPoster(entry.target);
     // On screen, or 400px from it. Build its strip now, while nobody is
     // waiting on it, so opening it later costs a read from disk.
     const queued = state.files.find((f) => f.path === entry.target.dataset.path);
@@ -3255,20 +3287,18 @@ const spriteObserver = new IntersectionObserver((entries) => {
  * Folder covers fetch the same poster but apply it themselves. applyThumb() is
  * written for the 16:9 video tiles — letting it style a 62x36 cover box is what
  * made cover-bearing folder rows taller than plain ones.
+ *
+ * Fetched outright rather than when the row scrolls into view: one folder is
+ * one poster, and there are never enough of them for that to be worth deferring.
  */
-const folderObserver = new IntersectionObserver((entries) => {
-  for (const entry of entries) {
-    if (!entry.isIntersecting) continue;
-    const el = entry.target;
-    folderObserver.unobserve(el);
-    loadThumb(el.dataset.path, null).then((url) => {
-      if (!url) return;
-      el.style.backgroundImage = `url("${url}")`;
-      el.style.backgroundSize = 'cover';
-      el.style.backgroundPosition = 'center';
-    });
-  }
-}, { rootMargin: '300px 0px' });
+function loadFolderCover(el) {
+  loadThumb(el.dataset.path, null).then((url) => {
+    if (!url) return;
+    el.style.backgroundImage = `url("${url}")`;
+    el.style.backgroundSize = 'cover';
+    el.style.backgroundPosition = 'center';
+  });
+}
 
 /** Frees blob URLs so repeated rescans don't grow memory forever. */
 function clearSprites() {
@@ -4299,7 +4329,9 @@ function render() {
   // Detach the live player and drop observations on nodes we're discarding.
   stopLive();
   spriteObserver.disconnect();
-  folderObserver.disconnect();
+  // The cards these were waiting for are about to stop existing. What is
+  // already in flight lands in the cache and costs the new grid nothing.
+  posters.queue.length = 0;
   grid.innerHTML = '';
 
   renderBreadcrumb();
@@ -4314,16 +4346,19 @@ function render() {
   updateStatusLine();
 }
 
-function pageSize() {
-  return Math.max(4, Number(state.config.pageSize) || 24);
-}
-
-/** Renders the next page only. Nothing below the fold costs anything. */
+/**
+ * Renders the whole listing. There is no paging: every video the filters leave
+ * gets a card and a picture, however many that is, because a library you have
+ * to keep pressing "load more" to see is a library you cannot scan.
+ *
+ * The append shape is kept -- start at what is already there -- so a listing
+ * that grows underneath can still be topped up without rebuilding the grid.
+ */
 function appendPage() {
   const grid = $('#grid');
   const source = pageSource();
   const start = state.rendered;
-  const end = Math.min(source.length, start + pageSize());
+  const end = source.length;
   const batch = [];
 
   for (let index = start; index < end; index += 1) {
@@ -4343,8 +4378,7 @@ function appendPage() {
   state.rendered = end;
 
   syncFileCount();
-  renderPager();
-  fetchMetaFor(batch);   // probe just this page, local files only
+  fetchMetaFor(batch);
   updateStatusLine();
 }
 
@@ -4467,44 +4501,6 @@ function syncFileCount() {
     : `(${total}${total === state.files.length ? '' : ' of ' + state.files.length})`;
 }
 
-function renderPager() {
-  let pager = $('#pager');
-  if (pager) pager.remove();
-
-  const remaining = pageSource().length - state.rendered;
-  if (remaining <= 0) return;
-
-  pager = document.createElement('div');
-  pager.id = 'pager';
-  pager.className = 'pager';
-
-  const btn = document.createElement('button');
-  btn.className = 'btn btn-primary';
-  btn.textContent = `Load ${Math.min(remaining, pageSize())} more`;
-  btn.addEventListener('click', () => appendPage());
-  pager.appendChild(btn);
-
-  const note = document.createElement('span');
-  note.className = 'hint';
-  note.textContent = `${remaining} not loaded yet`;
-  pager.appendChild(note);
-
-  $('#filesSection').appendChild(pager);
-
-  // Auto-load when the pager scrolls into view, so scrolling just works.
-  pagerObserver.disconnect();
-  pagerObserver.observe(pager);
-}
-
-const pagerObserver = new IntersectionObserver((entries) => {
-  for (const entry of entries) {
-    if (entry.isIntersecting) {
-      pagerObserver.unobserve(entry.target);
-      appendPage();
-    }
-  }
-}, { root: scrollRoot, rootMargin: '200px 0px' });
-
 function updateStatusLine() {
   const bits = [];
   if (state.files.length) {
@@ -4519,7 +4515,16 @@ function updateStatusLine() {
   setStatus(bits.join('  ·  '));
 }
 
-/** One batched probe per page. Cloud files are skipped so nothing downloads. */
+/**
+ * Probes every file the listing holds. Cloud files are skipped server-side so
+ * nothing downloads.
+ *
+ * In chunks, because /api/meta answers for 250 paths a call and drops the rest
+ * on the floor -- which, now that a listing arrives whole rather than 24 at a
+ * time, would leave every video past the 250th without a duration forever.
+ */
+const META_CHUNK = 250;
+
 async function fetchMetaFor(files) {
   // Cloud files included: the server answers from cache when it has an entry
   // and returns {skipped} otherwise, so this never causes a download.
@@ -4529,19 +4534,29 @@ async function fetchMetaFor(files) {
   if (!paths.length) return;
 
   paths.forEach((p) => state.metaAsked.add(p));
-  try {
-    const { meta } = await api('/api/meta', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paths }),
-    });
-    for (const [filePath, info] of Object.entries(meta)) {
-      if (!info || info.error || info.skipped) continue;
-      state.meta.set(filePath, info);
-      updateCardMeta(filePath);
+
+  // One chunk at a time: each is already 250 probes against a server that runs
+  // a handful at once, and the grid fills top-down rather than all at the end.
+  for (let at = 0; at < paths.length; at += META_CHUNK) {
+    const chunk = paths.slice(at, at + META_CHUNK);
+    try {
+      const { meta } = await api('/api/meta', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths: chunk }),
+      });
+      for (const [filePath, info] of Object.entries(meta)) {
+        if (!info || info.error || info.skipped) continue;
+        state.meta.set(filePath, info);
+        updateCardMeta(filePath);
+      }
+    } catch (err) {
+      // This chunk and everything behind it went unanswered, so let a later
+      // render ask again rather than leaving them marked as already asked.
+      paths.slice(at).forEach((p) => state.metaAsked.delete(p));
+      toast('Metadata failed: ' + err.message, 'err');
+      return;
     }
-  } catch (err) {
-    toast('Metadata failed: ' + err.message, 'err');
   }
 }
 
@@ -4679,8 +4694,9 @@ function buildCard(file, index, group = null, seq = null) {
   selectMark.title = 'Select';
 
   attachHover(preview, file);
-  // Cloud tiles are observed too: the server serves an already-cached poster
+  // Cloud tiles are asked for too: the server serves an already-cached poster
   // and answers 409 when there is none, so nothing gets downloaded either way.
+  queuePoster(preview);
   spriteObserver.observe(preview);
   card.appendChild(preview);
 
@@ -5420,7 +5436,6 @@ function wireEvents() {
 
   $('#settingsBtn').addEventListener('click', () => {
     $('#setPreviewMode').value = state.config.previewMode === 'sprite' ? 'sprite' : 'live';
-    $('#setPageSize').value = state.config.pageSize || 24;
     $('#setFrames').value = state.config.frames;
     $('#setTileWidth').value = state.config.tileWidth;
     $('#setScrub').checked = !!state.config.scrubWithMouse;
@@ -5443,11 +5458,9 @@ function wireEvents() {
     const frames = Math.max(2, Math.min(24, Number($('#setFrames').value) || 10));
     const tileWidth = Math.max(120, Math.min(640, Number($('#setTileWidth').value) || 320));
     const previewMode = $('#setPreviewMode').value === 'sprite' ? 'sprite' : 'live';
-    const pageSize = Math.max(4, Math.min(200, Number($('#setPageSize').value) || 24));
     const changed = frames !== state.config.frames
       || tileWidth !== state.config.tileWidth
-      || previewMode !== state.config.previewMode
-      || pageSize !== state.config.pageSize;
+      || previewMode !== state.config.previewMode;
 
     const homeDir = $('#setHomeDir').value.trim();
     const homeFolders = $('#setHomeFolders').value.split(',').map((n) => n.trim()).filter(Boolean);
@@ -5461,7 +5474,7 @@ function wireEvents() {
     const foldersChanged = (state.config.homeFolders || []).join('|') !== homeFolders.join('|');
 
     await saveConfig({
-      frames, tileWidth, previewMode, pageSize, homeDir, homeFollowsAccount, homeFolders,
+      frames, tileWidth, previewMode, homeDir, homeFollowsAccount, homeFolders,
       scrubWithMouse: $('#setScrub').checked,
     });
     $('#settingsModal').hidden = true;
@@ -5674,7 +5687,7 @@ async function init() {
   } catch {
     state.config = {
       previewMode: 'live', frames: 10, dwellMs: 1000, tileWidth: 640, cardWidth: 520,
-      pageSize: 24, recursive: false, grouped: '', sortDir: 'desc', sort: 'rating',
+      recursive: false, grouped: '', sortDir: 'desc', sort: 'rating',
     };
   }
 

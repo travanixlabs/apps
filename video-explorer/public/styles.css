@@ -646,16 +646,6 @@ main { padding: 16px; }
 .cloud-tag { color: #7fb4e8; }
 .pending { color: var(--text-faint); font-style: italic; }
 
-/* --------------------------------------------------------------- paginator */
-
-.pager {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 20px 0 4px;
-}
-
 /* ----------------------------------------------------------------- details */
 
 .details { padding: 9px 11px 11px; }
