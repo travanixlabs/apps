@@ -22,244 +22,15 @@
     "Their id is the number in the filename, so it survives a re-run and a",
     "rename; their name and keywords are the bracketed name and the comma list.",
     "Re-make them with scratchpad/mkicons.mjs after changing tags/ -- editing a",
-    "pos- entry by hand here will be overwritten."
+    "pos- entry by hand here will be overwritten.",
+    "",
+    "The pos- icons are GENERATED from the tags folder.",
+    "Their id is the number in the filename, so it survives a re-run and any",
+    "amount of renaming; the name and the keywords are the bracketed name and",
+    "the comma list. Re-make them with `node tools/make-icons.js` after adding",
+    "to tags\\ -- editing a pos- entry here by hand will be overwritten."
   ],
   "icons": [
-    {
-      "id": "star",
-      "name": "Star",
-      "glyph": "★",
-      "keywords": [
-        "favourite",
-        "best",
-        "top"
-      ]
-    },
-    {
-      "id": "star-out",
-      "name": "Star outline",
-      "glyph": "☆",
-      "keywords": [
-        "favourite",
-        "maybe"
-      ]
-    },
-    {
-      "id": "star-gold",
-      "name": "Gold star",
-      "glyph": "⭐",
-      "keywords": [
-        "favourite",
-        "best"
-      ]
-    },
-    {
-      "id": "sparkle",
-      "name": "Sparkle",
-      "glyph": "✨",
-      "keywords": [
-        "star",
-        "shine",
-        "nice"
-      ]
-    },
-    {
-      "id": "bookmark",
-      "name": "Bookmark",
-      "glyph": "🔖",
-      "keywords": [
-        "save",
-        "keep",
-        "mark"
-      ]
-    },
-    {
-      "id": "flag",
-      "name": "Flag",
-      "glyph": "🚩",
-      "keywords": [
-        "mark",
-        "report"
-      ]
-    },
-    {
-      "id": "heart",
-      "name": "Heart",
-      "glyph": "❤️",
-      "keywords": [
-        "love",
-        "favourite"
-      ]
-    },
-    {
-      "id": "fire",
-      "name": "Fire",
-      "glyph": "🔥",
-      "keywords": [
-        "hot",
-        "best",
-        "peak"
-      ]
-    },
-    {
-      "id": "eyes",
-      "name": "Eyes",
-      "glyph": "👀",
-      "keywords": [
-        "look",
-        "watch",
-        "her",
-        "him"
-      ]
-    },
-    {
-      "id": "face",
-      "name": "Face",
-      "glyph": "🙂",
-      "keywords": [
-        "person",
-        "who"
-      ]
-    },
-    {
-      "id": "laugh",
-      "name": "Laugh",
-      "glyph": "😂",
-      "keywords": [
-        "funny",
-        "joke"
-      ]
-    },
-    {
-      "id": "warning",
-      "name": "Warning",
-      "glyph": "⚠️",
-      "keywords": [
-        "careful",
-        "problem"
-      ]
-    },
-    {
-      "id": "cut",
-      "name": "Scissors",
-      "glyph": "✂️",
-      "keywords": [
-        "cut",
-        "edit",
-        "trim",
-        "clip"
-      ]
-    },
-    {
-      "id": "target",
-      "name": "Target",
-      "glyph": "🎯",
-      "keywords": [
-        "here",
-        "exact",
-        "spot"
-      ]
-    },
-    {
-      "id": "speech",
-      "name": "Speech",
-      "glyph": "💬",
-      "keywords": [
-        "talk",
-        "said",
-        "dialogue"
-      ]
-    },
-    {
-      "id": "music",
-      "name": "Music",
-      "glyph": "🎵",
-      "keywords": [
-        "song",
-        "sound",
-        "track"
-      ]
-    },
-    {
-      "id": "camera",
-      "name": "Camera",
-      "glyph": "📷",
-      "keywords": [
-        "shot",
-        "scene",
-        "angle"
-      ]
-    },
-    {
-      "id": "clapper",
-      "name": "Clapperboard",
-      "glyph": "🎬",
-      "keywords": [
-        "scene",
-        "start",
-        "take"
-      ]
-    },
-    {
-      "id": "start",
-      "name": "Start",
-      "glyph": "▶",
-      "keywords": [
-        "begin",
-        "from here"
-      ]
-    },
-    {
-      "id": "finish",
-      "name": "Finish",
-      "glyph": "🏁",
-      "keywords": [
-        "end",
-        "done",
-        "last"
-      ]
-    },
-    {
-      "id": "question",
-      "name": "Question",
-      "glyph": "❓",
-      "keywords": [
-        "unsure",
-        "check",
-        "what"
-      ]
-    },
-    {
-      "id": "tick",
-      "name": "Tick",
-      "glyph": "✅",
-      "keywords": [
-        "done",
-        "yes",
-        "good",
-        "check"
-      ]
-    },
-    {
-      "id": "cross",
-      "name": "Cross",
-      "glyph": "❌",
-      "keywords": [
-        "no",
-        "bad",
-        "skip"
-      ]
-    },
-    {
-      "id": "dot",
-      "name": "Dot",
-      "glyph": "●",
-      "keywords": [
-        "plain",
-        "simple",
-        "mark"
-      ]
-    },
     {
       "id": "pos-1",
       "name": "Shuttle",
@@ -6666,6 +6437,241 @@
         "cowgirl",
         "from behind",
         "woman on top"
+      ]
+    },
+    {
+      "id": "star",
+      "name": "Star",
+      "glyph": "★",
+      "keywords": [
+        "favourite",
+        "best",
+        "top"
+      ]
+    },
+    {
+      "id": "star-out",
+      "name": "Star outline",
+      "glyph": "☆",
+      "keywords": [
+        "favourite",
+        "maybe"
+      ]
+    },
+    {
+      "id": "star-gold",
+      "name": "Gold star",
+      "glyph": "⭐",
+      "keywords": [
+        "favourite",
+        "best"
+      ]
+    },
+    {
+      "id": "sparkle",
+      "name": "Sparkle",
+      "glyph": "✨",
+      "keywords": [
+        "star",
+        "shine",
+        "nice"
+      ]
+    },
+    {
+      "id": "bookmark",
+      "name": "Bookmark",
+      "glyph": "🔖",
+      "keywords": [
+        "save",
+        "keep",
+        "mark"
+      ]
+    },
+    {
+      "id": "flag",
+      "name": "Flag",
+      "glyph": "🚩",
+      "keywords": [
+        "mark",
+        "report"
+      ]
+    },
+    {
+      "id": "heart",
+      "name": "Heart",
+      "glyph": "❤️",
+      "keywords": [
+        "love",
+        "favourite"
+      ]
+    },
+    {
+      "id": "fire",
+      "name": "Fire",
+      "glyph": "🔥",
+      "keywords": [
+        "hot",
+        "best",
+        "peak"
+      ]
+    },
+    {
+      "id": "eyes",
+      "name": "Eyes",
+      "glyph": "👀",
+      "keywords": [
+        "look",
+        "watch",
+        "her",
+        "him"
+      ]
+    },
+    {
+      "id": "face",
+      "name": "Face",
+      "glyph": "🙂",
+      "keywords": [
+        "person",
+        "who"
+      ]
+    },
+    {
+      "id": "laugh",
+      "name": "Laugh",
+      "glyph": "😂",
+      "keywords": [
+        "funny",
+        "joke"
+      ]
+    },
+    {
+      "id": "warning",
+      "name": "Warning",
+      "glyph": "⚠️",
+      "keywords": [
+        "careful",
+        "problem"
+      ]
+    },
+    {
+      "id": "cut",
+      "name": "Scissors",
+      "glyph": "✂️",
+      "keywords": [
+        "cut",
+        "edit",
+        "trim",
+        "clip"
+      ]
+    },
+    {
+      "id": "target",
+      "name": "Target",
+      "glyph": "🎯",
+      "keywords": [
+        "here",
+        "exact",
+        "spot"
+      ]
+    },
+    {
+      "id": "speech",
+      "name": "Speech",
+      "glyph": "💬",
+      "keywords": [
+        "talk",
+        "said",
+        "dialogue"
+      ]
+    },
+    {
+      "id": "music",
+      "name": "Music",
+      "glyph": "🎵",
+      "keywords": [
+        "song",
+        "sound",
+        "track"
+      ]
+    },
+    {
+      "id": "camera",
+      "name": "Camera",
+      "glyph": "📷",
+      "keywords": [
+        "shot",
+        "scene",
+        "angle"
+      ]
+    },
+    {
+      "id": "clapper",
+      "name": "Clapperboard",
+      "glyph": "🎬",
+      "keywords": [
+        "scene",
+        "start",
+        "take"
+      ]
+    },
+    {
+      "id": "start",
+      "name": "Start",
+      "glyph": "▶",
+      "keywords": [
+        "begin",
+        "from here"
+      ]
+    },
+    {
+      "id": "finish",
+      "name": "Finish",
+      "glyph": "🏁",
+      "keywords": [
+        "end",
+        "done",
+        "last"
+      ]
+    },
+    {
+      "id": "question",
+      "name": "Question",
+      "glyph": "❓",
+      "keywords": [
+        "unsure",
+        "check",
+        "what"
+      ]
+    },
+    {
+      "id": "tick",
+      "name": "Tick",
+      "glyph": "✅",
+      "keywords": [
+        "done",
+        "yes",
+        "good",
+        "check"
+      ]
+    },
+    {
+      "id": "cross",
+      "name": "Cross",
+      "glyph": "❌",
+      "keywords": [
+        "no",
+        "bad",
+        "skip"
+      ]
+    },
+    {
+      "id": "dot",
+      "name": "Dot",
+      "glyph": "●",
+      "keywords": [
+        "plain",
+        "simple",
+        "mark"
       ]
     }
   ]

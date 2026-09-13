@@ -87,21 +87,27 @@ async function convert(items) {
   return { done, failed };
 }
 
-/* The notes at the top of icons.json are kept as they are, with one paragraph
- * added the first time this runs -- so someone opening the file to edit a
- * pos- entry by hand is told it will be overwritten. */
-const MARKER = 'The positions below are GENERATED from the tags folder.';
+/* The notes at the top of icons.json are the hand-written ones plus one
+ * paragraph of this script's own, so someone opening the file to edit a pos-
+ * entry by hand is told it will be overwritten.
+ *
+ * Everything from the marker down is REPLACED rather than appended to, so
+ * re-running cannot stack up copies of the paragraph. */
+const MARKER = 'The pos- icons are GENERATED from the tags folder.';
+const NOTE = [
+  '',
+  MARKER,
+  'Their id is the number in the filename, so it survives a re-run and any',
+  'amount of renaming; the name and the keywords are the bracketed name and',
+  'the comma list. Re-make them with `node tools/make-icons.js` after adding',
+  'to tags\\ -- editing a pos- entry here by hand will be overwritten.',
+];
 function note(existing) {
-  const lines = Array.isArray(existing) ? existing.slice() : [];
-  if (lines.some((line) => String(line).includes(MARKER))) return lines;
-  return lines.concat([
-    '',
-    MARKER,
-    'Their id is the number in the filename, so it survives a re-run and any',
-    'amount of renaming; the name and the keywords are the bracketed name and',
-    'the comma list. Re-make them with `node tools/make-icons.js` after adding',
-    'to tags\\ -- editing a pos- entry here by hand will be overwritten.',
-  ]);
+  const lines = (Array.isArray(existing) ? existing : []).map(String);
+  const at = lines.findIndex((line) => line.includes(MARKER));
+  const kept = at < 0 ? lines : lines.slice(0, at);
+  while (kept.length && !kept[kept.length - 1].trim()) kept.pop();
+  return kept.concat(NOTE);
 }
 
 async function main() {
@@ -127,7 +133,12 @@ async function main() {
 
   const current = JSON.parse(fs.readFileSync(JSON_FILE, 'utf8'));
   const kept = current.icons.filter((icon) => !/^pos-\d+$/.test(icon.id));
-  const all = [...kept, ...positions];
+  /* Order is what the picker shows before anything is typed, and it only ever
+   * shows about sixteen tiles before it scrolls. Behind the two dozen symbols
+   * meant every drawing was below the fold: opening the picker looked exactly
+   * as it did before the set existed. The drawings go first; the symbols are
+   * still there, a scroll or a word away. */
+  const all = [...positions, ...kept];
 
   const seen = new Set();
   for (const icon of all) {

@@ -4845,7 +4845,7 @@ function loadMarkIcons() {
           src: icon.src ? String(icon.src) : '',
           keywords: (Array.isArray(icon.keywords) ? icon.keywords : []).map(String),
         }))
-        .map((icon) => ({ ...icon, words: iconWords(icon) }));
+        .map((icon) => ({ ...icon, text: iconText(icon) }));
       markIcons.list = list.length ? list : [FALLBACK_ICON];
       markIcons.byId = new Map(markIcons.list.map((icon) => [icon.id, icon]));
     })
@@ -4865,7 +4865,7 @@ function loadMarkIcons() {
  */
 function iconFor(id) {
   return markIcons.byId.get(id)
-    || { id, name: id, glyph: id, src: '', keywords: [], words: [] };
+    || { id, name: id, glyph: id, src: '', keywords: [], text: '' };
 }
 
 /** Puts an icon's picture inside an element, as an image or as a character. */
@@ -4886,36 +4886,56 @@ function paintIcon(el, icon) {
   }
 }
 
-/** Everything an icon can be found by, as separate words: name, id, keywords. */
-function iconWords(icon) {
-  return `${icon.name} ${icon.id} ${(icon.keywords || []).join(' ')}`
-    .toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+/**
+ * Everything an icon can be found by, as one flat string: name, id, keywords.
+ *
+ * Punctuation becomes a space on both sides of the comparison, so "face-to-
+ * face", "face to face" and "Face To Face" are the same thing to search for,
+ * and a keyword that is itself a phrase stays one.
+ */
+function iconText(icon) {
+  return flattenWords(`${icon.name} ${icon.id} ${(icon.keywords || []).join(' ')}`);
+}
+
+/** Lower case, and anything that is not a letter or a digit is a space. */
+function flattenWords(text) {
+  return ` ${String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()} `;
 }
 
 /**
  * The icons matching what has been typed, the closest first.
  *
- * Matched at the START of a word rather than anywhere inside one. Anywhere
- * inside is what makes "art" offer Start and Heart, which is noise — where
- * word-start means half a word finds what you are reaching for as you type it.
+ * Every typed word has to appear somewhere in the icon's text, ANYWHERE inside
+ * it and in any order — so "car have" finds "I have a car" and "I don't have a
+ * car" alike, and half a word finds what you are reaching for as you type it.
+ * A second word narrows rather than widens.
  *
- * A word that matches something exactly outranks one that merely begins it, so
- * "star" puts Star, Star outline and Gold star above Start. Every typed word
- * has to match something, so a second word narrows rather than widens.
+ * Position does not decide whether an icon matches, only how high it comes: a
+ * word matched whole beats one matched from its start, which beats one found
+ * in the middle, and an icon actually CALLED what was typed beats all of them.
+ * That last part is what keeps "star" opening on Star rather than on Star wars
+ * — both hold the whole word, and only one of them is the thing being asked
+ * for by name.
  */
 function findIcons(query) {
-  const wanted = String(query || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const asked = flattenWords(query);
+  const wanted = asked.split(' ').filter(Boolean);
   if (!wanted.length) return markIcons.list;
 
   const hits = [];
   for (const icon of markIcons.list) {
-    const have = icon.words || iconWords(icon);
-    if (!wanted.every((word) => have.some((had) => had.startsWith(word)))) continue;
-    hits.push({ icon, exact: wanted.filter((word) => have.includes(word)).length });
+    const have = icon.text || iconText(icon);
+    if (!wanted.every((word) => have.includes(word))) continue;
+    let rank = flattenWords(icon.name) === asked ? 3 : 0;
+    for (const word of wanted) {
+      if (have.includes(` ${word} `)) rank += 2;
+      else if (have.includes(` ${word}`)) rank += 1;
+    }
+    hits.push({ icon, rank });
   }
   // Sort is stable, so within a rank the file's own order is kept -- which is
   // the order whoever wrote the icon set chose.
-  return hits.sort((a, b) => b.exact - a.exact).map((hit) => hit.icon);
+  return hits.sort((a, b) => b.rank - a.rank).map((hit) => hit.icon);
 }
 
 /** The bookmarks on the open video, earliest first. */
@@ -6388,6 +6408,13 @@ function wireEvents() {
     if (!scrub.dragging) hideHover();
   });
   seekEl.addEventListener('keydown', (ev) => {
+    // These keys belong to the slider, and only while the slider itself has
+    // the focus. The bookmark menu is a CHILD of it -- it has to be, to hang
+    // in the right place over the timeline -- so its keystrokes bubble through
+    // here on the way up. Without this, a space typed into the icon search
+    // toggled playback instead of reaching the box, and the arrows seeked the
+    // video rather than moving the caret.
+    if (ev.target !== seekEl) return;
     const duration = playerDuration();
     if (ev.key === 'ArrowLeft') { ev.preventDefault(); seekBy(-5); }
     else if (ev.key === 'ArrowRight') { ev.preventDefault(); seekBy(5); }
