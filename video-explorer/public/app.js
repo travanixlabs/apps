@@ -4875,6 +4875,11 @@ function paintIcon(el, icon) {
     const img = document.createElement('img');
     img.src = icon.src;
     img.alt = icon.name;
+    // The grid holds every icon there is, and the panel shows four rows of it.
+    // Decoding the rest on the way past would be several hundred megabytes of
+    // bitmap for pictures nobody has scrolled to yet.
+    img.loading = 'lazy';
+    img.decoding = 'async';
     el.appendChild(img);
   } else {
     el.textContent = icon.glyph || icon.id;
