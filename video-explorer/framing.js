@@ -171,11 +171,16 @@ async function frame(next) {
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * The sweep: one video at a time, for as long as it is switched on.
+ * One worker: a strip at a time, for as long as the sweep is switched on.
  *
- * One at a time because a strip is ten ffmpeg seeks and the server's own
- * limiter is sized for the grid; two of these would spend the browsing budget
- * on work nobody has asked to see yet.
+ * Two of these run together -- see WORKERS -- sharing one queue, with only one
+ * of them walking the library at a time.
+ *
+ * The argument for keeping it to one used to be that a strip is ten ffmpeg
+ * seeks against a limiter sized for the grid, so a second worker would spend
+ * the browsing budget on work nobody has asked to see. What actually protects
+ * browsing is priority.js: both workers stand aside the moment somebody is
+ * waiting on a strip, which they were always going to have to do anyway.
  */
 async function worker() {
   try {
@@ -245,6 +250,26 @@ function rootsChanged() {
 }
 
 /**
+ * Count the library without building a single strip.
+ *
+ * See the note on the same function in faces.js: a paused pill used to show 0
+ * because the only walk that ever ran was the sweep's own. This is that walk,
+ * on its own -- stats and nothing else -- and it sets `nextWalk` the same way,
+ * so switching the pill on afterwards does not repeat it.
+ */
+async function count() {
+  if (state.walking) return;
+  if (typeof state.hasStrip !== 'function') return;
+  state.walking = true;
+  try {
+    state.queue = await walkForWork();
+    state.nextWalk = Date.now() + WALK_EVERY_MS;
+  } catch { /* a count is not worth failing a launch over */ } finally {
+    state.walking = false;
+  }
+}
+
+/**
  * What the sweep has done and what is left.
  *
  * Shaped like the other two, because the pill beside them reads the same way: a
@@ -264,9 +289,10 @@ function status() {
     remaining: state.walking ? null : state.queue.length,
     current: state.current,
     lastBuilt: state.lastBuilt,
-    doing: !state.enabled ? 'paused'
-      : state.yielding ? 'standing aside'
-        : state.walking ? 'counting'
+    // Counting outranks paused: the count runs at launch with the pill off.
+    doing: state.walking ? 'counting'
+      : !state.enabled ? 'paused'
+        : state.yielding ? 'standing aside'
           : state.current ? 'framing'
             : state.running ? 'waiting' : 'stopped',
     done: state.done,
@@ -277,4 +303,4 @@ function status() {
   };
 }
 
-module.exports = { init, start, setEnabled, rootsChanged, status, walkForWork };
+module.exports = { init, start, setEnabled, rootsChanged, count, status, walkForWork };

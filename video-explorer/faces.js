@@ -1276,7 +1276,38 @@ function rootsChanged() {
 }
 
 /**
- * The sweep itself: one video at a time, for as long as it is switched on.
+ * Count the library without reading a single video.
+ *
+ * The pills are paused on every launch, and a paused pill had nothing to say:
+ * the walk that fills in its denominator only ever happened inside the sweep,
+ * so until you switched something on the number was 0 -- which reads as
+ * "nothing to do" rather than "not counted yet".
+ *
+ * This is that same walk, on its own. It stats the library and nothing more --
+ * no ffmpeg, no reading, no writing -- and it sets `nextWalk` exactly as the
+ * sweep does, so whichever happens first, the other skips it. Switching a pill
+ * on straight afterwards costs nothing extra.
+ */
+async function count() {
+  if (state.walking) return;
+  // A video whose profile has not loaded yet looks unread, and would be
+  // counted as outstanding. Wait for the store rather than lie about it.
+  for (let i = 0; i < 240 && state.loading; i += 1) await wait(250);
+  if (state.loading) return;
+  state.walking = true;
+  try {
+    state.queue = await walkForWork();
+    state.nextWalk = Date.now() + WALK_EVERY_MS;
+  } catch { /* a count is not worth failing a launch over */ } finally {
+    state.walking = false;
+  }
+}
+
+/**
+ * One worker: a video at a time, for as long as the sweep is switched on.
+ *
+ * Two of these run together -- see WORKERS. They share one queue, and only one
+ * of them walks the library at a time.
  *
  * It used to stand aside whenever the app was used, on an activity clock any
  * request refreshed. A browse is requests with gaps in between; playback is a
@@ -1410,10 +1441,13 @@ function status() {
     // What it is doing right now, in one word, so the UI does not have to
     // reconstruct it from four booleans.
     yielding: state.yielding,
-    doing: !state.enabled ? 'paused'
-      : state.loading ? 'loading'
-        : state.yielding ? 'standing aside'
-          : state.walking ? 'counting'
+    // Counting outranks paused, because the count now happens at launch with
+    // the pill still off -- and "paused" while the disk is being walked would
+    // be the one moment the word is wrong.
+    doing: state.loading ? 'loading'
+      : state.walking ? 'counting'
+        : !state.enabled ? 'paused'
+          : state.yielding ? 'standing aside'
             : state.current ? 'reading'
               : state.running ? 'waiting' : 'stopped',
     lastRead: state.lastRead,
@@ -1446,7 +1480,7 @@ function status() {
 }
 
 module.exports = {
-  init, start, setEnabled, status, rootsChanged, decorate, writeDigest,
+  init, start, setEnabled, status, rootsChanged, count, decorate, writeDigest,
   rescoreOne,
   suggestionsFor, rankFor,
   lineup, faceImageByKey, standing, similar, bestOf, notePath, forgetPath,

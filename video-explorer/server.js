@@ -2361,6 +2361,36 @@ async function main() {
   // After the port is open: this is housekeeping, and nothing waits on it.
   setTimeout(() => { migrateCacheNames().catch(() => {}); }, 3000);
 
+  /**
+   * Count the library up front, so a pill knows its own numbers before it is
+   * switched on.
+   *
+   * The walk that fills in "142 of 3,908" only ever happened inside a sweep, so
+   * a paused pill showed 0 -- which reads as nothing to do rather than nothing
+   * counted -- and switching one on meant waiting through a walk of 28,000
+   * files before the first video was touched. Counting here fixes both: the
+   * numbers are honest on arrival, and because a count sets the same walk timer
+   * the sweep consults, starting a pill afterwards goes straight to reading.
+   *
+   * One after another, not all three at once. Each is a stat of every video in
+   * the library, and running them together would only make each one slower.
+   * Each also declines if a walk is already in flight, so this cannot collide
+   * with a sweep somebody starts while it is still going.
+   */
+  setTimeout(() => {
+    (async () => {
+      await faces.count();
+      await dupes.count();
+      await framing.count();
+      const said = [
+        `faces ${faces.status().remaining}`,
+        `fingerprints ${dupes.status().remaining}`,
+        `frames ${framing.status().remaining}`,
+      ].join(', ');
+      log(`counted the library: ${said} outstanding`);
+    })().catch(() => { /* a count is not worth failing a launch over */ });
+  }, 4000);
+
   server.listen(PORT, HOST, () => {
     const url = `http://${HOST}:${PORT}`;
     log(`ready at ${url}`);

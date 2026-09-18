@@ -59,8 +59,8 @@ const state = {
   kindsByKey: new Map(),   // key -> { sound, picture, both }
   scanned: 0,
   matched: 0,
-  // The in-app worker: one video at a time, only while nothing else is
-  // happening. See the loop at the bottom of this file.
+  // The in-app sweep: two videos at a time, only while nothing else is
+  // happening. See the worker at the bottom of this file.
   // Paused on load, every load. Opening the app should not start fingerprinting;
   // the pill does. Not remembered between launches on purpose -- see the
   // commit that introduced this.
@@ -567,6 +567,33 @@ function rootsChanged() {
 }
 
 /**
+ * Count the library without fingerprinting anything.
+ *
+ * See the note on the same function in faces.js. This one also records where
+ * every downloaded video is, which is what the digest needs to say which file
+ * a duplicate actually is -- a fingerprint stores no path, by design, so that
+ * a rename cannot orphan it.
+ */
+async function count() {
+  if (state.walking) return;
+  // A fingerprint that has not loaded yet looks missing, and the file would be
+  // counted as outstanding when it is already done.
+  for (let i = 0; i < 240 && !state.ready; i += 1) await wait(250);
+  if (!state.ready) return;
+  state.walking = true;
+  try {
+    const found = await walkForWork();
+    state.downloaded = found.length;
+    state.counted = true;
+    state.pathByKey = new Map(found.map((w) => [w.key, w.file]));
+    state.queue = found.filter((w) => !has(w.key));
+    state.nextWalk = Date.now() + WALK_EVERY_MS;
+  } catch { /* a count is not worth failing a launch over */ } finally {
+    state.walking = false;
+  }
+}
+
+/**
  * Re-match and republish, when there is something new to match.
  *
  * Matching is seconds of work over thousands of fingerprints, so it does not
@@ -779,11 +806,12 @@ function status() {
     remaining: state.walking ? null : state.queue.length,
     current: state.current,
     yielding: state.yielding,
-    doing: !state.enabled ? 'paused'
-      : !state.ready ? 'loading'
-        : state.yielding ? 'standing aside'
-          : state.matching ? 'matching'
-            : state.walking ? 'counting'
+    // Counting outranks paused: the count runs at launch with the pill off.
+    doing: !state.ready ? 'loading'
+      : state.walking ? 'counting'
+        : !state.enabled ? 'paused'
+          : state.yielding ? 'standing aside'
+            : state.matching ? 'matching'
               : state.current ? 'reading'
                 : state.running ? 'waiting' : 'stopped',
     done: state.done,
@@ -805,6 +833,7 @@ module.exports = {
   start,
   setEnabled,
   rootsChanged,
+  count,
   refresh,
   loadIndex,
   loadDigest,
