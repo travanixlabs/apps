@@ -90,6 +90,8 @@ const state = {
   yielding: false,
   nextWalk: 0,
   running: false,
+  // How many of the sweep's workers are still going round the loop.
+  workers: 0,
   // Paused on load, every load. Opening the app should not start profiling;
   // the pill does. Not remembered between launches on purpose -- see the
   // commit that introduced this.
@@ -1247,6 +1249,20 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const WALK_EVERY_MS = 15 * 60 * 1000;
 
 /**
+ * How many videos are read at once while the pill is on.
+ *
+ * Two, because that is where the measuring stopped paying: one profiler runs
+ * at about 900 an hour, two at about 1,500, and three at 1,180 -- slower than
+ * two while burning a third more CPU. The ceiling is ffmpeg decoding, not the
+ * disk, which never went above 5% during any of it.
+ *
+ * Each worker is an independent trip round the same loop, sharing one queue.
+ * Only one of them walks the library at a time; the rest wait for the queue
+ * that walk produces.
+ */
+const WORKERS = 2;
+
+/**
  * A folder was opened that had not been before.
  *
  * The library is otherwise re-counted on a timer, and until that fires the
@@ -1268,9 +1284,7 @@ function rootsChanged() {
  * player stopped the sweep for the whole viewing — the time it has the machine
  * most to itself. The pill is the pause button, and now the only one.
  */
-async function loop() {
-  if (state.running) return;
-  state.running = true;
+async function worker() {
   try {
     while (state.enabled && engine.available().ok) {
       // Nothing may be queued until the store is fully read: a video whose
@@ -1294,6 +1308,9 @@ async function loop() {
       // otherwise leave a denominator counted from nothing until the queue
       // emptied. Anything already profiled is skipped, so a re-walk is cheap.
       if (!state.queue.length || Date.now() > state.nextWalk) {
+        // One walker at a time. The other worker waits for the queue this
+        // produces rather than walking 28,000 files alongside it.
+        if (state.walking) { await wait(250); continue; }
         state.walking = true;
         try {
           const found = await walkForWork();
@@ -1310,7 +1327,10 @@ async function loop() {
         }
       }
 
+      // The other worker may have taken the last one between the check above
+      // and here.
       const next = state.queue.shift();
+      if (!next) { await wait(100); continue; }
       state.current = path.basename(next.file);
       state.lastRead = state.current;
       if (!state.startedAt) state.startedAt = Date.now();
@@ -1339,14 +1359,22 @@ async function loop() {
       await wait(150);
     }
   } finally {
-    state.running = false;
-    state.current = '';
+    state.workers -= 1;
+    if (state.workers <= 0) {
+      state.workers = 0;
+      state.running = false;
+      state.current = '';
+    }
   }
 }
 
 function start() {
   if (!engine.available().ok || state.running || !state.enabled) return;
-  loop().catch(() => { state.running = false; });
+  // `running` stays a plain boolean -- the status pill reads it -- and the
+  // count beside it is what decides when the sweep is really finished.
+  state.running = true;
+  state.workers = WORKERS;
+  for (let i = 0; i < WORKERS; i += 1) worker().catch(() => {});
 }
 
 function setEnabled(on) {

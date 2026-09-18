@@ -32,6 +32,16 @@ const priority = require('./priority');
 const log = (msg) => console.log(`[video-explorer] framing: ${msg}`);
 
 const WALK_EVERY_MS = 10 * 60 * 1000;
+
+/**
+ * How many strips are built at once while the pill is on.
+ *
+ * Two, to match the other two sweeps. Framing is the cheapest of the three and
+ * usually the first to run dry, at which point both workers exit and hand the
+ * machine back -- so a second one costs nothing on a short queue and halves a
+ * long one.
+ */
+const WORKERS = 2;
 // Long enough that a failure is not retried in a tight loop, short enough that
 // a file which failed because the disk was busy gets another chance in a
 // session. Three strikes and it is left alone until a restart.
@@ -42,6 +52,8 @@ const state = {
   // The pill starts it.
   enabled: false,
   running: false,
+  // How many of the sweep's workers are still going round the loop.
+  workers: 0,
   walking: false,
   // Parked while the player builds a strip somebody is waiting on. See
   // priority.js: this sweep is the one most likely to be doing the same kind of
@@ -165,9 +177,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
  * limiter is sized for the grid; two of these would spend the browsing budget
  * on work nobody has asked to see yet.
  */
-async function loop() {
-  if (state.running) return;
-  state.running = true;
+async function worker() {
   try {
     while (state.enabled) {
       // Somebody is waiting on a strip right now. Building one behind them
@@ -180,6 +190,8 @@ async function loop() {
       }
 
       if (!state.queue.length || Date.now() > state.nextWalk) {
+        // One walker at a time; the other worker waits for what it finds.
+        if (state.walking) { await wait(250); continue; }
         state.walking = true;
         try {
           state.queue = await walkForWork();
@@ -192,21 +204,32 @@ async function loop() {
         }
       }
 
-      await frame(state.queue.shift());
+      // The other worker may have taken the last one.
+      const next = state.queue.shift();
+      if (!next) { await wait(100); continue; }
+      await frame(next);
       // A breath between videos: this is the least important of the three
       // sweeps and should be the easiest to interrupt.
       await wait(200);
     }
   } finally {
-    state.running = false;
-    state.current = '';
+    state.workers -= 1;
+    if (state.workers <= 0) {
+      state.workers = 0;
+      state.running = false;
+      state.current = '';
+    }
   }
 }
 
 function start() {
   if (state.running || !state.enabled) return;
   if (typeof state.build !== 'function') return;
-  loop().catch(() => { state.running = false; });
+  // `running` stays a plain boolean for the status pill; the count beside it
+  // is what says when the last worker has actually stopped.
+  state.running = true;
+  state.workers = WORKERS;
+  for (let i = 0; i < WORKERS; i += 1) worker().catch(() => {});
 }
 
 function setEnabled(on) {

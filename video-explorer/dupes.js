@@ -66,6 +66,8 @@ const state = {
   // commit that introduced this.
   enabled: false,
   running: false,
+  // How many of the sweep's workers are still going round the loop.
+  workers: 0,
   walking: false,
   // Parked while the player builds a preview strip. See priority.js.
   yielding: false,
@@ -538,6 +540,16 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** How often the library is walked again, so new files are picked up. */
 const WALK_EVERY_MS = 15 * 60 * 1000;
+
+/**
+ * How many videos are fingerprinted at once while the pill is on.
+ *
+ * Two. One worker manages about 900 an hour and two about 1,500; a third was
+ * measured at 1,526 -- within noise of two, for another core's worth of CPU.
+ * Matching is left alone: it is one pass over the whole index and gains
+ * nothing from being started twice.
+ */
+const WORKERS = 2;
 /** How many new fingerprints are worth a re-match. */
 const MATCH_AFTER = 25;
 /** And how long a match must have rested first.
@@ -578,9 +590,7 @@ async function refresh() {
   }
 }
 
-async function loop() {
-  if (state.running) return;
-  state.running = true;
+async function worker() {
   try {
     while (state.enabled) {
       // Nothing may be queued until the index is read: a video whose
@@ -603,6 +613,8 @@ async function loop() {
       }
 
       if (!state.queue.length || Date.now() > state.nextWalk) {
+        // One walker at a time; the other worker waits for what it finds.
+        if (state.walking) { await wait(250); continue; }
         state.walking = true;
         try {
           const found = await walkForWork();
@@ -630,7 +642,9 @@ async function loop() {
         }
       }
 
+      // The other worker may have taken the last one.
       const next = state.queue.shift();
+      if (!next) { await wait(100); continue; }
       state.current = path.basename(next.file);
       if (!state.startedAt) state.startedAt = Date.now();
       try {
@@ -645,14 +659,22 @@ async function loop() {
       await wait(150);
     }
   } finally {
-    state.running = false;
-    state.current = '';
+    state.workers -= 1;
+    if (state.workers <= 0) {
+      state.workers = 0;
+      state.running = false;
+      state.current = '';
+    }
   }
 }
 
 function start() {
   if (state.running || !state.enabled) return;
-  loop().catch(() => { state.running = false; });
+  // `running` stays a plain boolean for the status pill; the count beside it
+  // is what says when the last worker has actually stopped.
+  state.running = true;
+  state.workers = WORKERS;
+  for (let i = 0; i < WORKERS; i += 1) worker().catch(() => {});
 }
 
 function setEnabled(on) {
