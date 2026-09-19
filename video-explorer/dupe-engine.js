@@ -49,6 +49,55 @@ const SCENE_THRESHOLD = 0.35;
 const HASH_W = 9;
 const HASH_H = 8;
 
+/**
+ * How much of a video is read. Not all of it.
+ *
+ * Reading is the slow half by a distance -- the picture pass is seventeen times
+ * slower than simply reading the same file off the disk, so it is the decoder
+ * that costs, not the I/O, and the only way to make it cheaper is to decode
+ * less. Measured on a 14.7 minute film: 4,810ms whole, 1,286ms for five
+ * minutes.
+ *
+ * Frames still land on the same FRAME_EVERY grid starting at zero, which is
+ * what makes this safe over an existing index: a windowed fingerprint is a
+ * true PREFIX of a whole one, and the two align against each other over the
+ * overlap. Measured on twelve files that already had whole-film prints -- every
+ * one matched its own stored print at 0 bits and 0.0s offset. That property is
+ * what rules out the faster idea, decoding only keyframes: it moves the grid,
+ * and would have orphaned 19,686 fingerprints whose files have since gone back
+ * to the cloud.
+ *
+ * Fifteen minutes, not five, and the difference is the whole lesson. The window
+ * also truncates the shot-change rhythm, and the rhythm is what proposes
+ * candidate pairs; a video with fewer than four cuts inside the window drops to
+ * being paired on runtime alone, which is far weaker. Run over the real index:
+ *
+ *   window   still indexed by rhythm   candidate pairs to check
+ *   whole           13,538                     845,269
+ *     300s           9,656                   2,179,057   <- 2.6x MORE work
+ *     600s          12,332                   1,087,066
+ *     900s          13,129                     880,912
+ *    1200s          13,370                     849,496
+ *
+ * So the aggressive window is a false economy: it saves 71% of the decoding and
+ * hands it all back, and more, to the matching. At 900s the reading drops 22%
+ * and the candidate count moves 4%, which is the trade worth having. The
+ * library's median runtime is 15.4 minutes, so this leaves most videos whole.
+ *
+ * The cost that remains: two copies sharing only their last half hour are no
+ * longer found, and 409 videos lose the trimming-proof signal. Against that,
+ * the offset search still reaches 180s, so a copy carrying up to three minutes
+ * of extra leader still lines up.
+ */
+const READ_SECONDS = 900;
+
+/** The true runtime, from ffmpeg's own header, since only a window was read. */
+function runtimeFrom(err) {
+  const m = /Duration:\s*(\d+):(\d\d):(\d\d(?:\.\d+)?)/.exec(err || '');
+  if (!m) return 0;
+  return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+}
+
 /** Collects a child process's stdout, and never rejects on a non-zero exit. */
 function collect(args, { level = 'error' } = {}) {
   return new Promise((resolve) => {
@@ -73,8 +122,12 @@ function collect(args, { level = 'error' } = {}) {
  * mean, because one copy being mastered louder than the other must not count
  * as a difference -- correlation is then measuring shape alone.
  */
-async function soundOf(file) {
+async function soundOf(file, seconds = READ_SECONDS) {
   const { out } = await collect([
+    // Before -i, so it limits what is READ rather than what is written. After
+    // -i it is an output option, and with a filter graph feeding two outputs
+    // ffmpeg decodes the whole film anyway -- measured, and it saved nothing.
+    ...(seconds ? ['-t', String(seconds)] : []),
     '-i', file, '-vn', '-ac', '1', '-ar', String(PCM_RATE), '-f', 's16le', 'pipe:1',
   ]);
   const hop = PCM_RATE / ENVELOPE_HZ;
@@ -135,8 +188,9 @@ function bits32(v) {
  * than a temp file whose Windows path has to survive ffmpeg's filter syntax,
  * where a colon separates arguments and a backslash escapes them.
  */
-async function pictureOf(file) {
+async function pictureOf(file, seconds = READ_SECONDS) {
   const { out, err } = await collect([
+    ...(seconds ? ['-t', String(seconds)] : []),   // see soundOf: before -i
     '-i', file,
     '-filter_complex',
     `[0:v]split=2[det][grab];`
@@ -155,7 +209,9 @@ async function pictureOf(file) {
   const hashes = new Uint32Array(count * 2);
   for (let i = 0; i < count; i += 1) hashFrame(out, i * frameBytes, hashes, i);
 
-  return { hashes, cuts };
+  // The runtime can no longer be counted off the hashes, since they cover only
+  // the window. ffmpeg has already printed it, so it costs nothing to read.
+  return { hashes, cuts, secs: runtimeFrom(err) };
 }
 
 /**
@@ -165,12 +221,16 @@ async function pictureOf(file) {
  * no pictures and the video pass decodes no sound, so between them they do
  * exactly the work required and nothing else.
  */
-async function fingerprint(file) {
-  const [sound, picture] = await Promise.all([soundOf(file), pictureOf(file)]);
+async function fingerprint(file, { seconds = READ_SECONDS } = {}) {
+  const [sound, picture] = await Promise.all([
+    soundOf(file, seconds), pictureOf(file, seconds),
+  ]);
   return {
     sound,                       // Float64Array | null
     hashes: picture.hashes,      // Uint32Array, two words a frame
     cuts: picture.cuts,          // seconds
+    secs: picture.secs,          // the whole film's runtime, not the window's
+    read: seconds,               // how much of it was actually looked at
   };
 }
 
@@ -234,6 +294,10 @@ function pack(fp) {
     hashes: packHashes(fp.hashes),
     gaps: gapsOf(fp.cuts),
     cuts: fp.cuts.length,
+    // How much of the film this covers. A row without it was written when the
+    // whole film was read, and its hash count is its runtime.
+    read: fp.read || 0,
+    secs: Math.round(fp.secs || 0),
   };
 }
 
@@ -476,6 +540,7 @@ const round = (n, places) => {
 
 module.exports = {
   MAX_SHIFT_SEC,
+  READ_SECONDS,
   bits32,
   ENVELOPE_HZ,
   FRAME_EVERY,

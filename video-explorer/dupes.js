@@ -81,6 +81,9 @@ const state = {
   sinceMatch: 0,
   needsMatch: false,
   lastMatch: 0,
+  // When the last match began. Fingerprints written after it are the only ones
+  // the next match has to look at. See incrementalFrom().
+  matchedAt: 0,
   pathByKey: new Map(),   // key -> where the walk last saw it
   downloaded: 0,
   counted: false,
@@ -119,6 +122,7 @@ async function loadDigest() {
       .filter((group) => group.length > 1)
       .map((group) => group.map((g) => g.key));
     state.pairs = body.confirmed || [];
+    state.matchedAt = body.matchedAt || 0;
     state.matched = state.pairs.filter((p) => p.signals && p.signals.both).length;
     state.byKey = new Map();
     state.kindsByKey = new Map();
@@ -172,6 +176,7 @@ async function loadIndex() {
         cuts: row.cuts || 0,
         name: row.name || '',
         path: row.path || '',
+        at: row.at || 0,
       });
       loaded += 1;
     } catch { /* a half-written file from a hard kill: it will be redone */ }
@@ -260,10 +265,22 @@ async function profile(file, stat) {
   // before use -- and it is the only way to put a set of copies on screen
   // together when they live in different folders.
   row.path = file;
-  row.secs = (raw.hashes.length >>> 1) * engine.FRAME_EVERY;
+  // Only a window of the film was read, so the hash count no longer says how
+  // long it is -- pack() carries the runtime ffmpeg reported instead. The old
+  // derivation stays as the fallback for anything that could not report one.
+  if (!row.secs) row.secs = (raw.hashes.length >>> 1) * engine.FRAME_EVERY;
+  // When it was read, which is what lets the next match skip the pairs it has
+  // already settled. Rows written before this have no `at`, and that is right:
+  // they were all matched long ago.
+  row.at = Date.now();
   await writePrint(key, row);
   state.light.set(key, {
-    gaps: row.gaps, secs: row.secs, cuts: row.cuts, name: row.name, path: file,
+    gaps: row.gaps,
+    secs: row.secs,
+    cuts: row.cuts,
+    name: row.name,
+    path: file,
+    at: row.at,
   });
   state.scanned += 1;
   state.done += 1;
@@ -293,7 +310,7 @@ function keysOf(gaps) {
  * runtime, which is far weaker but only has to cover the handful of videos the
  * rhythm cannot speak for.
  */
-function candidates() {
+function candidates(fresh = null) {
   const buckets = new Map();
   const quiet = [];
   for (const [key, light] of state.light) {
@@ -306,6 +323,10 @@ function candidates() {
 
   const pairs = new Map();
   const add = (a, b) => {
+    // Everything in the index proposes candidates -- a video read a minute ago
+    // has to be able to find a copy read last week -- but a pair of two videos
+    // that were both here at the last match was settled then. See match().
+    if (fresh && !fresh.has(a) && !fresh.has(b)) return;
     const id = a < b ? `${a}|${b}` : `${b}|${a}`;
     pairs.set(id, (pairs.get(id) || 0) + 1);
   };
@@ -336,15 +357,55 @@ function candidates() {
 }
 
 /**
+ * The videos fingerprinted since the last match, or null to check everything.
+ *
+ * This is what stopped the closing pass being the slowest thing the app does.
+ * It rebuilt every pair in the library from scratch every time -- 36 minutes
+ * at 17,944 fingerprints, growing with the square of the index -- to settle a
+ * few hundred new videos against an answer that had not otherwise changed.
+ * Worse, it usually got killed before it finished, which is where a week of
+ * duplicate counts swinging between 382 and 1,005 came from.
+ *
+ * A pair of two videos that were both present at the last match was settled
+ * then, and neither their fingerprints nor the thresholds have moved since, so
+ * the verdict is carried over. Only pairs touching something new are read off
+ * the disk again.
+ *
+ * Everything falls back to a full pass when there is nothing to carry over: no
+ * digest, a digest from before this was recorded, or one whose rows predate the
+ * signals being written down. A fingerprint with no `at` counts as old, which
+ * is exactly right -- the 19,826 written before this all went through matching.
+ */
+function incrementalFrom(full) {
+  if (full || !state.matchedAt || state.needsMatch || !state.pairs.length) return null;
+  const fresh = new Set();
+  for (const [key, light] of state.light) {
+    if ((light.at || 0) > state.matchedAt) fresh.add(key);
+  }
+  return fresh;
+}
+
+/**
  * Confirm the candidates and gather the survivors into groups.
  *
  * Fingerprints are read from disk one pair at a time and cached only for the
  * length of the run: a full library of them in memory is 150MB, and this is a
  * background job, not a hot path.
  */
-async function match({ onProgress } = {}) {
-  const list = candidates();
-  log(`${state.light.size} fingerprints, ${list.length} candidate pairs to check`);
+async function match({ onProgress, full = false } = {}) {
+  // Stamped from BEFORE the work, not after: a video fingerprinted while this
+  // runs is not in the candidate list, so it has to still count as new next
+  // time round.
+  const began = Date.now();
+  // Which videos have been fingerprinted since the last match settled. A pair
+  // of two older ones cannot have changed its mind, so it is carried over
+  // rather than read off the disk and compared again.
+  const fresh = incrementalFrom(full);
+  const list = candidates(fresh);
+  log(fresh
+    ? `${state.light.size} fingerprints, ${fresh.size} new since the last match, `
+      + `${list.length} candidate pairs to check`
+    : `${state.light.size} fingerprints, ${list.length} candidate pairs to check`);
 
   const cache = new Map();
   const CACHE_MAX = 400;
@@ -356,7 +417,15 @@ async function match({ onProgress } = {}) {
     return print;
   };
 
-  const matches = [];
+  // Carried over from the last match: pairs neither of whose members is new,
+  // minus any whose file has since been forgotten entirely.
+  const matches = fresh
+    ? state.pairs.filter((p) => p.signals
+      && !fresh.has(p.a) && !fresh.has(p.b)
+      && state.light.has(p.a) && state.light.has(p.b))
+    : [];
+  const kept = matches.length;
+
   let done = 0;
   for (const pair of list) {
     const [pa, pb] = [await printOf(pair.a), await printOf(pair.b)];
@@ -420,8 +489,13 @@ async function match({ onProgress } = {}) {
 
   const both = matches.filter((m) => m.signals.both).length;
   state.matched = both;
+  // Only now, and only from the time it began: an abandoned match must leave
+  // the mark where it was, or the pairs it never reached would be treated as
+  // settled.
+  state.matchedAt = began;
   log(`${state.groups.length} groups from ${matches.length} matched pairs `
-    + `(${both} on both signals, ${matches.length - both} on one)`);
+    + `(${both} on both signals, ${matches.length - both} on one)`
+    + (fresh ? `, ${kept} carried over in ${Math.round((Date.now() - began) / 1000)}s` : ''));
   return { groups: state.groups, confirmed: matches, possible: [] };
 }
 
@@ -431,6 +505,10 @@ async function writeDigest(confirmed = [], possible = []) {
   const body = {
     version: VERSION,
     updated: new Date().toISOString(),
+    // Carried so the next launch can pick up where matching left off rather
+    // than rebuilding every pair in the library. Absent in digests written
+    // before this, which correctly forces one full pass to establish it.
+    matchedAt: state.matchedAt || 0,
     fingerprinted: state.light.size,
     thresholds: {
       sound: engine.SOUND_PASS,
