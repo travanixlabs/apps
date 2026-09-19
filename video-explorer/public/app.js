@@ -672,10 +672,24 @@ function showFolderPop(tile, folder) {
   line(folder.path, 'folder-pop-path');
   line('Drop videos here to move them · hold Ctrl to copy', 'folder-pop-none');
 
-  // Below the tile if it fits, above it if it does not, and never off either
-  // side. Measured after filling: the height depends on what was just written.
+  placePop(pop, tile);
+}
+
+function hideFolderPop() {
+  const pop = $('#folderPop');
+  if (pop) pop.hidden = true;
+}
+
+/**
+ * Put a hover card under the thing it belongs to, or over it near the bottom.
+ *
+ * Measured after filling, because the height depends on what was just written,
+ * and clamped to the window on both axes: these cards are positioned against
+ * the window rather than their anchor, so nothing else keeps them on screen.
+ */
+function placePop(pop, anchor) {
   pop.hidden = false;
-  const box = tile.getBoundingClientRect();
+  const box = anchor.getBoundingClientRect();
   const own = pop.getBoundingClientRect();
   const gap = 8;
   const below = box.bottom + gap;
@@ -686,11 +700,6 @@ function showFolderPop(tile, folder) {
     Math.max(8, box.left + (box.width - own.width) / 2));
   pop.style.top = `${top}px`;
   pop.style.left = `${left}px`;
-}
-
-function hideFolderPop() {
-  const pop = $('#folderPop');
-  if (pop) pop.hidden = true;
 }
 
 // -------------------------------------------------------------- filter/sort
@@ -2644,6 +2653,72 @@ function keyOf(file) {
   return `${file.size}:${Math.round(file.mtimeMs)}`;
 }
 
+/**
+ * What a sweep pill says on hover -- as a card, not a `title`.
+ *
+ * The three pills are polled every two seconds and their numbers move the
+ * whole time, which a native tooltip cannot follow: the browser reads the
+ * attribute once, when the tooltip opens, and shows that text for as long as
+ * the pointer stays on the element. So a card opened at 52/103 still said 52
+ * several minutes later, and only a reload appeared to fix it -- because a
+ * reload is another first hover.
+ *
+ * This is the same shared card the folder tiles use, for the same reasons
+ * (one is hovered at a time, and the toolbar clips its own overflow), with one
+ * addition: every poll repaints it while it is open, so the card counts up
+ * alongside the pill it belongs to.
+ */
+const pillPop = { for: null };
+
+/**
+ * Hand a pill the lines it would have put in a `title`.
+ *
+ * Falsy entries drop out, exactly as the `.filter(Boolean).join('\n')` they
+ * replace did, so each render can keep listing conditional lines inline.
+ */
+function setPillPop(pill, lines) {
+  if (!pill) return;
+  pill.popLines = lines.filter(Boolean);
+  if (pillPop.for === pill) paintPillPop();
+}
+
+function paintPillPop() {
+  const pop = $('#pillPop');
+  const pill = pillPop.for;
+  if (!pop || !pill || !pill.popLines || pill.hidden) { hidePillPop(); return; }
+  pop.replaceChildren();
+  pill.popLines.forEach((line, i) => {
+    const el = document.createElement('div');
+    // The first line is what it is doing right now -- the answer to the
+    // question the hover was asking. The rest is detail.
+    el.className = i === 0 ? 'folder-pop-title'
+      : (typeof line === 'object' && line.dim ? 'folder-pop-none' : 'folder-pop-head');
+    el.textContent = typeof line === 'object' ? line.text : line;
+    pop.appendChild(el);
+  });
+  placePop(pop, pill);
+}
+
+function showPillPop(pill) {
+  pillPop.for = pill;
+  paintPillPop();
+}
+
+function hidePillPop() {
+  pillPop.for = null;
+  const pop = $('#pillPop');
+  if (pop) pop.hidden = true;
+}
+
+/** Hover or tab to it and the card opens; leave and it closes. */
+function watchPill(pill) {
+  if (!pill) return;
+  pill.addEventListener('pointerenter', () => showPillPop(pill));
+  pill.addEventListener('pointerleave', hidePillPop);
+  pill.addEventListener('focus', () => showPillPop(pill));
+  pill.addEventListener('blur', hidePillPop);
+}
+
 
 /**
  * The same readout for duplicate fingerprinting, left of the faces one.
@@ -2668,6 +2743,9 @@ function renderFramingPill() {
   if (!pill || !text) return;
   if (!framingStatus || !framingStatus.available) {
     pill.hidden = true;
+    // A pill that disappears takes its card with it, rather than leaving the
+    // last numbers it had floating over the toolbar.
+    if (pillPop.for === pill) hidePillPop();
     return;
   }
   pill.hidden = false;
@@ -2712,7 +2790,7 @@ function renderFramingPill() {
     text.appendChild(kept);
   }
 
-  pill.title = [
+  setPillPop(pill, [
     doing === 'framing' ? `Building the preview frames for ${current}`
       : doing === 'counting' ? 'Counting the library\u2026'
         : doing === 'standing aside' ? 'Waiting for a preview you are looking at'
@@ -2725,9 +2803,9 @@ function renderFramingPill() {
       : `${n(framed)} framed, still counting the library`,
     done ? `${n(done)} built this session${rate ? ` \u00b7 about ${n(rate)}/hour` : ''}` : '',
     failed ? `${n(failed)} could not be read` : '',
-    'Ten frames per video, so opening one shows them at once instead of building them.',
-    'Cloud videos are framed as you browse them, not here.',
-  ].filter(Boolean).join('\n');
+    { text: 'Ten frames per video, so opening one shows them at once instead of building them.', dim: true },
+    { text: 'Cloud videos are framed as you browse them, not here.', dim: true },
+  ]);
 }
 
 async function toggleFramingSweep() {
@@ -2761,6 +2839,9 @@ function renderDupePill() {
   if (!pill || !text) return;
   if (!dupeStatus || !dupeStatus.available) {
     pill.hidden = true;
+    // A pill that disappears takes its card with it, rather than leaving the
+    // last numbers it had floating over the toolbar.
+    if (pillPop.for === pill) hidePillPop();
     return;
   }
   pill.hidden = false;
@@ -2812,7 +2893,7 @@ function renderDupePill() {
     text.appendChild(kept);
   }
 
-  pill.title = [
+  setPillPop(pill, [
     doing === 'reading' ? `Fingerprinting ${current}`
       : doing === 'matching' ? 'Comparing what has been read so far\u2026'
         : doing === 'loading' ? 'Reading back what has already been fingerprinted\u2026'
@@ -2835,9 +2916,9 @@ function renderDupePill() {
       : 'No duplicates found yet',
     possible ? `${n(possible)} more where only one of sound and picture agreed` : null,
     done ? `${n(done)} read this session${rate ? `, about ${n(rate)} an hour` : ''}` : null,
-    'Advanced filters \u2192 Duplicates to see them',
-    enabled ? 'Click to pause' : 'Click to resume',
-  ].filter(Boolean).join('\n');
+    { text: 'Advanced filters \u2192 Duplicates to see them', dim: true },
+    { text: enabled ? 'Click to pause' : 'Click to resume', dim: true },
+  ]);
 }
 
 async function toggleDupeSweep() {
@@ -2876,6 +2957,9 @@ function renderFacePill() {
   if (!pill || !text) return;
   if (!faceStatus || !faceStatus.available) {
     pill.hidden = true;
+    // A pill that disappears takes its card with it, rather than leaving the
+    // last numbers it had floating over the toolbar.
+    if (pillPop.for === pill) hidePillPop();
     return;
   }
   pill.hidden = false;
@@ -2927,7 +3011,7 @@ function renderFacePill() {
     text.appendChild(kept);
   }
 
-  pill.title = [
+  setPillPop(pill, [
     doing === 'reading' ? `Reading ${current}`
       : doing === 'loading' ? 'Reading back what has already been profiled…'
         : doing === 'counting' ? 'Counting the library…'
@@ -2944,8 +3028,8 @@ function renderFacePill() {
     done ? `${n(done)} read this session${rate ? `, about ${n(rate)} an hour` : ''}` : null,
     lastRead && doing !== 'reading' ? `Last read ${lastRead}` : null,
     `${performers} performer${performers === 1 ? '' : 's'} recognisable so far`,
-    enabled ? 'Click to pause' : 'Click to resume',
-  ].filter(Boolean).join('\n');
+    { text: enabled ? 'Click to pause' : 'Click to resume', dim: true },
+  ]);
 }
 
 async function toggleFaceSweep() {
@@ -6149,6 +6233,7 @@ function wireEvents() {
   $('#facesPill').addEventListener('click', toggleFaceSweep);
   $('#dupesPill').addEventListener('click', toggleDupeSweep);
   $('#framingPill').addEventListener('click', toggleFramingSweep);
+  for (const id of ['#facesPill', '#dupesPill', '#framingPill']) watchPill($(id));
   $('#faceAdd').addEventListener('click', () => {
     if (!lineupFor) return;
     const { sug, onPick } = lineupFor;

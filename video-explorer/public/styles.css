@@ -430,6 +430,11 @@ kbd {
   pointer-events: none;   /* it follows the cursor's tile; it is not a target */
 }
 .folder-pop[hidden] { display: none; }
+/* The sweep pills say more per line than a folder tile does, and their first
+   line is a sentence rather than a folder name -- so it wraps rather than
+   being cut off at one line. */
+.pill-pop { width: 300px; }
+.pill-pop .folder-pop-title { white-space: normal; }
 .folder-pop-title {
   font-size: 12.5px;
   font-weight: 600;
