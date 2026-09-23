@@ -217,6 +217,25 @@ const NEVER_WALK = new Set(['node_modules', 'system volume information', '$recyc
 const skipDir = (name) => name.startsWith('$') || name.startsWith('.')
   || NEVER_WALK.has(name.toLowerCase());
 
+/**
+ * How many files are stat'ed at once while walking. See framing.js, where the
+ * measurement behind this number is written down: one at a time spends the walk
+ * waiting on OneDrive's filter driver, and sixty-four at once turned a 2.5-6.7
+ * second walk into a steady 1.5.
+ */
+const STAT_BATCH = 64;
+
+/** A folder's videos stat'ed together, keyed by path. See framing.js. */
+async function statAll(files) {
+  const out = new Map();
+  for (let i = 0; i < files.length; i += STAT_BATCH) {
+    const batch = files.slice(i, i + STAT_BATCH);
+    const got = await Promise.all(batch.map((f) => fsp.stat(f).catch(() => null)));
+    got.forEach((stat, j) => { if (stat) out.set(batch[j], stat); });
+  }
+  return out;
+}
+
 /** Every downloaded video under the roots, deepest folder last. */
 async function walkForWork() {
   const seen = new Set();
@@ -224,9 +243,15 @@ async function walkForWork() {
   const roots = [...new Set([state.homeOf(), ...state.rootsOf()].filter(Boolean))]
     .map((r) => path.resolve(r));
 
+  const isVideo = (entry) => entry.isFile()
+    && VIDEO_EXT.has(path.extname(entry.name).toLowerCase());
+
   const walk = async (dir) => {
     let entries;
     try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+    // This folder's videos in one go, then the entries in their own order.
+    const stats = await statAll(entries.filter(isVideo)
+      .map((entry) => path.join(dir, entry.name)));
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
@@ -234,9 +259,9 @@ async function walkForWork() {
         await walk(full);
         continue;
       }
-      if (!entry.isFile() || !VIDEO_EXT.has(path.extname(entry.name).toLowerCase())) continue;
-      let stat;
-      try { stat = await fsp.stat(full); } catch { continue; }
+      if (!isVideo(entry)) continue;
+      const stat = stats.get(full);
+      if (!stat) continue;
       if (isCloudOnly(stat)) continue;
       const key = keyFor(stat);
       if (seen.has(key)) continue;             // the same file reached two ways

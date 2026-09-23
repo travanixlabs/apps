@@ -1090,6 +1090,26 @@ const NEVER_WALK = new Set([
 const skipDir = (name) => name.startsWith('$') || name.startsWith('.')
   || NEVER_WALK.has(name.toLowerCase());
 
+/**
+ * How many files are stat'ed at once while walking. See framing.js, where the
+ * measurement behind this number is written down: one at a time spends the walk
+ * waiting on OneDrive's filter driver, and sixty-four at once turned a 2.5-6.7
+ * second walk into a steady 1.5. The same batching the face store is already
+ * read back with, applied to the one part of a launch that still waited.
+ */
+const STAT_BATCH = 64;
+
+/** A folder's videos stat'ed together, keyed by path. See framing.js. */
+async function statAll(files) {
+  const out = new Map();
+  for (let i = 0; i < files.length; i += STAT_BATCH) {
+    const batch = files.slice(i, i + STAT_BATCH);
+    const got = await Promise.all(batch.map((f) => fsp.stat(f).catch(() => null)));
+    got.forEach((stat, j) => { if (stat) out.set(batch[j], stat); });
+  }
+  return out;
+}
+
 const inside = (child, parent) => {
   const c = path.resolve(child).toLowerCase();
   const r = path.resolve(parent).toLowerCase();
@@ -1136,9 +1156,15 @@ async function walkForWork() {
   const seen = new Set();
   const visited = new Set();
 
+  const isVideo = (e) => !e.isDirectory() && /\.(mp4|m4v|mov|mkv|webm)$/i.test(e.name);
+
   async function walk(dir, depth) {
     let entries;
     try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+    // This folder's videos in one go, then the entries in their own order: the
+    // queue has to come out exactly as it did stat'ing them one at a time.
+    const stats = await statAll(entries.filter(isVideo)
+      .map((e) => path.join(dir, e.name)));
     for (const e of entries) {
       const full = path.join(dir, e.name);
       if (e.isDirectory()) {
@@ -1149,9 +1175,9 @@ async function walkForWork() {
         if (visited.has(real)) continue;
         visited.add(real);
         await walk(full, depth + 1);
-      } else if (/\.(mp4|m4v|mov|mkv|webm)$/i.test(e.name)) {
-        let stat;
-        try { stat = await fsp.stat(full); } catch { continue; }
+      } else if (isVideo(e)) {
+        const stat = stats.get(full);
+        if (!stat) continue;
         const key = keyFor(stat);
         // Where it is, whether or not it is here. A cloud-only video is never
         // read -- that would download it -- but not reading one and not knowing

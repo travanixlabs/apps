@@ -100,6 +100,37 @@ const skipDir = (name) => name.startsWith('$') || name.startsWith('.')
 const keyFor = (stat) => `${stat.size}:${Math.round(stat.mtimeMs)}`;
 
 /**
+ * How many files are stat'ed at once while walking.
+ *
+ * Every stat in this library goes through OneDrive's filter driver, so awaiting
+ * them one at a time spends the whole walk waiting on round trips. Measured over
+ * the real 27,239 videos, interleaved and repeated so a warming cache could not
+ * flatter either: one at a time took 2,518ms and then 6,663ms, sixty-four at a
+ * time took 1,513ms and then 1,672ms. The spread matters more than the median --
+ * the slow runs were the ones that made a launch feel like it was reading
+ * everything again. 256 at a time measured no better and swung further.
+ */
+const STAT_BATCH = 64;
+
+/**
+ * Stat a folder's videos together, keyed by path.
+ *
+ * Returned as a map rather than a list so the caller can still walk its entries
+ * in readdir order: the queue has to come out exactly as it did when each file
+ * was stat'ed in turn. A file that cannot be stat'ed is simply absent, which is
+ * the same as the `continue` it used to get.
+ */
+async function statAll(files) {
+  const out = new Map();
+  for (let i = 0; i < files.length; i += STAT_BATCH) {
+    const batch = files.slice(i, i + STAT_BATCH);
+    const got = await Promise.all(batch.map((f) => fsp.stat(f).catch(() => null)));
+    got.forEach((stat, j) => { if (stat) out.set(batch[j], stat); });
+  }
+  return out;
+}
+
+/**
  * Every downloaded video under the roots, and which of them already has a strip.
  *
  * One walk answers both the queue and the counter, so the pill never needs a
@@ -113,9 +144,15 @@ async function walkForWork() {
   const roots = [...new Set([state.homeOf(), ...state.rootsOf()].filter(Boolean))]
     .map((r) => path.resolve(r));
 
+  const isVideo = (entry) => entry.isFile()
+    && VIDEO_EXT.has(path.extname(entry.name).toLowerCase());
+
   const walk = async (dir) => {
     let entries;
     try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+    // This folder's videos in one go, then the entries in their own order.
+    const stats = await statAll(entries.filter(isVideo)
+      .map((entry) => path.join(dir, entry.name)));
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
@@ -123,9 +160,9 @@ async function walkForWork() {
         await walk(full);
         continue;
       }
-      if (!entry.isFile() || !VIDEO_EXT.has(path.extname(entry.name).toLowerCase())) continue;
-      let stat;
-      try { stat = await fsp.stat(full); } catch { continue; }
+      if (!isVideo(entry)) continue;
+      const stat = stats.get(full);
+      if (!stat) continue;
       // A placeholder is left to be framed on demand, over HTTPS, as it is
       // browsed. Reading one here would download it.
       if (isCloudOnly(stat)) continue;
