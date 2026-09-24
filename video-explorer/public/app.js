@@ -1564,10 +1564,14 @@ function syncAdvBadge() {
 // it. It has its own tags and rating, because the filter on the grid is where
 // you left the grid and has no business deciding what you are shown tonight.
 // It never writes to that filter or to the listing, so closing the player puts
-// you back exactly where you were. And it always reads the whole tree below the
-// current folder, flattened, whether or not the Flatten subfolders box is
-// ticked -- standing in a folder of folders and being told there is nothing to
-// shuffle would be a silly answer to a reasonable question.
+// you back exactly where you were. And it always reads the whole tree below
+// wherever it is pointed, flattened, whether or not the Flatten subfolders box
+// is ticked -- standing in a folder of folders and being told there is nothing
+// to shuffle would be a silly answer to a reasonable question.
+//
+// Where it is pointed is the current folder, unless the dialog's Folders row
+// names library folders instead, in which case an evening can span Folder 1 and
+// Folder 4 without navigating to either.
 
 const shuffle = {
   on: false,
@@ -1575,7 +1579,10 @@ const shuffle = {
   // when Shuffle is pressed: re-walking the tree per video would put a disk
   // scan between one video and the next.
   pool: [],
-  dir: '',
+  // Which library folders it drew from: the ones picked in the dialog, or the
+  // current folder when none were.
+  dirs: new Set(),
+  draftDirs: new Set(),
   // The filter in force, and the copy the dialog is editing. Same shape as the
   // advanced filter -- only two facets are ever populated, and an empty facet
   // is transparent, so matchesAdvanced works on it unchanged.
@@ -1587,6 +1594,48 @@ const shuffle = {
   at: -1,
 };
 
+/**
+ * The library's own top-level folders -- Folder 0, Folder 1, and so on under
+ * the home directory. Read once and kept: five directory entries that change
+ * about never, and the dialog should not wait on a disk listing to open.
+ */
+const LIBRARY_FOLDER = /^folder\s*\d+$/i;
+let shuffleRoots = null;
+
+async function loadShuffleRoots() {
+  if (shuffleRoots) return shuffleRoots;
+  const home = (state.config && state.config.homeDir) || '';
+  if (!home) return [];
+  try {
+    const data = await api(`/api/dirs?dir=${encodeURIComponent(home)}`);
+    shuffleRoots = (data.dirs || []).filter((d) => LIBRARY_FOLDER.test(String(d.name).trim()));
+  } catch {
+    // No row rather than an error: the folder you are standing in still works.
+    shuffleRoots = [];
+  }
+  return shuffleRoots;
+}
+
+const leafName = (dir) => dir.split(/[\\/]/).filter(Boolean).pop() || '';
+
+/** "Folder 1", "Folder 1 and Folder 4", "Folder 1, Folder 2 and Folder 4". */
+function listOf(names) {
+  if (names.length < 2) return names[0] || '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+function shuffleWhere() {
+  const picked = [...shuffle.draftDirs].map(leafName);
+  if (picked.length) {
+    return `Anything in ${listOf(picked)} and every folder under`
+      + ` ${picked.length > 1 ? 'them' : 'it'}.`;
+  }
+  const where = state.dir ? leafName(state.dir) : '';
+  return where
+    ? `Anything in ${where} and every folder under it.`
+    : 'Anything in this folder and every folder under it.';
+}
+
 function openShuffle() {
   shuffle.draft = newAdvFilter();
   if (shuffle.filter) {
@@ -1595,19 +1644,50 @@ function openShuffle() {
       shuffle.draft[facet] = new Map(shuffle.filter[facet]);
     }
   }
+  shuffle.draftDirs = new Set(shuffle.dirs);
   for (const radio of document.querySelectorAll('input[name="shuffleTagMode"]')) {
     radio.checked = radio.value === shuffle.draft.mode.tags;
   }
-  const where = state.dir ? state.dir.split(/[\\/]/).filter(Boolean).pop() : '';
-  $('#shuffleWhere').textContent = where
-    ? `Anything in ${where} and every folder under it.`
-    : 'Anything in this folder and every folder under it.';
   $('#shuffleMatch').textContent = '';
   $('#shuffleModal').hidden = false;
   renderShuffle();
+  // The row fills in when the listing lands, without holding the dialog shut.
+  loadShuffleRoots().then(() => {
+    if (!$('#shuffleModal').hidden) renderShuffle();
+  });
+}
+
+/** A plain on/off chip. Folders are picked or not; there is no "everything but
+ *  Folder 3" worth the third state. */
+function chipPick(label, on, onClick) {
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.className = 'chip tri' + (on ? ' in' : '');
+  const mark = document.createElement('span');
+  mark.className = 'tri-mark';
+  mark.textContent = on ? '+' : '';
+  chip.appendChild(mark);
+  chip.appendChild(document.createTextNode(label));
+  chip.addEventListener('click', onClick);
+  return chip;
+}
+
+function renderShuffleDirs() {
+  const roots = shuffleRoots || [];
+  $('#shuffleDirsBlock').hidden = !roots.length;
+  const box = $('#shuffleDirs');
+  box.innerHTML = '';
+  for (const root of roots) {
+    box.appendChild(chipPick(root.name, shuffle.draftDirs.has(root.path), () => {
+      if (!shuffle.draftDirs.delete(root.path)) shuffle.draftDirs.add(root.path);
+      renderShuffle();
+    }));
+  }
+  $('#shuffleWhere').textContent = shuffleWhere();
 }
 
 function renderShuffle() {
+  renderShuffleDirs();
   const ratings = $('#shuffleRating');
   ratings.innerHTML = '';
   for (const value of [0, 1, 2, 3, 4, 5]) {
@@ -1649,24 +1729,39 @@ async function startShuffle() {
     shuffle.draft.mode.tags = radio.value;
   }
   shuffle.filter = shuffle.draft;
-  const dir = state.dir;
-  if (!dir) { toast('Open a folder first', 'err'); return; }
+  shuffle.dirs = new Set(shuffle.draftDirs);
+  // Folders picked in the dialog win over the one you are standing in; with
+  // none picked it is the folder in hand, as it always was.
+  const dirs = shuffle.dirs.size ? [...shuffle.dirs] : (state.dir ? [state.dir] : []);
+  if (!dirs.length) { toast('Open a folder first', 'err'); return; }
 
   $('#shuffleStart').disabled = true;
   $('#shuffleMatch').textContent = 'Looking…';
   try {
-    const data = await api(`/api/scan?dir=${encodeURIComponent(dir)}&recursive=1`);
-    const all = data.files || [];
+    // One folder at a time, so a five-folder shuffle does not put five
+    // recursive scans through the server at once.
+    const all = [];
+    const seen = new Set();
+    for (const dir of dirs) {
+      const data = await api(`/api/scan?dir=${encodeURIComponent(dir)}&recursive=1`);
+      for (const file of data.files || []) {
+        if (seen.has(file.path)) continue;
+        seen.add(file.path);
+        all.push(file);
+      }
+      if (dirs.length > 1) {
+        $('#shuffleMatch').textContent = `Looking… ${all.length.toLocaleString()} so far`;
+      }
+    }
     shuffle.pool = filterActive(shuffle.filter)
       ? all.filter((f) => matchesAdvanced(f, shuffle.filter, filterCtx()))
       : all.slice();
-    shuffle.dir = dir;
     shuffle.seen = [];
     shuffle.at = -1;
     if (!shuffle.pool.length) {
       $('#shuffleMatch').textContent = all.length
         ? `Nothing here matches — ${all.length.toLocaleString()} videos, none of them`
-        : 'No videos under this folder';
+        : `No videos under ${dirs.length > 1 ? 'those folders' : 'this folder'}`;
       return;
     }
     shuffle.on = true;
@@ -6419,9 +6514,14 @@ function wireEvents() {
   $('#shuffleStart').addEventListener('click', startShuffle);
   $('#shuffleReset').addEventListener('click', () => {
     shuffle.draft = newAdvFilter();
+    shuffle.draftDirs.clear();
     for (const radio of document.querySelectorAll('input[name="shuffleTagMode"]')) {
       radio.checked = radio.value === 'all';
     }
+    renderShuffle();
+  });
+  $('#shuffleDirsClear').addEventListener('click', () => {
+    shuffle.draftDirs.clear();
     renderShuffle();
   });
   for (const btn of document.querySelectorAll('[data-shuffle-clear]')) {
