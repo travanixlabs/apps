@@ -903,6 +903,17 @@ main { padding: 16px; }
 
 #advBtn { position: relative; }
 #advBtn.on { border-color: var(--accent); color: var(--accent); }
+/* Lit the same way as the filter beside it, so "something is on" reads the
+   same whichever of the two it is. */
+#shuffleBtn.on { border-color: var(--accent); color: var(--accent); }
+/* One line under the heading saying what is about to be shuffled. The dialog
+   is otherwise two rows of chips and a button, and without it there is nothing
+   to say the tree below this folder is included. */
+.adv-how {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
 .adv-dot {
   position: absolute;
   top: 3px;

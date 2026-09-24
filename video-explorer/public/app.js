@@ -1553,6 +1553,185 @@ function syncAdvBadge() {
   $('#advBtn').classList.toggle('on', advActive());
 }
 
+// ------------------------------------------------------------------ shuffle
+//
+// The other way into the library. The grid is for finding a particular video;
+// this is for the evenings when the answer is "something, anything, from in
+// here" -- so it skips the grid entirely and opens the player on a video
+// nobody chose.
+//
+// Three things it deliberately does NOT share with the advanced filter beside
+// it. It has its own tags and rating, because the filter on the grid is where
+// you left the grid and has no business deciding what you are shown tonight.
+// It never writes to that filter or to the listing, so closing the player puts
+// you back exactly where you were. And it always reads the whole tree below the
+// current folder, flattened, whether or not the Flatten subfolders box is
+// ticked -- standing in a folder of folders and being told there is nothing to
+// shuffle would be a silly answer to a reasonable question.
+
+const shuffle = {
+  on: false,
+  // Every video under the current folder that matched, in no order. Built once
+  // when Shuffle is pressed: re-walking the tree per video would put a disk
+  // scan between one video and the next.
+  pool: [],
+  dir: '',
+  // The filter in force, and the copy the dialog is editing. Same shape as the
+  // advanced filter -- only two facets are ever populated, and an empty facet
+  // is transparent, so matchesAdvanced works on it unchanged.
+  filter: null,
+  draft: null,
+  // What has been played this run, newest last, so Back walks it and a video
+  // does not come round again until the pool has been through.
+  seen: [],
+  at: -1,
+};
+
+function openShuffle() {
+  shuffle.draft = newAdvFilter();
+  if (shuffle.filter) {
+    shuffle.draft.mode = { ...shuffle.filter.mode };
+    for (const facet of ['tags', 'ratings']) {
+      shuffle.draft[facet] = new Map(shuffle.filter[facet]);
+    }
+  }
+  for (const radio of document.querySelectorAll('input[name="shuffleTagMode"]')) {
+    radio.checked = radio.value === shuffle.draft.mode.tags;
+  }
+  const where = state.dir ? state.dir.split(/[\\/]/).filter(Boolean).pop() : '';
+  $('#shuffleWhere').textContent = where
+    ? `Anything in ${where} and every folder under it.`
+    : 'Anything in this folder and every folder under it.';
+  $('#shuffleMatch').textContent = '';
+  $('#shuffleModal').hidden = false;
+  renderShuffle();
+}
+
+function renderShuffle() {
+  const ratings = $('#shuffleRating');
+  ratings.innerHTML = '';
+  for (const value of [0, 1, 2, 3, 4, 5]) {
+    ratings.appendChild(chipCycle(
+      value === 0 ? 'unrated' : '★'.repeat(value),
+      shuffle.draft.ratings.get(value),
+      () => { cycleIn(shuffle.draft.ratings, value); renderShuffle(); },
+    ));
+  }
+
+  const box = $('#shuffleTags');
+  box.innerHTML = '';
+  const gap = chipCycle('no tags', shuffle.draft.tags.get(NOTHING), () => {
+    cycleIn(shuffle.draft.tags, NOTHING);
+    renderShuffle();
+  });
+  gap.classList.add('chip-none');
+  box.appendChild(gap);
+  const vocab = vocabByName('tags');
+  if (!vocab.length) {
+    box.insertAdjacentHTML('beforeend',
+      '<span class="dim">No tags yet — add some from a card first.</span>');
+  }
+  for (const entry of vocab) {
+    box.appendChild(chipCycle(`${entry.tag} · ${entry.count}`, shuffle.draft.tags.get(entry.tag),
+      () => { cycleIn(shuffle.draft.tags, entry.tag); renderShuffle(); }));
+  }
+}
+
+/**
+ * Build the pool and open the first video.
+ *
+ * The scan is asked for recursively regardless of the toolbar's box, and its
+ * answer is thrown away afterwards: it never touches state.files, so the grid
+ * behind the player is the grid you left.
+ */
+async function startShuffle() {
+  for (const radio of document.querySelectorAll('input[name="shuffleTagMode"]:checked')) {
+    shuffle.draft.mode.tags = radio.value;
+  }
+  shuffle.filter = shuffle.draft;
+  const dir = state.dir;
+  if (!dir) { toast('Open a folder first', 'err'); return; }
+
+  $('#shuffleStart').disabled = true;
+  $('#shuffleMatch').textContent = 'Looking…';
+  try {
+    const data = await api(`/api/scan?dir=${encodeURIComponent(dir)}&recursive=1`);
+    const all = data.files || [];
+    shuffle.pool = filterActive(shuffle.filter)
+      ? all.filter((f) => matchesAdvanced(f, shuffle.filter, filterCtx()))
+      : all.slice();
+    shuffle.dir = dir;
+    shuffle.seen = [];
+    shuffle.at = -1;
+    if (!shuffle.pool.length) {
+      $('#shuffleMatch').textContent = all.length
+        ? `Nothing here matches — ${all.length.toLocaleString()} videos, none of them`
+        : 'No videos under this folder';
+      return;
+    }
+    shuffle.on = true;
+    $('#shuffleModal').hidden = true;
+    syncShuffleBadge();
+    shuffleStep(1);
+  } catch (err) {
+    $('#shuffleMatch').textContent = '';
+    toast(err.message, 'err');
+  } finally {
+    $('#shuffleStart').disabled = false;
+  }
+}
+
+/**
+ * The next video, or the one before it.
+ *
+ * Forward draws one that has not come up yet, so a run of twenty is twenty
+ * different videos rather than a coin toss twenty times; once the pool is
+ * exhausted it starts a fresh pass. Back walks what has already been shown,
+ * because "wait, go back" is the one thing you always want from a shuffle and
+ * re-randomising would make it impossible.
+ */
+function shuffleStep(step) {
+  if (!shuffle.pool.length) return;
+  if (step < 0) {
+    if (shuffle.at <= 0) return;
+    shuffle.at -= 1;
+    playFile(shuffle.seen[shuffle.at]);
+    return;
+  }
+  if (shuffle.at + 1 < shuffle.seen.length) {
+    shuffle.at += 1;
+    playFile(shuffle.seen[shuffle.at]);
+    return;
+  }
+  const shown = new Set(shuffle.seen.map((f) => f.path));
+  let fresh = shuffle.pool.filter((f) => !shown.has(f.path));
+  // Everything has had a turn: start again, but never with the one on screen.
+  if (!fresh.length) {
+    const current = state.playing ? state.playing.path : '';
+    fresh = shuffle.pool.filter((f) => f.path !== current);
+    if (!fresh.length) fresh = shuffle.pool.slice();
+    shuffle.seen = [];
+    shuffle.at = -1;
+  }
+  const pick = fresh[Math.floor(Math.random() * fresh.length)];
+  shuffle.seen.push(pick);
+  shuffle.at = shuffle.seen.length - 1;
+  playFile(pick);
+}
+
+/** Leaving the player leaves shuffle. The grid was never touched. */
+function stopShuffle() {
+  shuffle.on = false;
+  shuffle.pool = [];
+  shuffle.seen = [];
+  shuffle.at = -1;
+  syncShuffleBadge();
+}
+
+function syncShuffleBadge() {
+  $('#shuffleBtn').classList.toggle('on', shuffle.on);
+}
+
 // --------------------------------------------------------- ratings and tags
 
 /**
@@ -4238,6 +4417,9 @@ function playFile(file, seq = null) {
  * keeps the buttons live instead of leaving one dead at each edge.
  */
 function playSibling(step) {
+  // Shuffling, the arrows mean something else entirely: there is no listing to
+  // be next in, only a pool to draw from.
+  if (shuffle.on) { shuffleStep(step); return; }
   const list = visibleCards();
   if (!state.playing || !list.length) return;
   const at = playingAt();
@@ -4257,6 +4439,18 @@ function playSibling(step) {
 }
 
 function syncPlayerNav() {
+  // A shuffle has no position in a listing to report. It has a pool, how far
+  // into it this run has got, and a back arrow that only exists once there is
+  // something behind you.
+  if (shuffle.on) {
+    $('#playerPrev').hidden = shuffle.at <= 0;
+    $('#playerNext').hidden = shuffle.pool.length < 2;
+    const pos = $('#playerPos');
+    pos.hidden = !state.playing;
+    pos.textContent = `shuffling ${shuffle.pool.length.toLocaleString()}`
+      + ` · ${(shuffle.at + 1).toLocaleString()} so far`;
+    return;
+  }
   const list = visibleCards();
   const at = playingAt();
   const adrift = Boolean(at < 0 && state.playing && state.playingAnchor !== null && list.length);
@@ -5221,6 +5415,10 @@ function closePlayer() {
   state.playing = null;
   state.playingAnchor = null;
   $('#playerModal').hidden = true;
+  // Closing the player is how a shuffle ends. The grid underneath is the one
+  // that was there before it started -- nothing about it was changed to get
+  // here, so there is nothing to put back.
+  if (shuffle.on) stopShuffle();
 }
 
 // ---------------------------------------------------------------- rendering
@@ -6216,6 +6414,22 @@ function wireEvents() {
   $('#advBtn').addEventListener('click', openAdvanced);
   $('#advApply').addEventListener('click', applyAdvanced);
   $('#advReset').addEventListener('click', resetAdvanced);
+
+  $('#shuffleBtn').addEventListener('click', openShuffle);
+  $('#shuffleStart').addEventListener('click', startShuffle);
+  $('#shuffleReset').addEventListener('click', () => {
+    shuffle.draft = newAdvFilter();
+    for (const radio of document.querySelectorAll('input[name="shuffleTagMode"]')) {
+      radio.checked = radio.value === 'all';
+    }
+    renderShuffle();
+  });
+  for (const btn of document.querySelectorAll('[data-shuffle-clear]')) {
+    btn.addEventListener('click', () => {
+      shuffle.draft[btn.dataset.shuffleClear].clear();
+      renderShuffle();
+    });
+  }
   for (const btn of document.querySelectorAll('[data-clear]')) {
     btn.addEventListener('click', () => {
       const what = btn.dataset.clear;
