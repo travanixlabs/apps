@@ -76,6 +76,7 @@ const DEFAULT_CONFIG = {
   roots: [],          // folders the user has pointed at (authorises reads)
   rootsSeen: {},      // lowercased root -> when it was last opened, so it can expire
   cacheNamesV2: false, // whether cached previews have been renamed to derivable names
+  cacheTidyV3: false,  // whether the legacy-named leftovers have been swept up
   homeFollowsAccount: true, // resolve home from the signed-in OneDrive account
   homeDir: '',        // opened on launch, and by the 🏠 button
   // Folder names to show at the default folder, by name rather than path so the
@@ -595,8 +596,8 @@ function adoptEmbedded(file, stat, meta) {
 }
 
 async function getMeta(file, stat) {
-  const key = cacheKey(file, stat, 'meta');
-  if (metaIndex[key]) return metaIndex[key];
+  const known = cachedMeta(file, stat);
+  if (known) return known;
   let meta;
   try {
     // A cloud file is probed over HTTPS, never through its placeholder:
@@ -615,7 +616,7 @@ async function getMeta(file, stat) {
   } catch (err) {
     meta = { width: 0, height: 0, codec: '', fps: 0, duration: 0, bitrate: 0, error: 'probe failed' };
   }
-  metaIndex[key] = meta;
+  metaIndex[metaKey(stat)] = meta;
   saveMetaSoon();
   return meta;
 }
@@ -746,12 +747,30 @@ async function writeCacheManifest() {
 }
 
 /**
- * Metadata already on disk for this exact file version. Survives OneDrive
- * dehydration: the key is path + size + mtime, none of which change when
- * Windows reclaims the bytes.
+ * The metadata index's key: size and modified time, like every other store.
+ *
+ * It used to be a sha1 over the PATH as well, which meant a moved or renamed
+ * video was re-probed as a stranger and its old entry sat in the index
+ * forever -- the file only ever grew. Size and mtime survive a move, a rename
+ * and OneDrive dehydration alike, and it is the key the sidecar, the faces and
+ * the fingerprints already trust.
+ */
+const metaKey = (stat) => `${stat.size}:${Math.round(stat.mtimeMs)}`;
+
+/**
+ * Metadata already on disk for this exact file version. An entry written under
+ * the old path-hashed key moves across the first time it is met.
  */
 function cachedMeta(file, stat) {
-  return metaIndex[cacheKey(file, stat, 'meta')] || null;
+  const key = metaKey(stat);
+  if (metaIndex[key]) return metaIndex[key];
+  const legacy = cacheKey(file, stat, 'meta');
+  const held = metaIndex[legacy];
+  if (!held) return null;
+  metaIndex[key] = held;
+  delete metaIndex[legacy];
+  saveMetaSoon();
+  return held;
 }
 
 /** Must stay in lockstep with segmentTime() in public/app.js. */
@@ -1036,6 +1055,25 @@ function shouldSkipDir(name) {
 }
 
 /**
+ * Sixty-four stats at once, not one. A stat is a round trip into the
+ * filesystem, and a scan of the library root makes twenty-seven thousand of
+ * them: one at a time that wait dominates the scan, and it dominates it worst
+ * exactly when a sweep has the disk busy. Measured on this machine's sweeps,
+ * the same batching made an identical walk 2.9x faster.
+ */
+const SCAN_STAT_BATCH = 64;
+
+async function statAll(files) {
+  const out = new Map();
+  for (let i = 0; i < files.length; i += SCAN_STAT_BATCH) {
+    const batch = files.slice(i, i + SCAN_STAT_BATCH);
+    const got = await Promise.all(batch.map((f) => fsp.stat(f).catch(() => null)));
+    got.forEach((stat, j) => { if (stat) out.set(batch[j], stat); });
+  }
+  return out;
+}
+
+/**
  * Walks everything under `dir` collecting video paths + cheap stats. No
  * ffprobe here — probing is the expensive step and only the files we
  * actually display get probed.
@@ -1044,6 +1082,9 @@ async function collectVideos(dir) {
   const videos = [];
   const seen = new Set();
 
+  const isVideo = (entry) => entry.isFile()
+    && VIDEO_EXT.has(path.extname(entry.name).toLowerCase());
+
   async function walk(current, depth) {
     let entries;
     try {
@@ -1051,6 +1092,8 @@ async function collectVideos(dir) {
     } catch {
       return; // unreadable folder — skip rather than abort the whole scan
     }
+    const stats = await statAll(entries.filter(isVideo)
+      .map((entry) => path.join(current, entry.name)));
     for (const entry of entries) {
       const full = path.join(current, entry.name);
       if (entry.isDirectory()) {
@@ -1059,18 +1102,15 @@ async function collectVideos(dir) {
         if (seen.has(real)) continue; // guard against junction loops
         seen.add(real);
         await walk(full, depth + 1);
-      } else if (entry.isFile() && VIDEO_EXT.has(path.extname(entry.name).toLowerCase())) {
-        try {
-          const stat = await fsp.stat(full);
-          videos.push({
-            path: full,
-            size: stat.size,
-            mtimeMs: stat.mtimeMs,
-            cloudOnly: isCloudOnly(stat),
-          });
-        } catch {
-          // vanished between readdir and stat — ignore
-        }
+      } else if (isVideo(entry)) {
+        const stat = stats.get(full); // vanished between readdir and stat — ignore
+        if (!stat) continue;
+        videos.push({
+          path: full,
+          size: stat.size,
+          mtimeMs: stat.mtimeMs,
+          cloudOnly: isCloudOnly(stat),
+        });
       }
     }
   }
@@ -1248,6 +1288,91 @@ async function migrateCacheNames() {
 }
 
 /**
+ * Sweeps up what the rename left behind, once.
+ *
+ * migrateCacheNames renamed every artefact it could still derive a legacy name
+ * for -- but a legacy name hashes the PATH, so a video moved or deleted since
+ * its strip was built left that strip unaddressable by anyone, forever. There
+ * were 5,029 of them in the sync root when this was written, plus their
+ * sidecars, plus the same class of orphan inside the metadata index.
+ *
+ * So: one walk of the roots to adopt anything still adoptable and to move each
+ * live video's metadata onto its new key, and then everything STILL wearing a
+ * 40-hex name -- on disk or in the index -- belongs to no video any walk can
+ * find. Files go to the Recycle Bin, not deleted: they are previews, but they
+ * are previews of videos that may be sitting in the Bin themselves.
+ */
+async function tidyCache() {
+  if (config.cacheTidyV3) return { skipped: true };
+  const started = Date.now();
+
+  // The cache dir read once; adoption and orphan-hunting are both set lookups.
+  let names;
+  try { names = new Set(await fsp.readdir(CACHE_DIR)); } catch { return { skipped: true }; }
+
+  let seen = 0;
+  let adopted = 0;
+  let rekeyed = 0;
+  for (const root of collapseRoots([...config.roots, config.homeDir].filter(Boolean))) {
+    let videos = [];
+    try { videos = await collectVideos(root); } catch { continue; }
+    for (const video of videos) {
+      seen += 1;
+      const stat = { size: video.size, mtimeMs: video.mtimeMs };
+
+      // The metadata of a live video moves onto its portable key.
+      const legacy = cacheKey(video.path, stat, 'meta');
+      if (metaIndex[legacy]) {
+        const key = metaKey(stat);
+        if (!metaIndex[key]) metaIndex[key] = metaIndex[legacy];
+        delete metaIndex[legacy];
+        rekeyed += 1;
+      }
+
+      for (const which of ['sprite', 'thumb']) {
+        const was = path.basename(legacyCachePath(video.path, stat, which));
+        if (!names.has(was)) continue;
+        const now = cacheName(stat, which === 'sprite' ? spriteSalt() : thumbSalt());
+        if (!names.has(now)) {
+          await adoptLegacyCache(video.path, stat, which);
+          adopted += 1;
+          names.add(now);
+        }
+        // Renamed across, or redundant beside an already-rebuilt one: either
+        // way the old name is spoken for and must not read as an orphan.
+        names.delete(was);
+        names.delete(`${was}.json`);
+      }
+    }
+  }
+  if (rekeyed) saveMetaSoon();
+
+  // Everything still wearing the old name, on disk...
+  const orphans = [...names].filter((n) => /^[0-9a-f]{40}\.jpg(\.json)?$/.test(n));
+  let bytes = 0;
+  for (const name of orphans) {
+    try { bytes += (await fsp.stat(path.join(CACHE_DIR, name))).size; } catch { /* already gone */ }
+  }
+  const binned = await recycle(orphans.map((n) => path.join(CACHE_DIR, n)));
+  const recycled = [...binned.values()].filter((r) => r.ok).length;
+
+  // ...and in the index.
+  let dropped = 0;
+  for (const key of Object.keys(metaIndex)) {
+    if (/^[0-9a-f]{40}$/.test(key)) { delete metaIndex[key]; dropped += 1; }
+  }
+  if (dropped) saveMetaSoon();
+
+  config.cacheTidyV3 = true;
+  saveConfigSoon();
+  log(`tidied the cache: ${adopted} adopted, ${rekeyed} meta entries rekeyed, `
+    + `${dropped} orphaned meta entries dropped, ${recycled} of ${orphans.length} `
+    + `legacy files recycled (${Math.round(bytes / 1e6)} MB) `
+    + `across ${seen} videos in ${Date.now() - started}ms`);
+  return { seen, adopted, rekeyed, dropped, recycled };
+}
+
+/**
  * One video as a listing entry.
  *
  * Factored out because the duplicates view needs the same shape for a file in
@@ -1365,11 +1490,12 @@ async function migrateCache(file, oldStat, newStat) {
       await fsp.rename(build(file, oldStat), build(file, newStat));
     } catch { /* nothing built for this file at the current settings */ }
   }
-  const from = cacheKey(file, oldStat, 'meta');
-  const to = cacheKey(file, newStat, 'meta');
-  if (metaIndex[from]) {
-    metaIndex[to] = metaIndex[from];
-    delete metaIndex[from];
+  const legacy = cacheKey(file, oldStat, 'meta');
+  const held = metaIndex[metaKey(oldStat)] || metaIndex[legacy];
+  if (held) {
+    metaIndex[metaKey(newStat)] = held;
+    delete metaIndex[metaKey(oldStat)];
+    delete metaIndex[legacy];
     saveMetaSoon();
   }
 }
@@ -1440,18 +1566,67 @@ async function embedTags(file) {
  * U+201D all close a string, and a library of scraped filenames contains all of
  * them. Reading $env: parses nothing, so there is nothing left to get wrong.
  */
-async function recycle(target) {
+/**
+ * Any number of targets through ONE shell, not one shell each.
+ *
+ * Spawning PowerShell costs a third of a second before it deletes anything, so
+ * a twenty-file selection was twenty of those in a row. The paths travel in a
+ * temp FILE rather than the environment -- five thousand of them (the legacy
+ * cache cleanup's worth) would blow the environment block -- written with a
+ * BOM so the scraped-filename Unicode reads back exactly. Results come back by
+ * LINE NUMBER, not by name: the console codepage mangles those same filenames
+ * on the way out, and an index cannot be mangled.
+ *
+ * Returns path -> { ok, message }. A missing entry means the shell itself
+ * failed, which the caller reports per file.
+ */
+async function recycle(targets) {
+  const list = Array.isArray(targets) ? targets : [targets];
+  const results = new Map();
+  if (!list.length) return results;
+
   const script = [
     'Add-Type -AssemblyName Microsoft.VisualBasic;',
-    '$p = $env:VIDEO_EXPLORER_DELETE;',
-    'if (Test-Path -LiteralPath $p -PathType Container) {',
-    "  [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($p, 'OnlyErrorDialogs', 'SendToRecycleBin')",
-    '} else {',
-    "  [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($p, 'OnlyErrorDialogs', 'SendToRecycleBin')",
+    '$lines = [System.IO.File]::ReadAllLines($env:VIDEO_EXPLORER_DELETE_LIST);',
+    'for ($i = 0; $i -lt $lines.Length; $i++) {',
+    "  $p = $lines[$i]; if ($p -eq '') { continue }",
+    '  try {',
+    '    if (Test-Path -LiteralPath $p -PathType Container) {',
+    "      [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($p, 'OnlyErrorDialogs', 'SendToRecycleBin')",
+    '    } else {',
+    "      [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($p, 'OnlyErrorDialogs', 'SendToRecycleBin')",
+    '    }',
+    "    [Console]::Out.WriteLine('OK ' + $i)",
+    '  } catch {',
+    "    [Console]::Out.WriteLine('ERR ' + $i + ' ' + $_.Exception.Message.Replace([char]10, ' ').Replace([char]13, ' '))",
+    '  }',
     '}',
   ].join(' ');
-  await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script],
-    { env: { ...process.env, VIDEO_EXPLORER_DELETE: target } });
+
+  // Bounded batches: one shell per thousand keeps any single run answerable,
+  // and the cleanup sweep can log progress between them.
+  const SHELL_BATCH = 1000;
+  for (let start = 0; start < list.length; start += SHELL_BATCH) {
+    const batch = list.slice(start, start + SHELL_BATCH);
+    const listFile = path.join(os.tmpdir(),
+      `ve-recycle-${crypto.randomBytes(6).toString('hex')}.txt`);
+    try {
+      await fsp.writeFile(listFile, '﻿' + batch.join('\n'), 'utf8');
+      const { stdout } = await run('powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', script],
+        { env: { ...process.env, VIDEO_EXPLORER_DELETE_LIST: listFile } });
+      for (const line of stdout.split(/\r?\n/)) {
+        const m = /^(OK|ERR) (\d+)(?: (.*))?$/.exec(line.trim());
+        if (!m) continue;
+        const target = batch[Number(m[2])];
+        if (target === undefined) continue;
+        results.set(target, { ok: m[1] === 'OK', message: m[3] || '' });
+      }
+    } finally {
+      await fsp.unlink(listFile).catch(() => {});
+    }
+  }
+  return results;
 }
 
 /** Never silently clobber: pick "name (2).mp4" style suffixes instead. */
@@ -1624,25 +1799,40 @@ async function handleAction(body) {
   const paths = Array.isArray(body.paths) ? body.paths : [];
   const results = [];
 
+  // Deletes go as one batch through one shell -- see recycle(). Twenty files
+  // used to be twenty PowerShell launches in a row.
+  if (op === 'delete') {
+    const srcs = paths.map((raw) => authoriseOrThrow(raw));
+    // Keys first: they are size and modified time, and neither can be had once
+    // a file is in the Recycle Bin.
+    const keys = new Map();
+    for (const src of srcs) {
+      try { keys.set(src, dupes.keyFor(await fsp.stat(src))); } catch { /* already gone */ }
+    }
+    const binned = await recycle(srcs);
+    for (const src of srcs) {
+      const got = binned.get(src);
+      if (!got || !got.ok) {
+        results.push({ path: src, ok: false, message: (got && got.message) || 'Recycle failed' });
+        continue;
+      }
+      const key = keys.get(src);
+      // A pair minus one member is not a pair -- the survivor must stop being
+      // called a copy, or the Duplicates filter keeps listing it. And the file
+      // is no longer anywhere, so it must stop being offered as somewhere else
+      // this face can be found. Its profile is kept: restore it from the Bin
+      // and the key is unchanged, so everything known comes back with it.
+      if (key) dupes.forget(key);
+      if (key) faces.forgetPath(key);
+      results.push({ path: src, ok: true, message: 'Sent to Recycle Bin' });
+    }
+    return results;
+  }
+
   for (const raw of paths) {
     const src = authoriseOrThrow(raw);
     try {
-      if (op === 'delete') {
-        // Read the key before the file goes: it is size and modified time, and
-        // neither can be had once it is in the Recycle Bin.
-        let key = null;
-        try { key = dupes.keyFor(await fsp.stat(src)); } catch { /* already gone */ }
-        await recycle(src);
-        // A pair minus one member is not a pair -- the survivor must stop being
-        // called a copy, or the Duplicates filter keeps listing it.
-        if (key) dupes.forget(key);
-        // And it is no longer anywhere, so it must stop being offered as
-        // somewhere else this face can be found. Its profile is kept: restore
-        // it from the Recycle Bin and the key is unchanged, so everything known
-        // about it comes back with it.
-        if (key) faces.forgetPath(key);
-        results.push({ path: src, ok: true, message: 'Sent to Recycle Bin' });
-      } else if (op === 'move') {
+      if (op === 'move') {
         if (!body.dest) throw new Error('No destination folder given');
         const destDir = path.resolve(body.dest);
         // Moving into the current folder would mint a "name (2).mp4" duplicate
@@ -1675,11 +1865,23 @@ async function handleAction(body) {
   return results;
 }
 
+/**
+ * What the API waits on before answering: the labels, the metadata index and
+ * the face engine. The port itself opens long before these are read -- the
+ * window should appear at once, and a request that arrives early waits here
+ * for the stores instead of being answered from half of them.
+ *
+ * /api/config is exempt: it needs nothing but the config already in hand, and
+ * it is the first thing the page asks for.
+ */
+let coreReady = Promise.resolve();
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${HOST}:${PORT}`);
   const route = url.pathname;
 
   try {
+    if (route.startsWith('/api/') && route !== '/api/config') await coreReady;
     if (req.method === 'GET' && (route === '/' || route === '/index.html')) {
       return serveStatic(res, 'index.html');
     }
@@ -1738,7 +1940,17 @@ const server = http.createServer(async (req, res) => {
       // narrowing to what is downloaded is the availability filter's job. Only
       // an explicit cloud=0 holds cloud items back.
       const includeCloud = url.searchParams.get('cloud') !== '0';
-      const scanned = await scanDirectory(resolved, recursive, includeCloud);
+      // A person is waiting on this exactly as they wait on a strip build, so
+      // it takes the same hold: the sweeps pause between videos rather than
+      // keeping the disk busy under a walk. Measured with the face sweep
+      // running, an unheld scan of one library folder took 51 seconds.
+      const giveBack = priority.hold('scan ' + path.basename(resolved));
+      let scanned;
+      try {
+        scanned = await scanDirectory(resolved, recursive, includeCloud);
+      } finally {
+        giveBack();
+      }
 
       // The default folder is a home page rather than a directory listing: it is
       // the one place where the sync root's own furniture — Documents, Music,
@@ -1779,7 +1991,16 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 400, { error: 'No filter to count' });
       }
       const key = path.resolve(dir).toLowerCase();
-      const videos = lastWalk.key === key ? lastWalk.videos : await collectVideos(dir);
+      let videos = lastWalk.videos;
+      if (lastWalk.key !== key) {
+        // Somebody is waiting on these numbers too -- same hold as the scan.
+        const giveBack = priority.hold('count ' + path.basename(dir));
+        try {
+          videos = await collectVideos(dir);
+        } finally {
+          giveBack();
+        }
+      }
       const subs = await subfolderEntries(dir);
       const started = Date.now();
       const counts = countUnderFolders(dir, videos, subs, adv);
@@ -2262,6 +2483,10 @@ async function checkFfmpeg() {
 }
 
 async function main() {
+  // Where a launch spends its time, on the record: every step below says when
+  // it finished, so a slow start names its own culprit.
+  const booted = Date.now();
+  const mark = (what) => log(`boot +${Date.now() - booted}ms: ${what}`);
   await fsp.mkdir(CACHE_DIR, { recursive: true });
   config = { ...DEFAULT_CONFIG, ...loadJsonSync(CONFIG_FILE, {}) };
   // Flattening is a view you reach for, not a mode you live in: reopening the
@@ -2282,8 +2507,31 @@ async function main() {
   CACHE_DIR = defaultCacheDir(ONEDRIVE_ROOT);
   META_FILE = path.join(CACHE_DIR, 'meta.json');
 
+  await fsp.mkdir(CACHE_DIR, { recursive: true });
+  mark('home resolved, roots pruned');
+
+  // The port opens HERE, before a single store is read. The window used to
+  // wait on all of them -- the labels, a megabyte of metadata parsed
+  // synchronously, the face engine, two ffmpeg version checks -- which was
+  // most of the ten seconds between double-click and anything appearing.
+  // Requests that need the stores park on coreReady instead.
+  server.listen(PORT, HOST, () => {
+    const url = `http://${HOST}:${PORT}`;
+    mark(`ready at ${url}`);
+    log(`cache: ${CACHE_DIR}`);
+    if (!process.env.NO_OPEN) openWindow(url);
+  });
+
+  coreReady = loadCore(mark);
+  // Marked handled so a store failure surfaces per-request rather than as an
+  // unhandled rejection; the requests awaiting it still see the error.
+  coreReady.catch((err) => log('BOOT FAILED loading stores:', err.message));
+}
+
+/** Everything the API needs read before it answers. Behind the open port. */
+async function loadCore(mark) {
   const lib = await library.init(ONEDRIVE_ROOT);
-  log(`ratings and tags: ${lib.count} records at ${lib.file}`);
+  mark(`labels: ${lib.count} records at ${lib.file}`);
   // An unreadable sidecar is the one startup condition worth shouting about:
   // everything still works except the thing you would not notice was broken.
   if (lib.readOnly) log(`LABELS READ-ONLY: ${lib.readOnly} — edits refused until this reads`);
@@ -2305,6 +2553,7 @@ async function main() {
     // reading but must not widen the sweep to the whole profile.
     home: () => config.homeDir || ONEDRIVE_ROOT || '',
   });
+  mark('face engine up');
   if (face.ok) {
     // The store is read in the background, so the count here is what had landed
     // by now rather than what is there -- say where it is instead.
@@ -2354,12 +2603,17 @@ async function main() {
   });
   log('framing: paused until you start it');
 
-  metaIndex = loadJsonSync(META_FILE, {});
-  log(`${Object.keys(metaIndex).length} cached metadata entries`);
-  await checkFfmpeg();
+  try {
+    metaIndex = JSON.parse((await fsp.readFile(META_FILE, 'utf8')).replace(/^﻿/, ''));
+  } catch { metaIndex = {}; }
+  mark(`${Object.keys(metaIndex).length} cached metadata entries -- core ready`);
 
-  // After the port is open: this is housekeeping, and nothing waits on it.
+  // Housekeeping, behind everything: nothing waits on any of it.
+  checkFfmpeg().catch(() => {});
   setTimeout(() => { migrateCacheNames().catch(() => {}); }, 3000);
+  // After the rename pass has had its turn, and well behind everything a
+  // person is waiting on: this walks the roots once and then never again.
+  setTimeout(() => { tidyCache().catch((err) => log('cache tidy failed:', err.message)); }, 8000);
 
   /**
    * Count the library up front, so a pill knows its own numbers before it is
@@ -2390,13 +2644,6 @@ async function main() {
       log(`counted the library: ${said} outstanding`);
     })().catch(() => { /* a count is not worth failing a launch over */ });
   }, 4000);
-
-  server.listen(PORT, HOST, () => {
-    const url = `http://${HOST}:${PORT}`;
-    log(`ready at ${url}`);
-    log(`cache: ${CACHE_DIR}`);
-    if (!process.env.NO_OPEN) openWindow(url);
-  });
 }
 
 server.on('error', (err) => {

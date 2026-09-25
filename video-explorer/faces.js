@@ -81,6 +81,8 @@ const BANDS = [
 const state = {
   dir: '',
   index: { version: VERSION, model: '', videos: {} },
+  // Entries added since the local snapshot was last written.
+  snapshotDirty: false,
   rebuilding: '',
   centroids: new Map(),   // performer -> { sum, count, keys:Set, vec }
   suggestions: new Map(), // video key -> [{ name, score, band, person }]
@@ -230,27 +232,92 @@ function migrateFromSingleFile(model) {
 }
 
 /**
- * Every stored profile, read back.
+ * The whole store as one LOCAL file, so a launch is one read instead of
+ * twenty-three thousand.
  *
- * In parallel, in batches: several thousand sequential reads is a second and a
- * half of waiting on the disk one file at a time, where sixty-four at once is a
- * fraction of that. The batch is bounded because a few thousand open file
- * handles at once is its own kind of rude.
+ * The per-video files stay the source of truth -- they are what makes the
+ * store syncable and safe against a bad write -- but reading them all back
+ * individually was nine seconds of every launch. The snapshot lives OUTSIDE
+ * the sync root on purpose: it is derived, per-machine, and 80MB of it has no
+ * business being uploaded.
+ *
+ * Safe because an entry file is written once and never edited in place: adds
+ * and deletes both show up in the directory listing, so a name-diff against
+ * the snapshot finds exactly what changed, wherever it was changed -- this
+ * machine mid-sweep, or another machine syncing profiles in.
+ */
+function snapshotFile() {
+  return path.join(process.env.LOCALAPPDATA || os.tmpdir(),
+    'video-explorer', 'faces-snapshot.json');
+}
+
+async function readSnapshot() {
+  try {
+    const snap = JSON.parse(await fsp.readFile(snapshotFile(), 'utf8'));
+    if (snap.version !== VERSION || snap.model !== state.index.model) return null;
+    return snap.videos || null;
+  } catch {
+    return null; // first run, or a torn write: the per-video files answer
+  }
+}
+
+async function writeSnapshot() {
+  if (!state.snapshotDirty) return;
+  state.snapshotDirty = false;
+  try {
+    const file = snapshotFile();
+    await fsp.mkdir(path.dirname(file), { recursive: true });
+    const body = JSON.stringify({
+      version: VERSION, model: state.index.model, videos: state.index.videos,
+    });
+    // Through a rename, so a kill mid-write leaves the old snapshot rather
+    // than half of a new one.
+    await fsp.writeFile(`${file}.tmp`, body);
+    await fsp.rename(`${file}.tmp`, file);
+  } catch { state.snapshotDirty = true; /* a full disk: try again next flush */ }
+}
+
+/**
+ * Every stored profile, read back: the snapshot for the bulk, the per-video
+ * files for whatever the snapshot does not know -- in parallel, in batches,
+ * because several thousand sequential reads wait on the disk one file at a
+ * time.
  */
 async function loadEntries() {
   const dir = path.join(state.dir, ENTRIES);
   let names;
   try { names = await fsp.readdir(dir); } catch { return; }
-  const wanted = names.filter((n) => n.endsWith('.json'));
+  const onDisk = names.filter((n) => n.endsWith('.json'));
+
+  const snap = await readSnapshot();
+  let carried = 0;
+  const fresh = [];
+  if (snap) {
+    for (const name of onDisk) {
+      const key = keyFromFileName(name);
+      // Entries the snapshot holds are taken as read; ones it has never seen
+      // -- new on this machine or synced in from another -- are read properly.
+      if (snap[key]) { state.index.videos[key] = snap[key]; carried += 1; } else fresh.push(name);
+    }
+  } else {
+    fresh.push(...onDisk);
+  }
+
   const BATCH = 64;
-  for (let i = 0; i < wanted.length; i += BATCH) {
-    await Promise.all(wanted.slice(i, i + BATCH).map(async (name) => {
+  for (let i = 0; i < fresh.length; i += BATCH) {
+    await Promise.all(fresh.slice(i, i + BATCH).map(async (name) => {
       try {
         state.index.videos[keyFromFileName(name)] =
           JSON.parse(await fsp.readFile(path.join(dir, name), 'utf8'));
       } catch { /* one unreadable profile is not worth failing the rest for */ }
     }));
   }
+  if (carried || fresh.length) {
+    log(`store: ${carried} from the snapshot, ${fresh.length} read fresh`);
+  }
+  // Anything read fresh belongs in the next snapshot; so does the first one.
+  if (fresh.length || !snap) state.snapshotDirty = true;
+  await writeSnapshot();
 }
 
 /**
@@ -264,6 +331,7 @@ const unpackVector = (a) => engine.normalise(Float32Array.from(a));
 
 /** One profile, written the moment it exists. */
 async function writeEntry(key, entry) {
+  state.snapshotDirty = true;
   try {
     const dir = path.join(state.dir, ENTRIES);
     await fsp.mkdir(dir, { recursive: true });
@@ -277,6 +345,8 @@ async function writeEntry(key, entry) {
  */
 async function flush() {
   await writeDigest();
+  // The launch snapshot, refreshed with whatever this session profiled.
+  await writeSnapshot();
 }
 
 // ------------------------------------------------------------------- digest

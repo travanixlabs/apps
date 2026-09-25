@@ -29,6 +29,7 @@
 const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
+const os = require('os');
 
 const engine = require('./dupe-engine');
 const priority = require('./priority');
@@ -159,30 +160,100 @@ async function loadDigest() {
 
 // ------------------------------------------------------------------ storage
 
+/**
+ * The light index as one LOCAL file, so a launch is one 4MB read instead of
+ * twenty-three thousand full fingerprints parsed for six fields each.
+ *
+ * The per-video prints stay the source of truth -- syncable, safe against a
+ * bad write -- and the snapshot lives OUTSIDE the sync root because it is
+ * derived and per-machine. Safe for the same reason the face store's is: a
+ * print is written once and never edited in place, so adds and deletes both
+ * show in the directory listing, and a name-diff finds exactly what changed.
+ */
+function snapshotFile() {
+  return path.join(process.env.LOCALAPPDATA || os.tmpdir(),
+    'video-explorer', 'prints-snapshot.json');
+}
+
+async function readSnapshot() {
+  try {
+    const snap = JSON.parse(await fsp.readFile(snapshotFile(), 'utf8'));
+    if (snap.version !== VERSION) return null;
+    return snap.rows || null;
+  } catch {
+    return null; // first run, or a torn write: the prints answer
+  }
+}
+
+let snapshotDirty = false;
+let snapshotTimer = null;
+
+async function writeSnapshot() {
+  if (!snapshotDirty) return;
+  snapshotDirty = false;
+  try {
+    const file = snapshotFile();
+    await fsp.mkdir(path.dirname(file), { recursive: true });
+    const rows = {};
+    for (const [key, row] of state.light) rows[key] = row;
+    // Through a rename, so a kill mid-write leaves the old snapshot rather
+    // than half of a new one.
+    await fsp.writeFile(`${file}.tmp`, JSON.stringify({ version: VERSION, rows }));
+    await fsp.rename(`${file}.tmp`, file);
+  } catch { snapshotDirty = true; /* a full disk: the next print tries again */ }
+}
+
+/** A sweep adds prints steadily; one write a minute keeps the snapshot near. */
+function writeSnapshotSoon() {
+  snapshotDirty = true;
+  if (snapshotTimer) return;
+  snapshotTimer = setTimeout(() => {
+    snapshotTimer = null;
+    writeSnapshot().catch(() => {});
+  }, 60000);
+  if (snapshotTimer.unref) snapshotTimer.unref();
+}
+
 async function loadIndex() {
   const dir = path.join(state.dir, ENTRIES);
   let names = [];
   // An unreadable folder still counts as read: leaving `ready` false would
   // park the worker in "loading" for the life of the process.
   try { names = await fsp.readdir(dir); } catch { state.ready = true; return; }
+  const onDisk = names.filter((n) => n.endsWith('.json'));
+
+  const snap = await readSnapshot();
+  let carried = 0;
+  const fresh = [];
+  for (const name of onDisk) {
+    const key = keyFromFileName(name);
+    const held = snap && snap[key];
+    // The digest may have seeded a stub for this key; the snapshot's row is
+    // the real one, exactly as the print's would be.
+    if (held) { state.light.set(key, held); carried += 1; } else fresh.push(name);
+  }
+
   let loaded = 0;
-  for (const name of names) {
-    if (!name.endsWith('.json')) continue;
-    try {
-      const row = JSON.parse(await fsp.readFile(path.join(dir, name), 'utf8'));
-      state.light.set(keyFromFileName(name), {
-        gaps: row.gaps || [],
-        secs: row.secs || 0,
-        cuts: row.cuts || 0,
-        name: row.name || '',
-        path: row.path || '',
-        at: row.at || 0,
-      });
-      loaded += 1;
-    } catch { /* a half-written file from a hard kill: it will be redone */ }
+  const BATCH = 64;
+  for (let i = 0; i < fresh.length; i += BATCH) {
+    await Promise.all(fresh.slice(i, i + BATCH).map(async (name) => {
+      try {
+        const row = JSON.parse(await fsp.readFile(path.join(dir, name), 'utf8'));
+        state.light.set(keyFromFileName(name), {
+          gaps: row.gaps || [],
+          secs: row.secs || 0,
+          cuts: row.cuts || 0,
+          name: row.name || '',
+          path: row.path || '',
+          at: row.at || 0,
+        });
+        loaded += 1;
+      } catch { /* a half-written file from a hard kill: it will be redone */ }
+    }));
   }
   state.ready = true;
-  log(`loaded ${loaded} fingerprints`);
+  log(`loaded ${loaded + carried} fingerprints (${carried} from the snapshot)`);
+  if (loaded || !snap) { snapshotDirty = true; await writeSnapshot(); }
 }
 
 /** Has this exact file already been fingerprinted? */
@@ -309,6 +380,7 @@ async function profile(file, stat) {
   });
   state.scanned += 1;
   state.done += 1;
+  writeSnapshotSoon();
   return row;
 }
 

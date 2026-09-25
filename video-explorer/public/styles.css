@@ -531,6 +531,14 @@ main { padding: 16px; }
   border-radius: var(--radius);
   overflow: hidden;
   transition: border-color .14s, box-shadow .14s, transform .14s;
+  /* A flattened library folder is six thousand cards, and every one of them
+     used to be laid out and painted whether or not it was anywhere near the
+     screen. This lets the browser skip the ones that are not, with a stand-in
+     height -- 16:9 preview plus the detail rows -- so the scrollbar stays
+     honest for cards never yet rendered; `auto` remembers each card's real
+     height once it has been. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto calc(var(--card-width) * 0.5625 + 120px);
 }
 .card:hover {
   border-color: var(--border-strong);
