@@ -210,11 +210,14 @@
            so finishing a video is not a dead stop. It only ever offers; the
            arrows and the click decide. -->
       <div id="upNext" class="up-next" hidden>
-        <div class="up-next-words">
-          <span class="up-next-label">Up next</span>
-          <span id="upNextName" class="up-next-name"></span>
+        <img id="upNextThumb" class="up-next-thumb" alt="" hidden>
+        <div class="up-next-row">
+          <div class="up-next-words">
+            <span class="up-next-label">Up next</span>
+            <span id="upNextName" class="up-next-name"></span>
+          </div>
+          <button id="upNextGo" class="btn btn-primary" type="button">Play ▶</button>
         </div>
-        <button id="upNextGo" class="btn btn-primary" type="button">Play ▶</button>
       </div>
 
       <!-- Our own controls. The browser's native bar gives no way to ask where

@@ -5062,6 +5062,31 @@ function nextUp() {
   return state.grouped ? next.file : next;
 }
 
+// Which path the up-next thumbnail currently shows (or is fetching), so the
+// per-tick sync neither refetches nor resets a src it already set.
+let upNextThumbFor = null;
+
+function syncUpNextThumb(next) {
+  const img = $('#upNextThumb');
+  if (!img) return;
+  if (upNextThumbFor === next.path) return;
+  upNextThumbFor = next.path;
+  const known = state.thumbs.get(next.path);
+  img.hidden = !known;
+  if (known) { img.src = known; return; }
+  img.removeAttribute('src');
+  fetch(`/api/thumb?path=${encodeURIComponent(next.path)}`)
+    .then((res) => (res.ok ? res.blob() : null))
+    .then((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      state.thumbs.set(next.path, url);
+      // Only if this is still the video the card is offering.
+      if (upNextThumbFor === next.path) { img.src = url; img.hidden = false; }
+    })
+    .catch(() => { /* no thumbnail leaves just the words */ });
+}
+
 function syncUpNext() {
   const card = $('#upNext');
   if (!card) return;
@@ -5071,10 +5096,11 @@ function syncUpNext() {
   // Not over a loop: the end is not the end when playback circles back.
   const ending = watching() && duration > 20 && left <= 10
     && !loop.on && !(loop.a !== null && loop.b !== null);
-  if (!ending) { card.hidden = true; return; }
+  if (!ending) { card.hidden = true; upNextThumbFor = null; return; }
   const next = nextUp();
-  if (!next) { card.hidden = true; return; }
+  if (!next) { card.hidden = true; upNextThumbFor = null; return; }
   $('#upNextName').textContent = next.name;
+  syncUpNextThumb(next);
   card.hidden = false;
 }
 

@@ -2363,16 +2363,26 @@ body.dragging .card { cursor: grabbing; }
   right: 16px;
   bottom: 64px;
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 8px;
+  width: 240px;
   max-width: 46%;
-  padding: 8px 10px 8px 14px;
+  padding: 8px 10px 10px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   background: rgba(10, 13, 18, .88);
   z-index: 4;
 }
-.up-next-words { display: flex; flex-direction: column; min-width: 0; }
+.up-next-thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: calc(var(--radius) - 3px);
+  background: #000;
+}
+.up-next-row { display: flex; align-items: center; gap: 10px; }
+.up-next-words { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .up-next-label {
   font-size: 10px;
   font-weight: 700;
