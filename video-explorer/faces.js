@@ -30,6 +30,7 @@ const os = require('os');
 
 const engine = require('./face-engine');
 const priority = require('./priority');
+const { skipDir, statAll } = require('./walk-rules');
 
 const log = (msg) => console.log(`[video-explorer] familiar faces: ${msg}`);
 
@@ -1144,41 +1145,8 @@ async function profile(file, stat, opts = {}) {
 
 // ------------------------------------------------------ the background sweep
 
-/**
- * Folders that are never a video library and are expensive to prove empty.
- *
- * AppData in particular contains junctions that point at their own ancestors --
- * "Application Data" inside "AppData\Local" is the classic one -- so walking it
- * without a loop guard does not finish at all.
- */
-const NEVER_WALK = new Set([
-  'appdata', 'application data', 'local settings', 'windows', 'program files',
-  'program files (x86)', 'programdata', 'node_modules', '$recycle.bin',
-  'system volume information', 'onedrivetemp', 'temp', 'tmp', '.cache', '.git',
-]);
-
-const skipDir = (name) => name.startsWith('$') || name.startsWith('.')
-  || NEVER_WALK.has(name.toLowerCase());
-
-/**
- * How many files are stat'ed at once while walking. See framing.js, where the
- * measurement behind this number is written down: one at a time spends the walk
- * waiting on OneDrive's filter driver, and sixty-four at once turned a 2.5-6.7
- * second walk into a steady 1.5. The same batching the face store is already
- * read back with, applied to the one part of a launch that still waited.
- */
-const STAT_BATCH = 64;
-
-/** A folder's videos stat'ed together, keyed by path. See framing.js. */
-async function statAll(files) {
-  const out = new Map();
-  for (let i = 0; i < files.length; i += STAT_BATCH) {
-    const batch = files.slice(i, i + STAT_BATCH);
-    const got = await Promise.all(batch.map((f) => fsp.stat(f).catch(() => null)));
-    got.forEach((stat, j) => { if (stat) out.set(batch[j], stat); });
-  }
-  return out;
-}
+// The skip list and the batched stat live in walk-rules.js, shared with the
+// other two sweeps -- the three private copies had already drifted apart.
 
 const inside = (child, parent) => {
   const c = path.resolve(child).toLowerCase();

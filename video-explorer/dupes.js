@@ -33,6 +33,7 @@ const os = require('os');
 
 const engine = require('./dupe-engine');
 const priority = require('./priority');
+const { skipDir, statAll } = require('./walk-rules');
 
 const log = (msg) => console.log(`[video-explorer] duplicates: ${msg}`);
 
@@ -284,28 +285,9 @@ async function writePrint(key, row) {
 const isCloudOnly = (s) => (s.size ? (s.blocks || 0) * 512 < s.size * 0.5 : false);
 
 const VIDEO_EXT = new Set(['.mp4', '.m4v', '.mov']);
-const NEVER_WALK = new Set(['node_modules', 'system volume information', '$recycle.bin']);
-const skipDir = (name) => name.startsWith('$') || name.startsWith('.')
-  || NEVER_WALK.has(name.toLowerCase());
-
-/**
- * How many files are stat'ed at once while walking. See framing.js, where the
- * measurement behind this number is written down: one at a time spends the walk
- * waiting on OneDrive's filter driver, and sixty-four at once turned a 2.5-6.7
- * second walk into a steady 1.5.
- */
-const STAT_BATCH = 64;
-
-/** A folder's videos stat'ed together, keyed by path. See framing.js. */
-async function statAll(files) {
-  const out = new Map();
-  for (let i = 0; i < files.length; i += STAT_BATCH) {
-    const batch = files.slice(i, i + STAT_BATCH);
-    const got = await Promise.all(batch.map((f) => fsp.stat(f).catch(() => null)));
-    got.forEach((stat, j) => { if (stat) out.set(batch[j], stat); });
-  }
-  return out;
-}
+// The skip list and the batched stat live in walk-rules.js, shared with the
+// other two sweeps. This one used to know THREE never-walk folders to the face
+// sweep's fifteen, which was a difference nobody chose.
 
 /** Every downloaded video under the roots, deepest folder last. */
 async function walkForWork() {

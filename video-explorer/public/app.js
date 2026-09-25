@@ -199,17 +199,26 @@ function fmtBitrate(bps) {
   return bps >= 1e6 ? `${(bps / 1e6).toFixed(1)} Mbps` : `${Math.round(bps / 1e3)} kbps`;
 }
 
-function toast(message, kind = '') {
+function toast(message, kind = '', action = null) {
   const el = document.createElement('div');
   el.className = 'toast' + (kind ? ' ' + kind : '');
   el.textContent = message;
+  // A toast with a button is an offer, and an offer needs time to be taken.
+  if (action) {
+    const btn = document.createElement('button');
+    btn.className = 'toast-act';
+    btn.type = 'button';
+    btn.textContent = action.label;
+    btn.addEventListener('click', () => { el.remove(); action.run(); });
+    el.appendChild(btn);
+  }
   $('#toasts').appendChild(el);
   setTimeout(() => {
     el.style.transition = 'opacity .25s';
     el.style.opacity = '0';
     setTimeout(() => el.remove(), 260);
     // A message that asks you to do something has to outlast a glance.
-  }, kind === 'err' || kind === 'warn' ? 6000 : 3200);
+  }, action ? 9000 : (kind === 'err' || kind === 'warn' ? 6000 : 3200));
 }
 
 function setStatus(text) {
@@ -4208,7 +4217,27 @@ async function doAction(op, paths, extra = {}) {
 
   const ok = results.filter((r) => r.ok);
   const bad = results.filter((r) => !r.ok);
-  if (ok.length) toast(`${ok[0].message}${ok.length > 1 ? ` — ${ok.length} files` : ': ' + baseName(ok[0].path)}`, 'ok');
+  const said = `${ok.length ? ok[0].message : ''}${ok.length > 1 ? ` — ${ok.length} files` : (ok.length ? ': ' + baseName(ok[0].path) : '')}`;
+  // A move can be taken back: each file goes home to the folder it left. The
+  // undo is itself a move, so it must not offer to undo the undo forever.
+  if (ok.length && op === 'move' && !extra.isUndo) {
+    const homes = new Map();
+    for (const r of ok) {
+      const from = r.path.replace(/[\\/][^\\/]*$/, '');
+      if (!homes.has(from)) homes.set(from, []);
+      homes.get(from).push(r.dest);
+    }
+    toast(said, 'ok', {
+      label: 'Undo',
+      run: async () => {
+        for (const [home, files] of homes) {
+          await doAction('move', files, { dest: home, isUndo: true });
+        }
+      },
+    });
+  } else if (ok.length) {
+    toast(said, 'ok');
+  }
   for (const r of bad) toast(`${baseName(r.path)}: ${r.message}`, 'err');
 
   // Reflect the filesystem change locally instead of a full rescan.
@@ -4441,6 +4470,9 @@ function buildPlayerActions(file) {
 
 function playFile(file, seq = null) {
   stopLive(); // free the hover decoder before opening a second one
+  clearLoop(); // a loop is about a moment in the video that is going away
+  const upNext = $('#upNext');
+  if (upNext) upNext.hidden = true;
   state.playing = file;
   state.playingAnchor = null; // this one is in the listing until told otherwise
   state.playingCard = seq;
@@ -4848,6 +4880,132 @@ const scrub = {
 /** Whether this is a playthrough rather than a preview. */
 const watching = () => !$('#playerBar').hidden;
 
+// ------------------------------------------------- speed, loops and what's next
+
+/**
+ * One rate for the session, like the volume: a speed you chose is a statement
+ * about how you watch, not about one file. Reloading the app puts it back to
+ * real time, the same way it puts the sound back to muted.
+ */
+const RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+let playRate = 1;
+
+function setRate(next) {
+  playRate = RATES.includes(next) ? next : 1;
+  const player = $('#player');
+  // Only a playthrough follows the rate. The ten-frame preview cycles on its
+  // own clock, and speeding THAT up would just make the sampling twitchy.
+  if (watching()) player.playbackRate = playRate;
+  const label = $('#pbRate');
+  if (label) {
+    label.textContent = playRate === 1 ? '1×' : `${playRate}×`;
+    label.classList.toggle('on', playRate !== 1);
+  }
+}
+
+function stepRate(step) {
+  const at = RATES.indexOf(playRate);
+  setRate(RATES[Math.max(0, Math.min(RATES.length - 1, at + step))]);
+  wakeBar();
+}
+
+/**
+ * Loops. L, or the bar's button, replays the whole video; [ and ] pin the two
+ * ends of a stretch and playback circles it. Everything clears when another
+ * video opens -- a loop is about a moment in THIS one.
+ */
+const loop = { on: false, a: null, b: null };
+
+function syncLoopUI() {
+  const btn = $('#pbLoop');
+  if (!btn) return;
+  const ab = loop.a !== null && loop.b !== null;
+  btn.classList.toggle('on', loop.on || loop.a !== null);
+  const tag = $('#pbLoopAB');
+  if (tag) {
+    tag.hidden = loop.a === null;
+    tag.textContent = ab ? 'A–B' : 'A–';
+  }
+  $('#player').loop = loop.on && !ab;
+}
+
+function toggleLoop() {
+  if (loop.a !== null || loop.b !== null) {
+    // A pinned stretch outranks the plain toggle, so the button also serves as
+    // the way OUT of an A-B loop.
+    loop.a = null;
+    loop.b = null;
+    loop.on = false;
+  } else {
+    loop.on = !loop.on;
+  }
+  syncLoopUI();
+  wakeBar();
+}
+
+function pinLoopEnd(which) {
+  const player = $('#player');
+  if (!watching()) return;
+  const at = Number(player.currentTime) || 0;
+  loop[which] = at;
+  // Ends pinned backwards are meant the right way round.
+  if (loop.a !== null && loop.b !== null && loop.b <= loop.a) {
+    [loop.a, loop.b] = [loop.b, loop.a];
+  }
+  loop.on = false; // the stretch takes over from the whole-video loop
+  syncLoopUI();
+  wakeBar();
+}
+
+/** Rides timeupdate: past B means back to A. */
+function holdLoop() {
+  if (loop.a === null || loop.b === null) return;
+  const player = $('#player');
+  if (player.currentTime >= loop.b) {
+    try { player.currentTime = loop.a; } catch { /* not seekable */ }
+  }
+}
+
+function clearLoop() {
+  loop.on = false;
+  loop.a = null;
+  loop.b = null;
+  syncLoopUI();
+}
+
+/**
+ * The up-next card: the video the ➡ would play, offered from ten seconds out
+ * and left standing at the end. It never plays anything itself -- looping,
+ * shuffling back, or just sitting on the last frame all stay yours.
+ */
+function nextUp() {
+  if (shuffle.on) {
+    if (shuffle.at + 1 < shuffle.seen.length) return shuffle.seen[shuffle.at + 1];
+    return null; // the next pick does not exist until the press draws it
+  }
+  const list = visibleCards();
+  const at = playingAt();
+  if (at < 0 || list.length < 2) return null;
+  const next = list[(at + 1) % list.length];
+  return state.grouped ? next.file : next;
+}
+
+function syncUpNext() {
+  const card = $('#upNext');
+  if (!card) return;
+  const player = $('#player');
+  const duration = playerDuration();
+  const left = duration > 0 ? duration - (Number(player.currentTime) || 0) : Infinity;
+  // Not over a loop: the end is not the end when playback circles back.
+  const ending = watching() && duration > 20 && left <= 10
+    && !loop.on && !(loop.a !== null && loop.b !== null);
+  if (!ending) { card.hidden = true; return; }
+  const next = nextUp();
+  if (!next) { card.hidden = true; return; }
+  $('#upNextName').textContent = next.name;
+  card.hidden = false;
+}
+
 /**
  * True if `video` already holds the bytes for `time`.
  *
@@ -4995,6 +5153,9 @@ function barSync() {
   seek.setAttribute('aria-valuemax', String(Math.round(duration)));
   seek.setAttribute('aria-valuenow', String(Math.round(at)));
   seek.setAttribute('aria-valuetext', fmtDuration(at));
+
+  holdLoop();
+  syncUpNext();
 
   const stage = player.closest('.player-stage');
   if (stage) stage.classList.toggle('paused', player.paused);
@@ -5497,6 +5658,8 @@ function beginPlayback() {
   player.controls = false;
   player.muted = !soundOn;
   player.volume = masterVolume();
+  player.playbackRate = playRate;
+  syncLoopUI();
   try { player.currentTime = 0; } catch { /* not seekable yet; it will start at 0 anyway */ }
   const played = player.play();
   if (played && played.catch) played.catch(() => {});
@@ -6699,6 +6862,26 @@ function wireEvents() {
 
   $('#pbPlay').addEventListener('click', togglePlayback);
   $('#pbFull').addEventListener('click', toggleFullscreen);
+  $('#pbRate').addEventListener('click', () => {
+    // Click cycles upward and wraps -- the keys < and > step it either way.
+    const at = RATES.indexOf(playRate);
+    setRate(RATES[(at + 1) % RATES.length]);
+    wakeBar();
+  });
+  $('#pbLoop').addEventListener('click', toggleLoop);
+  $('#pbPip').addEventListener('click', async () => {
+    const player = $('#player');
+    try {
+      if (document.pictureInPictureElement) await document.exitPictureInPicture();
+      else await player.requestPictureInPicture();
+    } catch (err) {
+      toast('Picture-in-picture is not available here: ' + err.message, 'err');
+    }
+  });
+  $('#upNextGo').addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    playSibling(1);
+  });
   $('#pbMute').addEventListener('click', () => setSoundOn(!soundOn));
   $('#pbVol').addEventListener('input', (ev) => {
     const level = Number(ev.target.value) / 100;
@@ -6964,6 +7147,31 @@ function onKeyDown(ev) {
     if (ev.key === 'f' || ev.key === 'F') {
       ev.preventDefault();
       toggleFullscreen();
+      return;
+    }
+    if (ev.key === 'l' || ev.key === 'L') {
+      ev.preventDefault();
+      toggleLoop();
+      return;
+    }
+    if (ev.key === '[' || ev.key === ']') {
+      ev.preventDefault();
+      pinLoopEnd(ev.key === '[' ? 'a' : 'b');
+      return;
+    }
+    if (ev.key === '<') {
+      ev.preventDefault();
+      stepRate(-1);
+      return;
+    }
+    if (ev.key === '>') {
+      ev.preventDefault();
+      stepRate(1);
+      return;
+    }
+    if (ev.key === 'j' || ev.key === 'J') {
+      ev.preventDefault();
+      seekBy(-10);
       return;
     }
   }

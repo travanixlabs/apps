@@ -2332,3 +2332,57 @@ body.dragging .card { cursor: grabbing; }
 }
 .face-verdict.band-strong { color: #7fd1a3; }
 .face-verdict.band-maybe { color: var(--text-faint); }
+
+/* ------------------------------------------------- speed, loop, PiP, up next */
+
+/* The rate reads as a word; lit while it is anything but real time. */
+.pb-rate { min-width: 34px; font-size: 12px; }
+.pb-rate.on, #pbLoop.on { color: var(--accent); }
+.pb-loop-ab {
+  font-size: 9px;
+  font-weight: 700;
+  margin-left: 2px;
+  letter-spacing: .5px;
+}
+
+/* A toast that offers a way back. */
+.toast-act {
+  margin-left: 10px;
+  padding: 2px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* What the arrow would play, offered as the end approaches. */
+.up-next {
+  position: absolute;
+  right: 16px;
+  bottom: 64px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 46%;
+  padding: 8px 10px 8px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: rgba(10, 13, 18, .88);
+  z-index: 4;
+}
+.up-next-words { display: flex; flex-direction: column; min-width: 0; }
+.up-next-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .8px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.up-next-name {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

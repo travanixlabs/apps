@@ -28,6 +28,7 @@ const fsp = fs.promises;
 const path = require('path');
 
 const priority = require('./priority');
+const { skipDir, statAll } = require('./walk-rules');
 
 const log = (msg) => console.log(`[video-explorer] framing: ${msg}`);
 
@@ -93,42 +94,14 @@ function init({ build, hasStrip, countCached = null, roots = [], home = null }) 
 const isCloudOnly = (s) => (s.size ? (s.blocks || 0) * 512 < s.size * 0.5 : false);
 
 const VIDEO_EXT = new Set(['.mp4', '.m4v', '.mov']);
-const NEVER_WALK = new Set(['node_modules', 'system volume information', '$recycle.bin']);
-const skipDir = (name) => name.startsWith('$') || name.startsWith('.')
-  || NEVER_WALK.has(name.toLowerCase());
+// The skip list and the batched stat live in walk-rules.js, shared with the
+// other two sweeps; the measurement behind the batch size moved there with it.
 
 const keyFor = (stat) => `${stat.size}:${Math.round(stat.mtimeMs)}`;
 
-/**
- * How many files are stat'ed at once while walking.
- *
- * Every stat in this library goes through OneDrive's filter driver, so awaiting
- * them one at a time spends the whole walk waiting on round trips. Measured over
- * the real 27,239 videos, interleaved and repeated so a warming cache could not
- * flatter either: one at a time took 2,518ms and then 6,663ms, sixty-four at a
- * time took 1,513ms and then 1,672ms. The spread matters more than the median --
- * the slow runs were the ones that made a launch feel like it was reading
- * everything again. 256 at a time measured no better and swung further.
- */
-const STAT_BATCH = 64;
-
-/**
- * Stat a folder's videos together, keyed by path.
- *
- * Returned as a map rather than a list so the caller can still walk its entries
- * in readdir order: the queue has to come out exactly as it did when each file
- * was stat'ed in turn. A file that cannot be stat'ed is simply absent, which is
- * the same as the `continue` it used to get.
- */
-async function statAll(files) {
-  const out = new Map();
-  for (let i = 0; i < files.length; i += STAT_BATCH) {
-    const batch = files.slice(i, i + STAT_BATCH);
-    const got = await Promise.all(batch.map((f) => fsp.stat(f).catch(() => null)));
-    got.forEach((stat, j) => { if (stat) out.set(batch[j], stat); });
-  }
-  return out;
-}
+// The measured batch size and the shared statAll moved to walk-rules.js with
+// the skip list: one at a time took 2,518-6,663ms over the real 27,239 videos,
+// sixty-four at a time a steady ~1,500ms, and 256 measured no better.
 
 /**
  * Every downloaded video under the roots, and which of them already has a strip.
