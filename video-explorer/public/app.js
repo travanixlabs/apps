@@ -1863,6 +1863,7 @@ async function editRecords(paths, patch) {
       // filter -- and its timeline must redraw either way.
       if (state.playing && state.playing.path === filePath) {
         if (record.marks !== undefined) state.playing.marks = record.marks;
+        if (record.resume !== undefined) state.playing.resume = record.resume;
         drawMarks();
       }
       const file = state.files.find((f) => f.path === filePath);
@@ -1884,6 +1885,7 @@ async function editRecords(paths, patch) {
       // Bookmarked moments. Copied back so the timeline redraws from the store
       // rather than from what the click optimistically assumed.
       if (record.marks !== undefined) file.marks = record.marks;
+      if (record.resume !== undefined) file.resume = record.resume;
       file.updated = record.updated || 0;
       refreshCardRecord(file);
     }
@@ -4413,6 +4415,9 @@ function closePicker() {
 /** Drops the stream so the OS lets go of the file, keeping the modal open. */
 function releasePlayer() {
   const player = $('#player');
+  // Before the bar hides: the pause below fires with watching() already false,
+  // so the close-path save has to happen here or not at all.
+  saveResume();
   stopPlayerPreview(); // a timer left running would seek a released element
   hidePlayerBar();
   // The captured frames belong to the file that is going away, and the second
@@ -4543,6 +4548,24 @@ function playFile(file, seq = null) {
  * filter and sort rather than the folder on disk. Wraps at both ends, which
  * keeps the buttons live instead of leaving one dead at each edge.
  */
+/**
+ * The music-player rule for the back button: more than fifteen seconds in,
+ * back means "this one, from the top"; pressed again inside those fifteen
+ * seconds it means the previous video. Only the BUTTON behaves this way --
+ * the arrow keys and a swipe keep their plain meaning, since stepping through
+ * a listing is what they are for.
+ */
+function playerBack() {
+  const player = $('#player');
+  if (watching() && (Number(player.currentTime) || 0) > 15) {
+    try { player.currentTime = 0; } catch { /* not seekable yet */ }
+    barSync();
+    wakeBar();
+    return;
+  }
+  playSibling(-1);
+}
+
 function playSibling(step) {
   // Shuffling, the arrows mean something else entirely: there is no listing to
   // be next in, only a pool to draw from.
@@ -4880,6 +4903,50 @@ const scrub = {
 /** Whether this is a playthrough rather than a preview. */
 const watching = () => !$('#playerBar').hidden;
 
+// -------------------------------------------------------- resume where you were
+
+/**
+ * Where a video should start, given what the sidecar remembers.
+ *
+ * The first half-minute is not worth resuming into, and neither is the credits
+ * end of it -- a position within 45 seconds of the end means it was watched,
+ * and next time starts from the top.
+ */
+function resumeAt(file, duration) {
+  const at = Number(file && file.resume) || 0;
+  if (at < 30) return 0;
+  if (duration > 0 && at > duration - 45) return 0;
+  return at;
+}
+
+/**
+ * What to write back, or null for "nothing worth a write".
+ *
+ * The sidecar is one synced file, so a resume point is only recorded when it
+ * says something new: finished or barely-started clears a stored point, and a
+ * position is stored when it has moved ten seconds past what is already there.
+ */
+function resumeToKeep(current, duration, had) {
+  const done = duration > 0 && current > duration - 45;
+  if (done || current < 30) return had ? 0 : null;
+  if (Math.abs(current - had) < 10) return null;
+  return Math.round(current);
+}
+
+let resumeWrote = 0; // when the last periodic save went out
+
+function saveResume() {
+  const file = state.playing;
+  if (!file || !watching()) return;
+  const player = $('#player');
+  const keep = resumeToKeep(Number(player.currentTime) || 0, playerDuration(),
+    Number(file.resume) || 0);
+  if (keep === null) return;
+  file.resume = keep;
+  resumeWrote = Date.now();
+  editRecords([file.path], { resume: keep });
+}
+
 // ------------------------------------------------- speed, loops and what's next
 
 /**
@@ -4915,6 +4982,11 @@ function stepRate(step) {
  * video opens -- a loop is about a moment in THIS one.
  */
 const loop = { on: false, a: null, b: null };
+
+function syncAutoNext() {
+  const btn = $('#pbAuto');
+  if (btn) btn.classList.toggle('on', state.config.autoNext === true);
+}
 
 function syncLoopUI() {
   const btn = $('#pbLoop');
@@ -5660,7 +5732,16 @@ function beginPlayback() {
   player.volume = masterVolume();
   player.playbackRate = playRate;
   syncLoopUI();
-  try { player.currentTime = 0; } catch { /* not seekable yet; it will start at 0 anyway */ }
+  // Picking up where any device left off. The offer to start over rides the
+  // toast, so the common case -- carry on -- costs nothing.
+  const back = resumeAt(state.playing, playerDuration());
+  try { player.currentTime = back; } catch { /* not seekable yet; it will start at 0 anyway */ }
+  if (back) {
+    toast(`Resumed at ${fmtDuration(back)}`, 'ok', {
+      label: 'Start over',
+      run: () => { try { $('#player').currentTime = 0; } catch { /* fine */ } },
+    });
+  }
   const played = player.play();
   if (played && played.catch) played.catch(() => {});
   showPlayerBar();
@@ -6842,7 +6923,7 @@ function wireEvents() {
     if (ev.target.closest('.player-bar')) return;
     if (watching()) togglePlayback();
   });
-  $('#playerPrev').addEventListener('click', () => playSibling(-1));
+  $('#playerPrev').addEventListener('click', playerBack);
   $('#playerNext').addEventListener('click', () => playSibling(1));
 
   // ---- the control bar ----------------------------------------------------
@@ -6856,6 +6937,22 @@ function wireEvents() {
   }
   player.addEventListener('play', wakeBar);
   player.addEventListener('pause', wakeBar);
+  // Where you stood, written when it can matter: on a pause -- which is also
+  // what closing fires on the way out -- at the end, and once a minute during
+  // playback so a crash costs a minute, not the evening. resumeToKeep already
+  // refuses writes that say nothing new, so none of these spam the sync root.
+  player.addEventListener('pause', () => saveResume());
+  player.addEventListener('ended', () => saveResume());
+  player.addEventListener('timeupdate', () => {
+    if (watching() && Date.now() - resumeWrote > 60000) saveResume();
+  });
+  // Autoplay next: on by its bar toggle, and never over a loop -- a loop
+  // means "stay here", whatever the toggle says.
+  player.addEventListener('ended', () => {
+    if (!state.config.autoNext || !watching()) return;
+    if (loop.on || (loop.a !== null && loop.b !== null)) return;
+    playSibling(1);
+  });
   // Moving over the picture is asking for the controls back.
   $('#playerModal .player-stage').addEventListener('pointermove', wakeBar);
   $('#playerBar').addEventListener('pointerenter', wakeBar);
@@ -6869,6 +6966,11 @@ function wireEvents() {
     wakeBar();
   });
   $('#pbLoop').addEventListener('click', toggleLoop);
+  $('#pbAuto').addEventListener('click', () => {
+    saveConfig({ autoNext: !state.config.autoNext });
+    syncAutoNext();
+    wakeBar();
+  });
   $('#pbPip').addEventListener('click', async () => {
     const player = $('#player');
     try {
@@ -7159,6 +7261,17 @@ function onKeyDown(ev) {
       pinLoopEnd(ev.key === '[' ? 'a' : 'b');
       return;
     }
+    if ((ev.key === ',' || ev.key === '.') && $('#player').paused) {
+      // One frame at a time, the way an editor steps: only while paused, so
+      // the keys cannot fight the playback they would be stepping under.
+      ev.preventDefault();
+      const player = $('#player');
+      const fps = Number((state.meta.get(state.playing && state.playing.path) || {}).fps) || 30;
+      try { player.currentTime += (ev.key === '.' ? 1 : -1) / fps; } catch { /* not seekable */ }
+      barSync();
+      wakeBar();
+      return;
+    }
     if (ev.key === '<') {
       ev.preventDefault();
       stepRate(-1);
@@ -7275,6 +7388,7 @@ async function init() {
   $('#cardWidth').value = state.config.cardWidth || 200;
   document.documentElement.style.setProperty('--card-width', (state.config.cardWidth || 200) + 'px');
   syncVolumeUI();
+  syncAutoNext();
   // Bound once. The row that pages as you scroll is rebuilt for every video
   // played, and a listener added with it would be a listener leaked with it.
   watchSimilarScroll();

@@ -259,6 +259,8 @@ function decorate(stat) {
     // Bookmarked moments, earliest first, so the player can draw them on the
     // timeline the instant it opens rather than asking for them separately.
     marks: record.marks || [],
+    // Where playback stood when this was last closed, on any device.
+    resume: record.resume || 0,
     // When the labels last changed. Travels with the listing so "date modified"
     // can mean the video *or* what is known about it, whichever happened later.
     updated: record.updated || 0,
@@ -363,7 +365,25 @@ function apply(stat, name, patch) {
   refuseIfReadOnly();
   const key = keyFor(stat);
   const current = data.records[key] || { rating: 0, tags: [], models: [], name };
-  const next = { ...current, name: name || current.name, updated: Date.now() };
+  // Where playback stood is bookkeeping, not labelling: a record whose ONLY
+  // change is the resume point keeps its updated stamp, or merely watching
+  // something would push it to the top of the date sort as though it had been
+  // worked on.
+  const onlyResume = Object.keys(patch).every((k) => k === 'resume');
+  const next = {
+    ...current,
+    name: name || current.name,
+    updated: onlyResume ? (current.updated || 0) : Date.now(),
+  };
+
+  if (patch.resume !== undefined) {
+    // Seconds into the video, shared between the desktop and the phone through
+    // this file exactly like the rating. Zero clears it -- a finished video
+    // starts from the top next time.
+    const at = Math.max(0, Math.round(Number(patch.resume) || 0));
+    if (at > 0) next.resume = at;
+    else delete next.resume;
+  }
 
   if (patch.rating !== undefined) {
     next.rating = Math.max(0, Math.min(5, Math.round(Number(patch.rating) || 0)));
@@ -431,7 +451,7 @@ function apply(stat, name, patch) {
   // somebody chose to remember.
   if (!next.rating && !(next.tags || []).length && !(next.models || []).length
     && !(next.notModels || []).length && !(next.marks || []).length
-    && !next.studio && !next.production && !next.url) {
+    && !next.studio && !next.production && !next.url && !next.resume) {
     delete data.records[key];
     save();
     return { ...EMPTY };
@@ -448,6 +468,7 @@ function apply(stat, name, patch) {
     production: next.production || '',
     url: next.url || '',
     marks: next.marks || [],
+    resume: next.resume || 0,
     updated: next.updated,
   };
 }

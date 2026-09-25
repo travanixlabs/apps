@@ -90,6 +90,7 @@ const DEFAULT_CONFIG = {
   tileWidth: 640,     // poster/sprite tile width; matches the largest card size
   cardWidth: 200,     // smallest tile: the most videos on screen at once
   volume: 1,          // master playback volume, 0..1 — a preference, not a view
+  autoNext: false,    // when a video ends, play the next one
   foldersCollapsed: false,
   recursive: false,   // explorer-style by default: one folder level at a time
   // '' | 'models' | 'suggested': the grid split into a section per performer,

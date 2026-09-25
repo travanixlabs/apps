@@ -2337,7 +2337,7 @@ body.dragging .card { cursor: grabbing; }
 
 /* The rate reads as a word; lit while it is anything but real time. */
 .pb-rate { min-width: 34px; font-size: 12px; }
-.pb-rate.on, #pbLoop.on { color: var(--accent); }
+.pb-rate.on, #pbLoop.on, #pbAuto.on { color: var(--accent); }
 .pb-loop-ab {
   font-size: 9px;
   font-weight: 700;
