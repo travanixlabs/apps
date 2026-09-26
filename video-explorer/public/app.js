@@ -69,10 +69,6 @@ const state = {
  * them was a chance for one to drift.
  */
 const CHOICE_ROWS = [
-  ['#advFav', 'favourite', [
-    ['yes', 'a favourite is in it'],
-    ['no', 'nobody marked'],
-  ]],
   ['#advSuggested', 'suggested', [
     ['match', 'profiled with matching model',
       'read for faces, and every performer recognised in it is already named on '
@@ -102,14 +98,6 @@ const CHOICE_ROWS = [
       'a name is still offered and not credited \u2014 a decision you have not made '
       + 'yet. Videos with nothing suggested are not in here; there is nothing '
       + 'pending on those'],
-  ]],
-  ['#advLink', 'link', [
-    ['yes', 'has a link'],
-    ['no', 'no link'],
-  ]],
-  ['#advCloud', 'cloud', [
-    ['downloaded', 'downloaded only'],
-    ['cloud', 'cloud only \u2601'],
   ]],
   ['#advDupe', 'duplicate', [
     ['both', 'both match',
