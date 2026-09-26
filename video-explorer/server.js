@@ -2072,21 +2072,28 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === 'POST') {
         const body = await readBody(req);
-        const paths = Array.isArray(body.paths) ? body.paths : [];
+        const { paths: listed, ...patch } = body;
+        const paths = Array.isArray(listed) ? listed : [];
         const records = {};
+        let namesMoved = false;
         for (const raw of paths) {
           try {
             const target = authoriseOrThrow(raw);
             const stat = await fsp.stat(target);
-            records[raw] = library.apply(stat, path.basename(target), body);
+            const before = (library.decorate(stat).models || []).join('\n');
+            // Without `paths`: apply() reads the patch's keys to tell a resume
+            // save from a real edit.
+            records[raw] = library.apply(stat, path.basename(target), patch);
+            if ((records[raw].models || []).join('\n') !== before) namesMoved = true;
           } catch (err) {
             records[raw] = { error: err.message || String(err) };
           }
         }
         // Naming someone changes who the averages are built from, so the
-        // suggestions are only as current as the labels behind them.
-        if (body.models !== undefined || body.addModels !== undefined
-            || body.removeModels !== undefined) faces.rebuildSoon();
+        // suggestions are only as current as the labels behind them. Only when
+        // a name actually changed: the tag dialog sends its models box with
+        // every save, and each rebuild is a full re-score of the library.
+        if (namesMoved) faces.rebuildSoon();
         // Turning a name down changes one video's ranking and nobody's average,
         // so it re-scores that video instead of the whole library -- and then
         // says what the ranking became. Without that the client would keep

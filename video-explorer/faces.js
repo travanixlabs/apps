@@ -186,12 +186,12 @@ function init({ cacheDir, library, roots, home }) {
     loadEntries().then(() => {
       state.loading = false;
       vectorsDirty = true;
-      rebuild();
+      rebuildInBackground();
     }).catch(() => { state.loading = false; });
   }
   writeMeta(ready.model);
 
-  rebuild();
+  rebuildInBackground();
   return { ...ready, profiled: Object.keys(state.index.videos).length, modelDir };
 }
 
@@ -394,7 +394,15 @@ async function writeLineups() {
   if (!lineupsDirty || !state.dir) return false;
   lineupsDirty = false;
   const performers = {};
-  for (const name of state.centroids.keys()) {
+  // Each lineup walks the whole index, so the set is ~10 s of CPU: yielded
+  // between performers for the same reason the re-score is.
+  let slice = Date.now();
+  for (const name of [...state.centroids.keys()]) {
+    if (Date.now() - slice >= SLICE_MS) {
+      await breathe();
+      slice = Date.now();
+    }
+    if (!state.centroids.has(name)) continue;
     const built = lineup(name, 24);
     if (!built.faces.length) continue;
     performers[name] = {
@@ -504,10 +512,44 @@ let rebuildTimer = null;
  */
 function rebuildSoon() {
   clearTimeout(rebuildTimer);
-  rebuildTimer = setTimeout(() => { rebuildTimer = null; rebuild(); }, 400);
+  rebuildTimer = setTimeout(() => { rebuildTimer = null; rebuildInBackground(); }, 400);
 }
 
+/**
+ * The sweep's own rebuilds, at most once per SWEEP_REBUILD_MS.
+ *
+ * Every solo-credited video the sweep reads nudges one average by a fraction of
+ * itself, and a full re-score of the library is ~20 s of CPU. Doing that per
+ * video kept the server busy for most of every half minute. The video just read
+ * is still scored straight away; it is only everyone else's ranking that waits.
+ */
+const SWEEP_REBUILD_MS = 5 * 60 * 1000;
+let sweepRebuildTimer = null;
+
+function rebuildLater() {
+  if (sweepRebuildTimer) return;
+  sweepRebuildTimer = setTimeout(() => { sweepRebuildTimer = null; rebuildInBackground(); }, SWEEP_REBUILD_MS);
+  if (sweepRebuildTimer.unref) sweepRebuildTimer.unref();
+}
+
+/** For a batch tool that is about to flush and exit: all of it, right now. */
 function rebuild() {
+  rebuildCentroids();
+  rescoreRun += 1;
+  state.pendingSuggestions = null;
+  state.suggestions = new Map();
+  digestSoon();
+  if (!state.centroids.size) return;
+  for (const [key, entry] of Object.entries(state.index.videos)) scoreVideo(key, entry);
+}
+
+/** For the app: the same answer without holding up every request while it works. */
+function rebuildInBackground() {
+  rebuildCentroids();
+  return rescore();
+}
+
+function rebuildCentroids() {
   state.centroids.clear();
   const records = state.library ? state.library.all() : {};
   for (const [key, entry] of Object.entries(state.index.videos)) {
@@ -533,7 +575,6 @@ function rebuild() {
   }
   // The averages have moved, so every lineup's ordering is stale with them.
   lineupsDirty = true;
-  rescore();
 }
 
 // Below this, two faces are different people: same-person crops sit at 0.5 and
@@ -599,7 +640,7 @@ function bandFor(score, margin) {
  * suggest two names. Only the winner of each ranking is ever offered: second
  * place is what the margin is measured against, not a second guess.
  */
-function scoreVideo(key, entry) {
+function scoreVideo(key, entry, into = state.suggestions) {
   const out = [];
   // Turned down on this video. Not a candidate at all rather than a candidate
   // that loses: leaving her in would make her the runner-up the margin is
@@ -636,8 +677,14 @@ function scoreVideo(key, entry) {
   // name already on it should be the one at the top -- that is the shape of a
   // healthy answer, and it only reads that way if the order is the score.
   out.sort((a, b) => b.score - a.score);
-  if (out.length) state.suggestions.set(key, out);
-  else state.suggestions.delete(key);
+  // A one-off score landing while a background re-score is part way through
+  // goes into both, so the swap at the end cannot undo it.
+  const targets = into === state.suggestions && state.pendingSuggestions
+    ? [into, state.pendingSuggestions] : [into];
+  for (const map of targets) {
+    if (out.length) map.set(key, out);
+    else map.delete(key);
+  }
   return out;
 }
 
@@ -656,12 +703,39 @@ function rescoreOne(stat) {
   return scoreVideo(key, entry);
 }
 
-/** Every profiled video, when the averages themselves have moved. */
-function rescore() {
-  state.suggestions.clear();
+/**
+ * Every profiled video, when the averages themselves have moved.
+ *
+ * In slices of about SLICE_MS with the event loop let go between them: done in
+ * one go it is ~20 s in which the server answers nothing, a rating included.
+ * Scored into a fresh map and swapped in whole, so a reader never sees the
+ * library half-ranked. A newer rebuild abandons an older one mid-way.
+ */
+const SLICE_MS = 25;
+const breathe = () => new Promise((resolve) => { setImmediate(resolve); });
+let rescoreRun = 0;
+
+async function rescore() {
+  rescoreRun += 1;
+  const run = rescoreRun;
+  const into = new Map();
+  state.pendingSuggestions = into;
+  if (state.centroids.size) {
+    let slice = Date.now();
+    for (const [key, entry] of Object.entries(state.index.videos)) {
+      scoreVideo(key, entry, into);
+      if (Date.now() - slice >= SLICE_MS) {
+        await breathe();
+        if (run !== rescoreRun) return false;
+        slice = Date.now();
+      }
+    }
+  }
+  if (run !== rescoreRun) return false;
+  state.suggestions = into;
+  state.pendingSuggestions = null;
   digestSoon();
-  if (!state.centroids.size) return;
-  for (const [key, entry] of Object.entries(state.index.videos)) scoreVideo(key, entry);
+  return true;
 }
 
 
@@ -1443,8 +1517,8 @@ async function worker() {
           // the difference between a few microseconds and a full sweep of the
           // library, several thousand times over.
           const record = (state.library ? state.library.all() : {})[next.key];
-          if (record && (record.models || []).length === 1) rebuildSoon();
-          else scoreVideo(next.key, entry);
+          scoreVideo(next.key, entry);
+          if (record && (record.models || []).length === 1) rebuildLater();
         }
       } catch {
         state.failures.set(next.key, (state.failures.get(next.key) || 0) + 1);

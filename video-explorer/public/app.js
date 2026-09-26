@@ -1982,7 +1982,30 @@ function pruneFiltered(paths) {
 
 /** Every card for one path. Grouped, a video appears once per performer in it. */
 function cardsFor(filePath) {
-  return document.querySelectorAll(`.card[data-path="${CSS.escape(filePath)}"]`);
+  const held = cardIndex.get(filePath);
+  if (!held) return [];
+  const live = [];
+  for (const card of held) {
+    if (card.isConnected) live.push(card);
+    else held.delete(card);
+  }
+  if (!held.size) cardIndex.delete(filePath);
+  return live;
+}
+
+/**
+ * path -> the card elements built for it. A selector over the whole document
+ * cost ~0.5 ms per call once every video in the library is on screen (about a
+ * million nodes), and the metadata fill makes one call per video -- which kept
+ * the page busy for most of every second and left edits waiting behind it.
+ * Cards that have left the page are dropped as they are found.
+ */
+const cardIndex = new Map();
+
+function indexCard(filePath, card) {
+  let held = cardIndex.get(filePath);
+  if (!held) { held = new Set(); cardIndex.set(filePath, held); }
+  held.add(card);
 }
 
 /** Repaints just the stars and chips, so an edit never disturbs a playing hover. */
@@ -5066,25 +5089,49 @@ function nextUp() {
 // per-tick sync neither refetches nor resets a src it already set.
 let upNextThumbFor = null;
 
+/**
+ * The picture on the up-next card: the poster if one is held, else a frame of
+ * the preview strip the grid already loaded (most tiles only ever have that),
+ * else a poster asked for -- which, for a cloud file, is OneDrive's own
+ * thumbnail and hydrates nothing.
+ */
+function paintUpNextThumb(el, path) {
+  const poster = state.thumbs.get(path);
+  if (poster) {
+    el.style.backgroundImage = `url("${poster}")`;
+    el.style.backgroundSize = 'cover';
+    el.style.backgroundPosition = 'center';
+    return true;
+  }
+  const strip = state.sprites.get(path);
+  if (strip) {
+    const frames = strip.frames || 10;
+    const pick = Math.floor(frames / 3);
+    el.style.backgroundImage = `url("${strip.url}")`;
+    el.style.backgroundSize = `${frames * 100}% 100%`;
+    el.style.backgroundPosition = `${frames > 1 ? (pick / (frames - 1)) * 100 : 0}% 0`;
+    return true;
+  }
+  return false;
+}
+
 function syncUpNextThumb(next) {
-  const img = $('#upNextThumb');
-  if (!img) return;
+  const el = $('#upNextThumb');
+  if (!el) return;
   if (upNextThumbFor === next.path) return;
   upNextThumbFor = next.path;
-  const known = state.thumbs.get(next.path);
-  img.hidden = !known;
-  if (known) { img.src = known; return; }
-  img.removeAttribute('src');
+  if (paintUpNextThumb(el, next.path)) { el.hidden = false; return; }
+  el.hidden = true;
+  el.style.backgroundImage = '';
   fetch(`/api/thumb?path=${encodeURIComponent(next.path)}`)
     .then((res) => (res.ok ? res.blob() : null))
     .then((blob) => {
       if (!blob) return;
-      const url = URL.createObjectURL(blob);
-      state.thumbs.set(next.path, url);
+      state.thumbs.set(next.path, URL.createObjectURL(blob));
       // Only if this is still the video the card is offering.
-      if (upNextThumbFor === next.path) { img.src = url; img.hidden = false; }
+      if (upNextThumbFor === next.path && paintUpNextThumb(el, next.path)) el.hidden = false;
     })
-    .catch(() => { /* no thumbnail leaves just the words */ });
+    .catch(() => { /* no picture leaves just the words */ });
 }
 
 function syncUpNext() {
@@ -5093,10 +5140,12 @@ function syncUpNext() {
   const player = $('#player');
   const duration = playerDuration();
   const left = duration > 0 ? duration - (Number(player.currentTime) || 0) : Infinity;
-  // Not over a loop: the end is not the end when playback circles back.
-  const ending = watching() && duration > 20 && left <= 10
+  // While paused (the end included), or in the last fifteen seconds. Pressing
+  // play earlier than that puts it away. Not over a loop: the end is not the
+  // end when playback circles back.
+  const offer = watching() && duration > 20 && (player.paused || left <= 15)
     && !loop.on && !(loop.a !== null && loop.b !== null);
-  if (!ending) { card.hidden = true; upNextThumbFor = null; return; }
+  if (!offer) { card.hidden = true; upNextThumbFor = null; return; }
   const next = nextUp();
   if (!next) { card.hidden = true; upNextThumbFor = null; return; }
   $('#upNextName').textContent = next.name;
@@ -6016,10 +6065,12 @@ async function fetchMetaFor(files) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ paths: chunk }),
       });
+      // One map per chunk rather than a search of the whole listing per video.
+      const byPath = new Map(state.files.map((f) => [f.path, f]));
       for (const [filePath, info] of Object.entries(meta)) {
         if (!info || info.error || info.skipped) continue;
         state.meta.set(filePath, info);
-        updateCardMeta(filePath);
+        updateCardMeta(filePath, byPath.get(filePath));
       }
     } catch (err) {
       // This chunk and everything behind it went unanswered, so let a later
@@ -6032,8 +6083,8 @@ async function fetchMetaFor(files) {
 }
 
 /** Fills in duration/resolution once a probe lands, without a full re-render. */
-function updateCardMeta(filePath) {
-  const file = state.files.find((f) => f.path === filePath);
+function updateCardMeta(filePath, known) {
+  const file = known || state.files.find((f) => f.path === filePath);
   if (!file) return;
   const info = state.meta.get(filePath) || {};
 
@@ -6062,6 +6113,7 @@ function buildCard(file, index, group = null, seq = null) {
   const card = document.createElement('article');
   card.className = 'card' + (state.selected.has(file.path) ? ' selected' : '');
   card.dataset.path = file.path;
+  indexCard(file.path, card);
 
   // ---- preview -------------------------------------------------------
   const info = state.meta.get(file.path) || {};
@@ -6963,6 +7015,10 @@ function wireEvents() {
   }
   player.addEventListener('play', wakeBar);
   player.addEventListener('pause', wakeBar);
+  // timeupdate stops while paused, so the card is told about each change itself.
+  for (const type of ['play', 'pause', 'seeked', 'ended']) {
+    player.addEventListener(type, () => syncUpNext());
+  }
   // Where you stood, written when it can matter: on a pause -- which is also
   // what closing fires on the way out -- at the end, and once a minute during
   // playback so a crash costs a minute, not the evening. resumeToKeep already
