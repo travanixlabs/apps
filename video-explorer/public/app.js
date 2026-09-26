@@ -4612,8 +4612,6 @@ function buildPlayerActions(file) {
 function playFile(file, seq = null) {
   stopLive(); // free the hover decoder before opening a second one
   clearLoop(); // a loop is about a moment in the video that is going away
-  const upNext = $('#upNext');
-  if (upNext) upNext.hidden = true;
   state.playing = file;
   state.playingAnchor = null; // this one is in the listing until told otherwise
   state.playingCard = seq;
@@ -5182,9 +5180,8 @@ function clearLoop() {
 }
 
 /**
- * The up-next card: the video the ➡ would play, offered from ten seconds out
- * and left standing at the end. It never plays anything itself -- looping,
- * shuffling back, or just sitting on the last frame all stay yours.
+ * The video the ➡ would play. Used by the end-of-video handover and by the
+ * key itself; nothing is offered on screen for it any more.
  */
 function nextUp() {
   if (shuffle.on) {
@@ -5198,73 +5195,9 @@ function nextUp() {
   return state.grouped ? next.file : next;
 }
 
-// Which path the up-next thumbnail currently shows (or is fetching), so the
-// per-tick sync neither refetches nor resets a src it already set.
-let upNextThumbFor = null;
-
-/**
- * The picture on the up-next card: the poster if one is held, else a frame of
- * the preview strip the grid already loaded (most tiles only ever have that),
- * else a poster asked for -- which, for a cloud file, is OneDrive's own
- * thumbnail and hydrates nothing.
- */
-function paintUpNextThumb(el, path) {
-  const poster = state.thumbs.get(path);
-  if (poster) {
-    el.style.backgroundImage = `url("${poster}")`;
-    el.style.backgroundSize = 'cover';
-    el.style.backgroundPosition = 'center';
-    return true;
-  }
-  const strip = state.sprites.get(path);
-  if (strip) {
-    const frames = strip.frames || 10;
-    const pick = Math.floor(frames / 3);
-    el.style.backgroundImage = `url("${strip.url}")`;
-    el.style.backgroundSize = `${frames * 100}% 100%`;
-    el.style.backgroundPosition = `${frames > 1 ? (pick / (frames - 1)) * 100 : 0}% 0`;
-    return true;
-  }
-  return false;
-}
-
-function syncUpNextThumb(next) {
-  const el = $('#upNextThumb');
-  if (!el) return;
-  if (upNextThumbFor === next.path) return;
-  upNextThumbFor = next.path;
-  if (paintUpNextThumb(el, next.path)) { el.hidden = false; return; }
-  el.hidden = true;
-  el.style.backgroundImage = '';
-  fetch(`/api/thumb?path=${encodeURIComponent(next.path)}`)
-    .then((res) => (res.ok ? res.blob() : null))
-    .then((blob) => {
-      if (!blob) return;
-      state.thumbs.set(next.path, URL.createObjectURL(blob));
-      // Only if this is still the video the card is offering.
-      if (upNextThumbFor === next.path && paintUpNextThumb(el, next.path)) el.hidden = false;
-    })
-    .catch(() => { /* no picture leaves just the words */ });
-}
-
-function syncUpNext() {
-  const card = $('#upNext');
-  if (!card) return;
-  const player = $('#player');
-  const duration = playerDuration();
-  const left = duration > 0 ? duration - (Number(player.currentTime) || 0) : Infinity;
-  // While paused (the end included), or in the last fifteen seconds. Pressing
-  // play earlier than that puts it away. Not over a loop: the end is not the
-  // end when playback circles back.
-  const offer = watching() && duration > 20 && (player.paused || left <= 15)
-    && !loop.on && !(loop.a !== null && loop.b !== null);
-  if (!offer) { card.hidden = true; upNextThumbFor = null; return; }
-  const next = nextUp();
-  if (!next) { card.hidden = true; upNextThumbFor = null; return; }
-  $('#upNextName').textContent = next.name;
-  syncUpNextThumb(next);
-  card.hidden = false;
-}
+// The up-next card is gone: it sat over the picture while paused and in the
+// last fifteen seconds, and it was in the way more than it was useful. The ➡
+// key and the end-of-video handover still move to the next video.
 
 /**
  * True if `video` already holds the bytes for `time`.
@@ -5415,7 +5348,6 @@ function barSync() {
   seek.setAttribute('aria-valuetext', fmtDuration(at));
 
   holdLoop();
-  syncUpNext();
 
   const stage = player.closest('.player-stage');
   if (stage) stage.classList.toggle('paused', player.paused);
@@ -7199,10 +7131,6 @@ function wireEvents() {
   }
   player.addEventListener('play', wakeBar);
   player.addEventListener('pause', wakeBar);
-  // timeupdate stops while paused, so the card is told about each change itself.
-  for (const type of ['play', 'pause', 'seeked', 'ended']) {
-    player.addEventListener(type, () => syncUpNext());
-  }
   // Where you stood, written when it can matter: on a pause -- which is also
   // what closing fires on the way out -- at the end, and once a minute during
   // playback so a crash costs a minute, not the evening. resumeToKeep already
@@ -7245,10 +7173,6 @@ function wireEvents() {
     } catch (err) {
       toast('Picture-in-picture is not available here: ' + err.message, 'err');
     }
-  });
-  $('#upNextGo').addEventListener('click', (ev) => {
-    ev.stopPropagation();
-    playSibling(1);
   });
   $('#pbMute').addEventListener('click', () => setSoundOn(!soundOn));
   $('#pbVol').addEventListener('input', (ev) => {

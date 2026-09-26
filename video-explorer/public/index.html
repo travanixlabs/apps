@@ -206,20 +206,6 @@
       <!-- The ten-frame strip, shown instead of seeking a cloud video. -->
       <div id="playerStrip" class="player-strip" hidden></div>
       <span id="playerBadge" class="badge badge-frame player-badge"></span>
-      <!-- What the ➡ would play, offered in the last seconds and at the end,
-           so finishing a video is not a dead stop. It only ever offers; the
-           arrows and the click decide. -->
-      <div id="upNext" class="up-next" hidden>
-        <div id="upNextThumb" class="up-next-thumb" hidden></div>
-        <div class="up-next-row">
-          <div class="up-next-words">
-            <span class="up-next-label">Up next</span>
-            <span id="upNextName" class="up-next-name"></span>
-          </div>
-          <button id="upNextGo" class="btn btn-primary" type="button">Play ▶</button>
-        </div>
-      </div>
-
       <!-- Our own controls. The browser's native bar gives no way to ask where
            the pointer is on its timeline, and a seek you cannot preview is a
            guess — so the bar is ours and the preview hangs off it. -->
