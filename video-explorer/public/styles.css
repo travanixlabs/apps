@@ -746,6 +746,10 @@ main { padding: 16px; }
 }
 .qbtn:hover { background: #253243; border-color: rgba(255, 255, 255, .3); }
 .qbtn.danger:hover { background: #4a2320; color: #ffc6c1; border-color: #8a4a44; }
+/* The source link is an anchor rather than a button, so that the shell hands it
+   to the browser — but it sits in the same row and must look like the rest. */
+a.qbtn { text-decoration: none; }
+a.qbtn:hover { color: #dbe6f0; }
 
 
 /* ------------------------------------------------------- cloud-only marker */
@@ -2355,6 +2359,13 @@ body.dragging .card { cursor: grabbing; }
   color: var(--accent);
   font-weight: 600;
   cursor: pointer;
+}
+
+/* Where the next chunk of the listing goes. Spans the row so it sits below the
+   cards rather than beside them, and is watched from well off-screen. */
+.grid-tail {
+  grid-column: 1 / -1;
+  height: 1px;
 }
 
 /* What the arrow would play, offered as the end approaches. */

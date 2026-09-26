@@ -281,7 +281,10 @@ function decorate(stat) {
  */
 async function writeNow() {
   if (readOnly) return { file: FILE, records: 0, readOnly };
-  const body = JSON.stringify(data, null, 1);
+  // Compact, not indented. The indentation was 740KB of spaces and newlines in
+  // a 3.8MB file that lives in the sync root and is re-uploaded whole after
+  // every burst of edits -- and that a phone downloads to read one rating.
+  const body = JSON.stringify(data);
   const count = Object.keys(data.records).length;
 
   if (lastWritten && count < lastWritten * (1 - BIG_DROP)) {

@@ -232,6 +232,45 @@ async function api(url, options) {
   return body;
 }
 
+/**
+ * A listing entry, with everything the server left out put back.
+ *
+ * Nine tenths of a library has no tags, no models and no rating, and saying so
+ * 27,240 times was 8MB of "": [] per listing. The server now omits anything
+ * that is merely the default and this puts them back on arrival, so nothing
+ * below here has to know the difference.
+ *
+ * Any metadata the server already had comes with the entry too, which is what
+ * spares the page a hundred and nine round trips asking for it.
+ */
+function hydrate(file) {
+  if (file.meta) {
+    state.meta.set(file.path, file.meta);
+    state.metaAsked.add(file.path);
+    delete file.meta;
+  }
+  file.rating = file.rating || 0;
+  file.tags = file.tags || [];
+  file.models = file.models || [];
+  file.notModels = file.notModels || [];
+  file.studio = file.studio || '';
+  file.production = file.production || '';
+  file.url = file.url || '';
+  file.marks = file.marks || [];
+  file.resume = file.resume || 0;
+  file.updated = file.updated || 0;
+  file.suggested = file.suggested || [];
+  file.people = file.people || 0;
+  file.profiled = file.profiled || false;
+  file.cloudOnly = file.cloudOnly || false;
+  file.duplicate = file.duplicate || false;
+  file.copies = file.copies || 0;
+  file.dupeKinds = file.dupeKinds || null;
+  return file;
+}
+
+const hydrateAll = (files) => (files || []).map(hydrate);
+
 async function saveConfig(patch) {
   Object.assign(state.config, patch);
   try {
@@ -264,15 +303,23 @@ async function scan(dir, { record = true } = {}) {
     state.dir = data.dir;
     state.parent = data.parent;
     if (record) pushHistory(data.dir);
-    state.files = data.files;
-    state.folders = data.folders || [];
-    state.totalBelow = data.totalBelow || 0;
-    state.cloudBelow = data.cloudBelow || 0;
     state.selected.clear();
     state.lastClickedIndex = -1;
     state.meta.clear();
     state.metaAsked.clear();
     clearSprites();
+    // After the clears: the listing carries what the server already knew about
+    // each video's bytes, and that goes straight into the same store /api/meta
+    // would have filled a hundred round trips later.
+    state.files = hydrateAll(data.files);
+    state.folders = data.folders || [];
+    state.totalBelow = data.totalBelow || 0;
+    state.cloudBelow = data.cloudBelow || 0;
+    // Which walk this listing came from. A folder served from the last walk of
+    // it is confirmed against the disk in the background, and the status poll
+    // is where we hear that it came back different.
+    state.walkVersion = Number(data.walkVersion) || 0;
+    state.walkStale = (Number(data.walkAge) || 0) > 0;
     $('#dirInput').value = data.dir;
     saveConfig({
       lastDir: data.dir,
@@ -1753,7 +1800,7 @@ async function startShuffle() {
     const seen = new Set();
     for (const dir of dirs) {
       const data = await api(`/api/scan?dir=${encodeURIComponent(dir)}&recursive=1`);
-      for (const file of data.files || []) {
+      for (const file of hydrateAll(data.files)) {
         if (seen.has(file.path)) continue;
         seen.add(file.path);
         all.push(file);
@@ -3036,13 +3083,75 @@ function watchPill(pill) {
  * the finding on the end. Clicking pauses, as it does for faces.
  */
 let framingStatus = null;
-async function pollFramingStatus() {
+/**
+ * The three sweeps and the walk, in one ask.
+ *
+ * Three routes polled every two seconds was ninety requests a minute whatever
+ * the app was doing, and each face reply counted twenty-three thousand
+ * profiles from scratch. One route now, and the rate follows the work: two
+ * seconds while something is actually running, fifteen when everything is
+ * paused and the numbers cannot move on their own.
+ */
+const POLL_BUSY_MS = 2000;
+const POLL_IDLE_MS = 15000;
+let pollTimer = null;
+
+function sweepRunning(status) {
+  return Boolean(status && (status.running || status.walking || status.counting));
+}
+
+async function pollStatus() {
+  let all = null;
   try {
-    framingStatus = await api('/api/framing/status');
-  } catch {
-    framingStatus = null;
-  }
+    all = await api('/api/status');
+  } catch { /* the server is restarting, or gone: the pills say so below */ }
+
+  faceStatus = all ? all.faces : null;
+  dupeStatus = all ? all.dupes : null;
+  framingStatus = all ? all.framing : null;
+  renderFacePill();
+  renderDupePill();
   renderFramingPill();
+
+  // A folder served from the last walk of it is confirmed against the disk
+  // behind the listing. When that comes back different, this is where we hear
+  // about it -- and the listing quietly redraws rather than waiting for the
+  // next time you happen to open the folder.
+  if (all && state.walkStale && Number(all.walkVersion) !== state.walkVersion) {
+    state.walkStale = false;
+    relistQuietly();
+  }
+
+  const busy = all && [all.faces, all.dupes, all.framing].some(sweepRunning);
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(pollStatus, busy ? POLL_BUSY_MS : POLL_IDLE_MS);
+}
+
+/**
+ * Re-lists the current folder without the scan's furniture: no spinner, no
+ * history entry, no jump to the top, and the scroll position left alone.
+ */
+async function relistQuietly() {
+  if (!state.dir) return;
+  try {
+    const recursive = $('#recursiveToggle').checked ? '1' : '0';
+    const data = await api(
+      `/api/scan?dir=${encodeURIComponent(state.dir)}&recursive=${recursive}`,
+    );
+    if (data.dir !== state.dir) return; // moved on while we were asking
+    const at = scrollRoot ? scrollRoot.scrollTop : 0;
+    const drawn = state.rendered;
+    state.files = hydrateAll(data.files);
+    state.folders = data.folders || [];
+    state.totalBelow = data.totalBelow || 0;
+    state.cloudBelow = data.cloudBelow || 0;
+    state.walkVersion = Number(data.walkVersion) || 0;
+    render();
+    // Back to roughly where they were: the same number of cards drawn, then
+    // the same offset down the page.
+    while (state.rendered < drawn && state.rendered < pageSource().length) appendPage();
+    if (scrollRoot) scrollRoot.scrollTop = at;
+  } catch { /* a folder that has gone is the next scan's problem, not a toast */ }
 }
 
 function renderFramingPill() {
@@ -3132,14 +3241,6 @@ async function toggleFramingSweep() {
 }
 
 let dupeStatus = null;
-async function pollDupeStatus() {
-  try {
-    dupeStatus = await api('/api/dupes/status');
-  } catch {
-    dupeStatus = null;
-  }
-  renderDupePill();
-}
 
 function renderDupePill() {
   const pill = $('#dupesPill');
@@ -3250,14 +3351,6 @@ async function toggleDupeSweep() {
  * number would be a lot of machinery for a line of text. Clicking it pauses.
  */
 let faceStatus = null;
-async function pollFaceStatus() {
-  try {
-    faceStatus = await api('/api/faces/status');
-  } catch {
-    faceStatus = null;
-  }
-  renderFacePill();
-}
 
 function renderFacePill() {
   const pill = $('#facesPill');
@@ -3851,6 +3944,7 @@ function loadSprite(filePath, previewEl) {
       const blob = await res.blob();
       const entry = { url: URL.createObjectURL(blob), frames };
       state.sprites.set(filePath, entry);
+      trimSprites();
       stripLanded = true;
       return entry;
     } catch (err) {
@@ -3882,6 +3976,34 @@ function markPreviewFailed(filePath, message) {
   why.textContent = String(message || '').slice(0, 90);
   fail.append(head, why);
   el.appendChild(fail);
+}
+
+/**
+ * How many preview strips are kept in memory at once.
+ *
+ * A strip is about 170KB of decoded image held behind a blob URL, and every
+ * card that scrolls past asks for one: a long browse of the library root was
+ * heading for gigabytes, all of it for cards nobody can see any more. Only
+ * strips whose cards have left the grid are let go, and the one playing is
+ * never let go at all.
+ */
+const SPRITE_CAP = 400;
+
+function trimSprites() {
+  const spare = state.sprites.size - SPRITE_CAP;
+  if (spare <= 0) return;
+  const playing = state.playing ? state.playing.path : '';
+  let freed = 0;
+  for (const [filePath, entry] of state.sprites) {
+    if (freed >= spare) break;
+    if (filePath === playing) continue;
+    // Still on screen somewhere, or about to be: revoking it now would blank a
+    // tile that is drawn from this very URL.
+    if (cardsFor(filePath).length) continue;
+    URL.revokeObjectURL(entry.url);
+    state.sprites.delete(filePath);
+    freed += 1;
+  }
 }
 
 function applySprite(previewEl, entry) {
@@ -4483,16 +4605,7 @@ function buildPlayerActions(file) {
   const bar = $('#playerActions');
   bar.innerHTML = '';
   for (const action of actionsFor(file, { inPlayer: true })) {
-    const btn = document.createElement('button');
-    btn.className = 'qbtn' + (action.danger ? ' danger' : '');
-    btn.textContent = action.icon;
-    btn.title = action.title;
-    btn.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      ev.preventDefault();
-      action.run();
-    });
-    bar.appendChild(btn);
+    bar.appendChild(buildActionButton(action));
   }
 }
 
@@ -5847,6 +5960,7 @@ function render() {
   // already in flight lands in the cache and costs the new grid nothing.
   posters.queue.length = 0;
   posters.queued.clear();
+  if (gridTailWatcher) gridTailWatcher.disconnect();
   grid.innerHTML = '';
 
   renderBreadcrumb();
@@ -5867,9 +5981,20 @@ function render() {
 }
 
 /**
- * Renders the whole listing. There is no paging: every video the filters leave
- * gets a card and a picture, however many that is, because a library you have
- * to keep pressing "load more" to see is a library you cannot scan.
+ * How many cards one go of the renderer builds.
+ *
+ * There is still no paging and no button: everything the filters leave is in
+ * the listing and will be drawn, just not all in the same frame. Drawing the
+ * library root in one go built 27,240 cards and 990,000 nodes in a single
+ * blocking task -- eleven seconds in which the window did nothing at all, and
+ * a page that stayed a million nodes heavy for the rest of the session. A
+ * couple of hundred at a time paints the first screen immediately and the rest
+ * arrive under the scroll, which is the only place they can be looked at.
+ */
+const CHUNK = 240;
+
+/**
+ * Renders the next chunk of the listing.
  *
  * The append shape is kept -- start at what is already there -- so a listing
  * that grows underneath can still be topped up without rebuilding the grid.
@@ -5878,28 +6003,69 @@ function appendPage() {
   const grid = $('#grid');
   const source = pageSource();
   const start = state.rendered;
-  const end = source.length;
+  const end = Math.min(source.length, start + CHUNK);
+  if (start >= end) { syncGridTail(); return; }
   const batch = [];
 
+  // Built off-document and attached once: 240 separate appends to a live grid
+  // is 240 chances for the browser to lay the whole thing out again.
+  const frag = document.createDocumentFragment();
   for (let index = start; index < end; index += 1) {
     if (state.grouped) {
       const slot = state.slots[index];
       // A heading costs a slot of the page, so a section of one video does not
       // arrive with the next twenty-three crammed under it.
-      if (slot.head) { grid.appendChild(buildGroupHead(slot.head)); continue; }
-      grid.appendChild(buildCard(slot.file, slot.at, slot.group, slot.seq));
+      if (slot.head) { frag.appendChild(buildGroupHead(slot.head)); continue; }
+      frag.appendChild(buildCard(slot.file, slot.at, slot.group, slot.seq));
       batch.push(slot.file);
       continue;
     }
     const file = state.view[index];
-    grid.appendChild(buildCard(file, index));
+    frag.appendChild(buildCard(file, index));
     batch.push(file);
   }
   state.rendered = end;
+  grid.appendChild(frag);
+  syncGridTail();
 
   syncFileCount();
   fetchMetaFor(batch);
   updateStatusLine();
+}
+
+/**
+ * The marker that pulls the next chunk in.
+ *
+ * Kept as the grid's last child and watched from 1200px away, so the cards are
+ * there before the scroll reaches where they go rather than after. Nothing
+ * else needs the drawn/undrawn distinction: the player's arrows and the
+ * selection walk state.view and state.cards, which are the whole listing
+ * whatever the grid has got round to building.
+ */
+let gridTailWatcher = null;
+
+function syncGridTail() {
+  const grid = $('#grid');
+  if (!grid) return;
+  let tail = $('#gridTail');
+  const more = state.rendered < pageSource().length;
+  if (!more) { if (tail) tail.remove(); return; }
+  if (!gridTailWatcher) {
+    gridTailWatcher = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) appendPage();
+    }, { root: scrollRoot, rootMargin: '1200px 0px' });
+  }
+  if (!tail) {
+    tail = document.createElement('div');
+    tail.id = 'gridTail';
+    tail.className = 'grid-tail';
+    // Only ever one marker, and a rebuild leaves the old one detached: dropping
+    // every observation first is cheaper than tracking which are still live.
+    gridTailWatcher.disconnect();
+  }
+  // Always last: a chunk was just appended after it.
+  grid.appendChild(tail);
+  gridTailWatcher.observe(tail);
 }
 
 /**
@@ -6233,14 +6399,11 @@ function buildCard(file, index, group = null, seq = null) {
   name.title = file.name;
   details.appendChild(name);
 
-  const meta = document.createElement('div');
-  meta.className = 'meta-line';
-  meta.innerHTML = metaLineHtml(file, info);
-  details.appendChild(meta);
-
+  // Below the name: the rating and the labels, and nothing else. The running
+  // time is on the picture, cloud-only has its own mark there, and the size,
+  // codec, folder and dates are all in the player and the hover bar -- on a
+  // card they were four lines of grey text between you and the next tile.
   details.appendChild(buildRecordRow(file));
-
-  details.appendChild(buildFolderLine(file));
 
   card.appendChild(details);
   attachDrag(card, file, index);
@@ -6347,6 +6510,14 @@ function actionsFor(file, { card = null, inPlayer = false } = {}) {
   const cardFor = () => card || document.querySelector(`.card[data-path="${CSS.escape(file.path)}"]`);
 
   return [
+    // Where this came from. A link rather than a button, so it opens in the
+    // real browser exactly as the one on the card used to -- and first in the
+    // row, because it is the only one that does not touch the file.
+    ...(file.url ? [{
+      icon: '🔗',
+      title: `Open ${sourceLabel(file.url).replace(/ ↗$/, '')} — ${file.url}`,
+      href: file.url,
+    }] : []),
     ...(file.cloudOnly ? [{
       icon: '☁',
       title: `Fetch preview — downloads ${fmtBytes(file.size)} from OneDrive`,
@@ -6390,22 +6561,38 @@ function actionsFor(file, { card = null, inPlayer = false } = {}) {
   ];
 }
 
+/**
+ * One action as something you can press.
+ *
+ * An anchor when the action is a link and a button otherwise: a link has to be
+ * a real one for the shell to hand it to the browser, and preventing its
+ * default is exactly what would stop that.
+ */
+function buildActionButton(action) {
+  const el = document.createElement(action.href ? 'a' : 'button');
+  el.className = 'qbtn' + (action.danger ? ' danger' : '');
+  el.textContent = action.icon;
+  el.title = action.title;
+  if (action.href) {
+    el.href = action.href;
+    el.target = '_blank';
+    el.rel = 'noopener noreferrer';
+    // A click on the card plays the video, and one on the stage pauses it.
+    el.addEventListener('click', (ev) => ev.stopPropagation());
+    return el;
+  }
+  el.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    action.run();
+  });
+  return el;
+}
+
 function buildQuickbar(file, card) {
   const bar = document.createElement('div');
   bar.className = 'quickbar';
-
-  for (const action of actionsFor(file, { card })) {
-    const btn = document.createElement('button');
-    btn.className = 'qbtn' + (action.danger ? ' danger' : '');
-    btn.textContent = action.icon;
-    btn.title = action.title;
-    btn.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      ev.preventDefault();
-      action.run();
-    });
-    bar.appendChild(btn);
-  }
+  for (const action of actionsFor(file, { card })) bar.appendChild(buildActionButton(action));
   return bar;
 }
 
@@ -6911,12 +7098,9 @@ function wireEvents() {
   $('#faceModal').addEventListener('click', (ev) => {
     if (ev.target.id === 'faceModal' || ev.target.closest('.modal-close')) closeFaceLineup();
   });
-  pollFaceStatus();
-  setInterval(pollFaceStatus, 2000);
-  pollDupeStatus();
-  setInterval(pollDupeStatus, 2000);
-  pollFramingStatus();
-  setInterval(pollFramingStatus, 2000);
+  // One poll for all three sweeps, which slows itself down when none of them
+  // is running. It reschedules itself, so there is no interval to set here.
+  pollStatus();
 
   // settings
   $('#groupBtn').addEventListener('click', toggleGrouped);

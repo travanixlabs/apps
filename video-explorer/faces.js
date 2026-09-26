@@ -117,6 +117,9 @@ const state = {
   // a rename -- so the walk that looks for work records this on the way past.
   // It costs nothing: the walk stats every video in the library regardless.
   pathByKey: new Map(),
+  // Bumped whenever the set of profiles changes, so the counts a status poll
+  // reports can be worked out once and handed out until then.
+  indexStamp: 0,
   library: null,
   rootsOf: () => [],
   homeOf: () => '',
@@ -186,7 +189,7 @@ function init({ cacheDir, library, roots, home }) {
     loadEntries().then(() => {
       state.loading = false;
       vectorsDirty = true;
-      rebuildInBackground();
+      rebuildOrAdopt();
     }).catch(() => { state.loading = false; });
   }
   writeMeta(ready.model);
@@ -252,14 +255,61 @@ function snapshotFile() {
     'video-explorer', 'faces-snapshot.json');
 }
 
+const vectorFile = () => `${snapshotFile().replace(/\.json$/, '')}.bin`;
+
+/**
+ * Vectors live beside the snapshot as raw Float32, not inside it as JSON.
+ *
+ * Written as numbers the file was 113MB and cost 1.0s to read and 1.3s more to
+ * parse, every launch -- for data that is already a fixed-width array of
+ * floats and needs no parsing at all. The same vectors as bytes are 60MB and
+ * arrive in about a tenth of a second, and they arrive as ONE allocation the
+ * matrix work can point straight into rather than twenty-three thousand little
+ * arrays of doubles.
+ *
+ * The per-video files in the sync root are untouched by this. They stay JSON:
+ * they are the copy another machine reads, and they are written once each.
+ */
+const SNAPSHOT_FORMAT = 3;
+
+function vectorLength(vec) {
+  return vec && typeof vec.length === 'number' ? vec.length : 0;
+}
+
 async function readSnapshot() {
+  let snap;
   try {
-    const snap = JSON.parse(await fsp.readFile(snapshotFile(), 'utf8'));
-    if (snap.version !== VERSION || snap.model !== state.index.model) return null;
-    return snap.videos || null;
+    snap = JSON.parse(await fsp.readFile(snapshotFile(), 'utf8'));
   } catch {
     return null; // first run, or a torn write: the per-video files answer
   }
+  if (snap.version !== VERSION || snap.model !== state.index.model) return null;
+  const videos = snap.videos || null;
+  if (!videos) return null;
+  if (snap.format !== SNAPSHOT_FORMAT) return videos; // vectors still inline
+
+  // Vectors by reference into one buffer. A subarray keeps the buffer alive,
+  // which is the intent: one 60MB block for the whole store.
+  let buffer;
+  try {
+    buffer = await fsp.readFile(vectorFile());
+  } catch {
+    return null; // the numbers are in the .bin; without it the snapshot is half
+  }
+  const dim = Number(snap.dim) || 0;
+  if (!dim) return null;
+  const floats = new Float32Array(buffer.buffer, buffer.byteOffset,
+    Math.floor(buffer.byteLength / 4));
+  const rows = Math.floor(floats.length / dim);
+  for (const entry of Object.values(videos)) {
+    for (const person of entry.people || []) {
+      const at = person.at;
+      if (typeof at !== 'number' || at < 0 || at >= rows) { person.vec = []; continue; }
+      person.vec = floats.subarray(at * dim, (at + 1) * dim);
+      delete person.at;
+    }
+  }
+  return videos;
 }
 
 async function writeSnapshot() {
@@ -268,11 +318,48 @@ async function writeSnapshot() {
   try {
     const file = snapshotFile();
     await fsp.mkdir(path.dirname(file), { recursive: true });
+
+    // Every vector, in order, and a videos map that points at them by row.
+    let dim = 0;
+    for (const entry of Object.values(state.index.videos)) {
+      for (const person of entry.people || []) {
+        dim = Math.max(dim, vectorLength(person.vec));
+      }
+    }
+    let rows = 0;
+    const videos = {};
+    for (const [key, entry] of Object.entries(state.index.videos)) {
+      const people = (entry.people || []).map((person) => {
+        const held = { ...person };
+        delete held.vec;
+        // A vector of the wrong width cannot go in a fixed-stride file; it is
+        // dropped from the snapshot and read back from its own file instead.
+        held.at = vectorLength(person.vec) === dim && dim ? rows : -1;
+        if (held.at >= 0) rows += 1;
+        return held;
+      });
+      videos[key] = { ...entry, people };
+    }
+    const flat = new Float32Array(rows * dim);
+    let at = 0;
+    for (const entry of Object.values(state.index.videos)) {
+      for (const person of entry.people || []) {
+        if (vectorLength(person.vec) !== dim || !dim) continue;
+        flat.set(person.vec instanceof Float32Array
+          ? person.vec : Float32Array.from(person.vec), at * dim);
+        at += 1;
+      }
+    }
+
     const body = JSON.stringify({
-      version: VERSION, model: state.index.model, videos: state.index.videos,
+      version: VERSION, format: SNAPSHOT_FORMAT, model: state.index.model, dim, videos,
     });
     // Through a rename, so a kill mid-write leaves the old snapshot rather
-    // than half of a new one.
+    // than half of a new one. The vectors land first: a snapshot pointing into
+    // a stale .bin is the one combination that must never exist, and the JSON
+    // is what makes the pair readable at all.
+    await fsp.writeFile(`${vectorFile()}.tmp`, Buffer.from(flat.buffer, 0, flat.byteLength));
+    await fsp.rename(`${vectorFile()}.tmp`, vectorFile());
     await fsp.writeFile(`${file}.tmp`, body);
     await fsp.rename(`${file}.tmp`, file);
   } catch { state.snapshotDirty = true; /* a full disk: try again next flush */ }
@@ -313,6 +400,7 @@ async function loadEntries() {
       } catch { /* one unreadable profile is not worth failing the rest for */ }
     }));
   }
+  state.indexStamp += 1;
   if (carried || fresh.length) {
     log(`store: ${carried} from the snapshot, ${fresh.length} read fresh`);
   }
@@ -336,7 +424,13 @@ async function writeEntry(key, entry) {
   try {
     const dir = path.join(state.dir, ENTRIES);
     await fsp.mkdir(dir, { recursive: true });
-    await fsp.writeFile(path.join(dir, `${fileNameFor(key)}.json`), JSON.stringify(entry));
+    // Plain numbers, always: a vector pointing into the snapshot buffer would
+    // serialise as {"0":…,"1":…} and read back as nothing this can use.
+    const plain = {
+      ...entry,
+      people: (entry.people || []).map((p) => ({ ...p, vec: Array.from(p.vec || []) })),
+    };
+    await fsp.writeFile(path.join(dir, `${fileNameFor(key)}.json`), JSON.stringify(plain));
   } catch { /* a full or read-only disk must not break browsing */ }
 }
 
@@ -348,6 +442,8 @@ async function flush() {
   await writeDigest();
   // The launch snapshot, refreshed with whatever this session profiled.
   await writeSnapshot();
+  // And the ranking, so the next launch does not work it out again.
+  await writeScores();
 }
 
 // ------------------------------------------------------------------- digest
@@ -541,15 +637,57 @@ function rebuild() {
   digestSoon();
   if (!state.centroids.size) return;
   for (const [key, entry] of Object.entries(state.index.videos)) scoreVideo(key, entry);
+  scoredFor = castSignature();
 }
 
 /** For the app: the same answer without holding up every request while it works. */
 function rebuildInBackground() {
-  rebuildCentroids();
-  return rescore();
+  return rescore(rebuildCentroids());
 }
 
+/**
+ * The launch path: the remembered ranking when it still applies, the full work
+ * when it does not.
+ */
+async function rebuildOrAdopt() {
+  const cast = rebuildCentroids();
+  if (await adoptScores(castSignature())) {
+    log(`ranking carried over for ${state.suggestions.size} videos`);
+    digestSoon();
+    return true;
+  }
+  return rescore(cast);
+}
+
+/**
+ * A number that changes when a performer's average would.
+ *
+ * An average is the sum of her videos' dominant faces, so two rebuilds that saw
+ * the same set of videos produce the same average -- whatever order they were
+ * walked in. XOR-ing a hash per key says that in one integer, which is what
+ * lets a rebuild report "only these three moved" instead of "assume everything
+ * did", and that is the difference between re-scoring one column and eight
+ * hundred.
+ */
+function hashText(text) {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/**
+ * Rebuilds every average, and says which of them actually changed.
+ *
+ * Returns the names in a fixed order -- sorted, so it does not drift with the
+ * order videos happen to be walked in -- and the indices whose set of videos is
+ * different from last time. `cast` is false when performers have joined or left
+ * entirely, which no incremental update can absorb.
+ */
 function rebuildCentroids() {
+  const before = new Map([...state.centroids].map(([name, acc]) => [name, acc.sig]));
   state.centroids.clear();
   const records = state.library ? state.library.all() : {};
   for (const [key, entry] of Object.entries(state.index.videos)) {
@@ -562,11 +700,12 @@ function rebuildCentroids() {
     const name = record.models[0];
     let acc = state.centroids.get(name);
     if (!acc) {
-      acc = { sum: new Float32Array(vec.length), count: 0, keys: new Map() };
+      acc = { sum: new Float32Array(vec.length), count: 0, keys: new Map(), sig: 0 };
       state.centroids.set(name, acc);
     }
     for (let i = 0; i < vec.length; i += 1) acc.sum[i] += vec[i];
     acc.count += 1;
+    acc.sig = (acc.sig ^ hashText(key)) >>> 0;
     acc.keys.set(key, vec);
   }
   for (const [name, acc] of state.centroids) {
@@ -575,6 +714,15 @@ function rebuildCentroids() {
   }
   // The averages have moved, so every lineup's ordering is stale with them.
   lineupsDirty = true;
+
+  const names = [...state.centroids.keys()].sort();
+  const changed = [];
+  let cast = before.size === names.length;
+  for (const [i, name] of names.entries()) {
+    if (!before.has(name)) { cast = false; continue; }
+    if (before.get(name) !== state.centroids.get(name).sig) changed.push(i);
+  }
+  return { names, changed, cast };
 }
 
 // Below this, two faces are different people: same-person crops sit at 0.5 and
@@ -700,7 +848,12 @@ function rescoreOne(stat) {
   const entry = state.index.videos[key];
   if (!entry) return [];
   digestSoon();
-  return scoreVideo(key, entry);
+  const out = scoreVideo(key, entry);
+  // Turning a name down is part of what the remembered ranking describes, so
+  // the fingerprint moves with it and the new answer is written down.
+  scoredFor = castSignature();
+  writeScoresSoon();
+  return out;
 }
 
 /**
@@ -715,27 +868,298 @@ const SLICE_MS = 25;
 const breathe = () => new Promise((resolve) => { setImmediate(resolve); });
 let rescoreRun = 0;
 
-async function rescore() {
+/**
+ * The scoring thread.
+ *
+ * Optional in every direction: no worker_threads, a worker that will not
+ * start, one that throws -- each falls back to doing the same work here in
+ * slices, which is what this did before the thread existed. The only thing
+ * lost is the speed.
+ */
+let scorer = null;
+let scorerOff = false;
+let scorerMatrix = -1;   // which build of the matrix the worker is holding
+let scorerWaiting = null; // { run, resolve }
+
+function scorerSays(msg) {
+  const waiting = scorerWaiting;
+  if (msg.type === 'ready') return;
+  if (!waiting || msg.run !== waiting.run) return;
+  scorerWaiting = null;
+  if (msg.type === 'failed') { waiting.resolve(null); return; }
+  waiting.resolve(msg);
+}
+
+function ensureScorer() {
+  if (scorerOff) return null;
+  if (scorer) return scorer;
+  try {
+    // eslint-disable-next-line global-require
+    const { Worker } = require('worker_threads');
+    scorer = new Worker(path.join(__dirname, 'faces-scorer.js'));
+    scorer.on('message', scorerSays);
+    scorer.on('error', (err) => {
+      log(`scoring thread stopped: ${err && err.message}; carrying on in this one`);
+      scorer = null;
+      scorerMatrix = -1;
+      if (scorerWaiting) { const w = scorerWaiting; scorerWaiting = null; w.resolve(null); }
+    });
+    scorer.on('exit', () => {
+      scorer = null;
+      scorerMatrix = -1;
+      if (scorerWaiting) { const w = scorerWaiting; scorerWaiting = null; w.resolve(null); }
+    });
+    // Background work must never be the reason the process stays up.
+    if (scorer.unref) scorer.unref();
+  } catch {
+    scorerOff = true;
+    return null;
+  }
+  return scorer;
+}
+
+/** Which row of the matrix each video is, so a centroid can name its members. */
+let ownerOf = null;
+let ownerOfFor = -1;
+let matrixBuild = 0;
+
+function ownerIndex() {
+  const v = vectorsDirty || !vectors ? buildVectors() : vectors;
+  if (ownerOfFor !== matrixBuild || !ownerOf) {
+    ownerOf = new Map(v.keys.map((key, i) => [key, i]));
+    ownerOfFor = matrixBuild;
+  }
+  return { v, ownerOf };
+}
+
+/** The averages, flattened into the shape the thread multiplies. */
+function centroidPayload(names, owners) {
+  const dim = state.centroids.size
+    ? (state.centroids.values().next().value.sum.length) : 0;
+  const vec = new Float32Array(names.length * dim);
+  const sum = new Float32Array(names.length * dim);
+  const countOf = new Int32Array(names.length);
+  const memberStart = new Int32Array(names.length + 1);
+  const members = [];
+  for (const [c, name] of names.entries()) {
+    const acc = state.centroids.get(name);
+    vec.set(acc.vec, c * dim);
+    sum.set(acc.sum, c * dim);
+    countOf[c] = acc.count;
+    memberStart[c] = members.length;
+    for (const key of acc.keys.keys()) {
+      const at = owners.get(key);
+      if (at !== undefined) members.push(at);
+    }
+  }
+  memberStart[names.length] = members.length;
+  return { vec, sum, countOf, memberStart, memberOwner: Int32Array.from(members), dim };
+}
+
+/** Only the videos that refuse somebody, by row. */
+function refusalPayload(owners) {
+  const out = {};
+  if (!state.library) return out;
+  for (const [key, record] of Object.entries(state.library.all())) {
+    const refused = record && record.notModels;
+    if (!refused || !refused.length) continue;
+    const at = owners.get(key);
+    if (at !== undefined) out[at] = refused.map((n) => String(n).toLowerCase());
+  }
+  return out;
+}
+
+async function rescoreInThread(run, cast) {
+  const worker = ensureScorer();
+  if (!worker) return null;
+  const { v, ownerOf: owners } = ownerIndex();
+  if (!v.count) return { out: [], short: [] };
+
+  if (scorerMatrix !== matrixBuild) {
+    // A copy, not a transfer: this thread goes on using the same matrix to
+    // answer "more of her".
+    worker.postMessage({
+      type: 'vectors',
+      version: matrixBuild,
+      dim: v.dim,
+      nRows: v.count,
+      nOwners: v.keys.length,
+      mat: v.mat,
+      owner: v.owner,
+      person: v.person,
+    });
+    scorerMatrix = matrixBuild;
+    // The matrix is new, so nothing the thread remembers applies to it.
+    cast = { ...cast, cast: false };
+  }
+
+  const payload = centroidPayload(cast.names, owners);
+  const answer = await new Promise((resolve) => {
+    scorerWaiting = { run, resolve };
+    worker.postMessage({
+      type: 'score',
+      run,
+      names: cast.names,
+      ...payload,
+      minVideos: MIN_VIDEOS,
+      bands: BANDS,
+      refusals: refusalPayload(owners),
+      changed: cast.cast ? cast.changed : null,
+    });
+    // A thread that never answers must not wedge the feature for the session.
+    setTimeout(() => {
+      if (scorerWaiting && scorerWaiting.run === run) { scorerWaiting = null; resolve(null); }
+    }, 120000).unref?.();
+  });
+  if (!answer || answer.unusable) return null;
+  return { ...answer, keys: v.keys };
+}
+
+/** The same work, here, in slices -- for when there is no thread to do it in. */
+async function rescoreInProcess(run, into) {
+  if (!state.centroids.size) return true;
+  let slice = Date.now();
+  for (const [key, entry] of Object.entries(state.index.videos)) {
+    scoreVideo(key, entry, into);
+    if (Date.now() - slice >= SLICE_MS) {
+      await breathe();
+      if (run !== rescoreRun) return false;
+      slice = Date.now();
+    }
+  }
+  return true;
+}
+
+async function rescore(cast) {
   rescoreRun += 1;
   const run = rescoreRun;
   const into = new Map();
   state.pendingSuggestions = into;
-  if (state.centroids.size) {
-    let slice = Date.now();
-    for (const [key, entry] of Object.entries(state.index.videos)) {
-      scoreVideo(key, entry, into);
-      if (Date.now() - slice >= SLICE_MS) {
-        await breathe();
-        if (run !== rescoreRun) return false;
-        slice = Date.now();
+
+  let done = false;
+  if (state.centroids.size && cast && cast.names.length) {
+    const answer = await rescoreInThread(run, cast);
+    if (run !== rescoreRun) return false;
+    if (answer) {
+      for (const [owner, list] of answer.out) into.set(answer.keys[owner], list);
+      // The handful the thread could not settle -- every name it knows about
+      // for that video turned down -- are worked out here, where the full
+      // ranking is available.
+      for (const owner of answer.short || []) {
+        const key = answer.keys[owner];
+        const entry = state.index.videos[key];
+        if (entry) scoreVideo(key, entry, into);
       }
+      done = true;
     }
+  } else if (!state.centroids.size) {
+    done = true;
   }
+
+  if (!done && !(await rescoreInProcess(run, into))) return false;
   if (run !== rescoreRun) return false;
+
   state.suggestions = into;
   state.pendingSuggestions = null;
+  scoredFor = castSignature();
   digestSoon();
+  writeScoresSoon();
   return true;
+}
+
+/* --------------------------------------------------- the ranking, remembered
+ *
+ * Scoring the library is the whole of a launch's CPU, and a launch changes
+ * nothing: the same videos, the same credits, the same averages, the same
+ * answer as when the app was last closed. So the answer is written down with a
+ * fingerprint of what produced it, and a launch that finds the fingerprint
+ * still current adopts the answer instead of spending twenty seconds
+ * recomputing it.
+ *
+ * The fingerprint covers exactly the three things a suggestion depends on: who
+ * has an average, which videos built it, and which names have been turned down.
+ */
+const SCORES_FORMAT = 2;
+let scoredFor = '';
+let scoresTimer = null;
+
+function scoresFile() {
+  return path.join(process.env.LOCALAPPDATA || os.tmpdir(),
+    'video-explorer', 'faces-scores.json');
+}
+
+function castSignature() {
+  let h = 2166136261;
+  const mix = (n) => { h = Math.imul(h ^ (n >>> 0), 16777619) >>> 0; };
+  for (const name of [...state.centroids.keys()].sort()) {
+    const acc = state.centroids.get(name);
+    mix(hashText(name));
+    mix(acc.sig);
+    mix(acc.count);
+  }
+  if (state.library) {
+    for (const [key, record] of Object.entries(state.library.all())) {
+      const refused = record && record.notModels;
+      if (!refused || !refused.length) continue;
+      mix(hashText(key));
+      for (const name of refused) mix(hashText(String(name).toLowerCase()));
+    }
+  }
+  return `${SCORES_FORMAT}:${state.centroids.size}:${(h >>> 0).toString(36)}`;
+}
+
+function writeScoresSoon() {
+  if (scoresTimer) return;
+  scoresTimer = setTimeout(() => {
+    scoresTimer = null;
+    writeScores().catch(() => {});
+  }, 5000);
+  if (scoresTimer.unref) scoresTimer.unref();
+}
+
+async function writeScores() {
+  // An empty index is a launch that has not read its store yet, not a library
+  // with nothing in it -- writing that over a good file would cost the next
+  // launch the very work this exists to save.
+  if (!scoredFor || !Object.keys(state.index.videos).length) return false;
+  try {
+    const file = scoresFile();
+    await fsp.mkdir(path.dirname(file), { recursive: true });
+    const videos = {};
+    for (const [key, list] of state.suggestions) videos[key] = list;
+    await fsp.writeFile(`${file}.tmp`, JSON.stringify({
+      version: VERSION, model: state.index.model, sig: scoredFor, videos,
+    }));
+    await fsp.rename(`${file}.tmp`, file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Adopts the remembered ranking, if it still describes this library.
+ *
+ * Returns false on any doubt at all -- a different model, a changed credit, a
+ * name turned down since -- in which case the caller scores from scratch.
+ */
+async function adoptScores(sig) {
+  try {
+    const held = JSON.parse(await fsp.readFile(scoresFile(), 'utf8'));
+    if (held.version !== VERSION || held.model !== state.index.model) return false;
+    if (held.sig !== sig) return false;
+    const next = new Map();
+    for (const [key, list] of Object.entries(held.videos || {})) {
+      // A video that has gone since is simply not carried.
+      if (state.index.videos[key]) next.set(key, list);
+    }
+    state.suggestions = next;
+    state.pendingSuggestions = null;
+    scoredFor = sig;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 
@@ -829,6 +1253,9 @@ function buildVectors() {
   }
   vectors = { keys, mat, owner, person, dim, count: rows.length };
   vectorsDirty = false;
+  // Anything holding a copy of the old matrix -- the scoring thread, the owner
+  // index -- is now holding the wrong one.
+  matrixBuild += 1;
   return vectors;
 }
 
@@ -1200,6 +1627,7 @@ async function profile(file, stat, opts = {}) {
   };
   state.index.videos[key] = entry;
   vectorsDirty = true;
+  state.indexStamp += 1;
   await writeEntry(key, entry);
 
   // One picture per person, so a suggestion can show the face it came from.
@@ -1559,16 +1987,44 @@ function setEnabled(on) {
  * downloaded library, not out of everything, since cloud files are never
  * candidates.
  */
+/**
+ * The counts, worked out once per change rather than once per poll.
+ *
+ * Four passes over twenty-three thousand profiles, three times every two
+ * seconds, for a readout that only moves when a video is read: about three per
+ * cent of a core, permanently, to answer a question whose answer had not
+ * changed. Now it is computed when the store does and handed out until then.
+ */
+let tally = null;
+let tallyFor = '';
+
+function counts() {
+  const stamp = `${state.indexStamp}:${state.counted.at}:${state.onDisk.size}`;
+  if (tally && tallyFor === stamp) return tally;
+  const keys = Object.keys(state.index.videos);
+  let withFaces = 0;
+  let cached = 0;
+  let stale = 0;
+  const counted = Boolean(state.counted.at);
+  for (const key of keys) {
+    const entry = state.index.videos[key];
+    if ((entry.people || []).length) withFaces += 1;
+    // Profiles whose video is no longer on this machine. They keep working --
+    // the key is size and modified time, which dehydration does not touch --
+    // so this is the count of work that outlived the file being freed up.
+    if (counted && !state.onDisk.has(key)) cached += 1;
+    // Profiled, but before the sampling was made dense enough to see a second
+    // performer. They work; they are queued to be read again.
+    if ((entry.gen || 0) < HARVEST_GEN) stale += 1;
+  }
+  tally = { profiled: keys.length, withFaces, cached, stale };
+  tallyFor = stamp;
+  return tally;
+}
+
 function status() {
   const ready = engine.available().ok;
-  const keys = Object.keys(state.index.videos);
-  const withFaces = Object.values(state.index.videos)
-    .reduce((n, v) => n + ((v.people || []).length ? 1 : 0), 0);
-  // Profiles whose video is no longer on this machine. They keep working --
-  // the key is size and modified time, which dehydration does not touch -- so
-  // this is the count of work that outlived the file being freed up.
-  const cached = state.counted.at
-    ? keys.reduce((n, k) => n + (state.onDisk.has(k) ? 0 : 1), 0) : 0;
+  const { profiled, withFaces, cached, stale } = counts();
   return {
     available: ready,
     reason: engine.available().reason,
@@ -1595,11 +2051,11 @@ function status() {
     rate: state.done > 2 && state.startedAt
       ? Math.round((state.done / ((Date.now() - state.startedAt) / 3600000)))
       : 0,
-    profiled: keys.length,
+    profiled,
     // How many of the downloaded videos are done -- the pair that belongs
     // either side of a slash. Profiles of freed-up files are counted apart,
     // since a denominator they are not part of cannot contain them.
-    profiledOnDisk: keys.length - cached,
+    profiledOnDisk: profiled - cached,
     cached,
     counted: Boolean(state.counted.at),
     withFaces,
@@ -1607,10 +2063,7 @@ function status() {
     remaining: state.walking ? null : state.queue.length,
     performers: state.centroids.size,
     suggestions: state.suggestions.size,
-    // Profiled, but before the sampling was made dense enough to see a second
-    // performer. They work; they are queued to be read again.
-    stale: keys.reduce((n, k) => n
-      + ((state.index.videos[k].gen || 0) < HARVEST_GEN ? 1 : 0), 0),
+    stale,
     covering: sweepRoots(),
     model: engine.available().model,
     rebuilding: state.rebuilding,

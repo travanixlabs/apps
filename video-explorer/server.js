@@ -1405,18 +1405,71 @@ function filterView(video) {
   };
 }
 
+/**
+ * The same entry with everything that is merely a default left out.
+ *
+ * Nine tenths of a library has no tags, no models, no marks, no studio and no
+ * rating, and saying so 27,240 times cost 8MB of JSON per listing -- for
+ * fields that are empty. Absent means the default, which the page fills in on
+ * arrival, so nothing downstream has to test for missing.
+ */
+const LISTING_DEFAULTS = {
+  rating: 0, tags: [], models: [], notModels: [], studio: '', production: '',
+  url: '', marks: [], resume: 0, updated: 0, suggested: [], people: 0,
+  profiled: false, cloudOnly: false, duplicate: false, copies: 0, dupeKinds: null,
+};
+
+function slim(entry) {
+  const out = {};
+  for (const [key, value] of Object.entries(entry)) {
+    if (value === undefined) continue;
+    if (!(key in LISTING_DEFAULTS)) { out[key] = value; continue; }
+    const fallback = LISTING_DEFAULTS[key];
+    if (Array.isArray(fallback)) { if (value && value.length) out[key] = value; continue; }
+    if (fallback === null) { if (value) out[key] = value; continue; }
+    if (value !== fallback) out[key] = value;
+  }
+  return out;
+}
+
+/**
+ * What is already known about a video's bytes: how long, how big a picture,
+ * what codec.
+ *
+ * It is in hand -- keyed by the same size and modified time the scan just
+ * read -- so sending it with the listing costs nothing. Without it the page
+ * turned round and asked for the lot in batches of 250, which on the library
+ * root was 109 further round trips and 27,240 repeated stats of files the walk
+ * had only just finished stat'ing.
+ */
+function knownMeta(video) {
+  const held = cachedMeta(video.path, video);
+  if (!held) return null;
+  const { duration, width, height, fps, codec, bitrate } = held;
+  const out = {};
+  if (duration) out.duration = duration;
+  if (width) out.width = width;
+  if (height) out.height = height;
+  if (fps) out.fps = fps;
+  if (codec) out.codec = codec;
+  if (bitrate) out.bitrate = bitrate;
+  return Object.keys(out).length ? out : null;
+}
+
 function describeVideo(video, dir) {
   // Every listing teaches the face index where its profiled videos are, which
   // is what lets "more of her" offer a thumbnail you can click. Free: the scan
   // is already holding this stat.
   faces.notePath(video, video.path);
-  return {
+  const meta = knownMeta(video);
+  return slim({
     name: path.basename(video.path),
     folder: path.dirname(video.path),
     relFolder: dir ? (path.relative(dir, path.dirname(video.path)) || '.') : '',
     ext: path.extname(video.path).toLowerCase(),
     ...filterView(video),
-  };
+    ...(meta ? { meta } : {}),
+  });
 }
 
 /**
@@ -1456,9 +1509,97 @@ function countUnderFolders(dir, videos, subs, adv) {
  */
 let lastWalk = { key: '', videos: [] };
 
-async function scanDirectory(dir, recursive, includeCloud) {
-  const videos = await collectVideos(dir);
-  lastWalk = { key: path.resolve(dir).toLowerCase(), videos };
+/**
+ * The last walk of each folder, served while a fresh one runs behind it.
+ *
+ * Walking the library root is 27,240 stats: two seconds with the machine to
+ * itself and eighteen with the face sweep reading. Nothing about that changes
+ * between one visit to a folder and the next, so the answer is kept and handed
+ * over at once, and the disk work happens where nobody is sitting waiting for
+ * it. A walk that comes back different bumps `walkVersion`, which the page
+ * notices on its next status poll and quietly re-lists.
+ *
+ * Deliberately not a cache with a long life: half a minute old is fine to show
+ * for the instant it takes to confirm, and anything older than WALK_KEEP_MS is
+ * not worth showing at all.
+ */
+const WALK_FRESH_MS = 10 * 1000;
+const WALK_KEEP_MS = 30 * 60 * 1000;
+const walks = new Map();
+let walkVersion = 0;
+const walkKey = (dir) => path.resolve(dir).toLowerCase();
+
+/** A signature that changes when the folder's contents do. */
+function walkShape(videos) {
+  let h = 2166136261;
+  for (const v of videos) {
+    for (const part of [v.path, String(v.size), String(Math.round(v.mtimeMs))]) {
+      for (let i = 0; i < part.length; i += 1) {
+        h = Math.imul(h ^ part.charCodeAt(i), 16777619);
+      }
+    }
+  }
+  return `${videos.length}:${(h >>> 0).toString(36)}`;
+}
+
+async function walkNow(dir) {
+  const giveBack = priority.hold('scan ' + path.basename(dir));
+  try {
+    return await collectVideos(dir);
+  } finally {
+    giveBack();
+  }
+}
+
+function refreshWalk(dir) {
+  const key = walkKey(dir);
+  const held = walks.get(key);
+  if (!held || held.refreshing) return;
+  held.refreshing = true;
+  // Deliberately unawaited: whoever asked already has an answer.
+  walkNow(dir).then((videos) => {
+    const shape = walkShape(videos);
+    const changed = shape !== held.shape;
+    walks.set(key, { videos, shape, at: Date.now(), refreshing: false });
+    if (changed) {
+      walkVersion += 1;
+      log(`${path.basename(dir)} changed underneath: ${videos.length} videos`);
+    }
+  }).catch(() => {
+    held.refreshing = false;
+  });
+}
+
+/** Everything the folder holds -- from the last walk when there is a usable one. */
+async function walkOf(dir, fresh) {
+  const key = walkKey(dir);
+  const held = walks.get(key);
+  const age = held ? Date.now() - held.at : Infinity;
+  if (!fresh && held && age < WALK_KEEP_MS) {
+    if (age > WALK_FRESH_MS) refreshWalk(dir);
+    return { videos: held.videos, age };
+  }
+  const videos = await walkNow(dir);
+  walks.set(key, { videos, shape: walkShape(videos), at: Date.now(), refreshing: false });
+  return { videos, age: 0 };
+}
+
+/**
+ * Forgets every remembered walk.
+ *
+ * Called whenever this app is the one that changed the disk -- a move, a
+ * delete, tags written into a file -- because then the stale answer is one we
+ * put there ourselves and showing it would be plainly wrong.
+ */
+function forgetWalks() {
+  walks.clear();
+  walkVersion += 1;
+}
+
+async function scanDirectory(dir, recursive, includeCloud, fresh = false) {
+  const walk = await walkOf(dir, fresh);
+  const videos = walk.videos;
+  lastWalk = { key: walkKey(dir), videos };
   const folders = await listSubfolders(dir, videos, await cachedStripNames());
 
   const target = path.resolve(dir).toLowerCase();
@@ -1475,7 +1616,17 @@ async function scanDirectory(dir, recursive, includeCloud) {
   const files = shown.map((video) => describeVideo(video, dir));
 
   const cloudBelow = videos.reduce((n, v) => n + (v.cloudOnly ? 1 : 0), 0);
-  return { files, folders, totalBelow: videos.length, cloudBelow, cloudHidden };
+  return {
+    files,
+    folders,
+    totalBelow: videos.length,
+    cloudBelow,
+    cloudHidden,
+    // How old the walk behind this listing is, and what the page should watch
+    // for to know a fresher one has landed.
+    walkAge: walk.age,
+    walkVersion,
+  };
 }
 
 // ------------------------------------------------------- tags into the file
@@ -1799,6 +1950,9 @@ async function handleAction(body) {
   const op = String(body.op || '');
   const paths = Array.isArray(body.paths) ? body.paths : [];
   const results = [];
+  // Whatever happens below moves or removes files, so every remembered walk is
+  // about to describe a folder that no longer looks like that.
+  forgetWalks();
 
   // Deletes go as one batch through one shell -- see recycle(). Twenty files
   // used to be twenty PowerShell launches in a row.
@@ -1910,6 +2064,23 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    // The three sweeps in one answer.
+    //
+    // They were polled separately every two seconds, which was ninety requests
+    // a minute for a window nobody was looking at -- and each face reply walked
+    // all 23,000 profiles three times to count them. One route, one walk, and
+    // the page slows to a crawl of its own accord when nothing is running.
+    if (req.method === 'GET' && route === '/api/status') {
+      return sendJson(res, 200, {
+        faces: faces.status(),
+        dupes: dupes.status(),
+        framing: framing.status(),
+        // Bumped when a folder is found to have changed underneath a listing
+        // that was served from the last walk of it.
+        walkVersion,
+      });
+    }
+
     if (req.method === 'GET' && route === '/api/drives') {
       return sendJson(res, 200, { drives: await listDrives() });
     }
@@ -1941,17 +2112,13 @@ const server = http.createServer(async (req, res) => {
       // narrowing to what is downloaded is the availability filter's job. Only
       // an explicit cloud=0 holds cloud items back.
       const includeCloud = url.searchParams.get('cloud') !== '0';
-      // A person is waiting on this exactly as they wait on a strip build, so
-      // it takes the same hold: the sweeps pause between videos rather than
-      // keeping the disk busy under a walk. Measured with the face sweep
-      // running, an unheld scan of one library folder took 51 seconds.
-      const giveBack = priority.hold('scan ' + path.basename(resolved));
-      let scanned;
-      try {
-        scanned = await scanDirectory(resolved, recursive, includeCloud);
-      } finally {
-        giveBack();
-      }
+      // The walk takes the priority hold -- the sweeps pause between videos
+      // rather than keeping the disk busy under it. Measured with the face
+      // sweep running, an unheld scan of one library folder took 51 seconds.
+      // `fresh=1` is the page saying it wants the disk read rather than what
+      // was read a moment ago.
+      const fresh = url.searchParams.get('fresh') === '1';
+      const scanned = await scanDirectory(resolved, recursive, includeCloud, fresh);
 
       // The default folder is a home page rather than a directory listing: it is
       // the one place where the sync root's own furniture — Documents, Music,
@@ -1993,15 +2160,9 @@ const server = http.createServer(async (req, res) => {
       }
       const key = path.resolve(dir).toLowerCase();
       let videos = lastWalk.videos;
-      if (lastWalk.key !== key) {
-        // Somebody is waiting on these numbers too -- same hold as the scan.
-        const giveBack = priority.hold('count ' + path.basename(dir));
-        try {
-          videos = await collectVideos(dir);
-        } finally {
-          giveBack();
-        }
-      }
+      // The same walk the listing was drawn from, which is the honest thing to
+      // count against as well as the quick one.
+      if (lastWalk.key !== key) videos = (await walkOf(dir, false)).videos;
       const subs = await subfolderEntries(dir);
       const started = Date.now();
       const counts = countUnderFolders(dir, videos, subs, adv);
