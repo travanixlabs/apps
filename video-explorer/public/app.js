@@ -2363,16 +2363,9 @@ function closeFaceHover() {
 }
 
 
-/**
- * Nothing under half is offered in the recognise row.
- *
- * The recogniser's own bands reach down to 0.38, and they stay there -- they
- * decide what counts as a suggestion at all, which the filters and the
- * grouping are both built on. This is a separate question: what is worth
- * putting a picture on and inviting a click. The row of related videos draws
- * its line at the same place, so the two rows agree.
- */
-const FACE_FLOOR = 0.50;
+// The floor lives in filter.js, which the page loads first: the count filters
+// have to draw their line in the same place this row does, and they cannot do
+// that from a second copy of the number.
 
 /**
  * A suggested performer, as a tile.
