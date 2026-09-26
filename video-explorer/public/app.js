@@ -2059,7 +2059,7 @@ function indexCard(filePath, card) {
 function refreshCardRecord(file) {
   for (const card of cardsFor(file.path)) {
     const row = card.querySelector('.record-row');
-    if (row) row.replaceWith(buildRecordRow(file));
+    if (row) row.replaceWith(buildRecordRow(file, { edit: false }));
     // The source link lives on the folder line, so a url arriving by edit has
     // nowhere to appear unless that line is rebuilt too.
     const line = card.querySelector('.folder-line');
@@ -3448,14 +3448,18 @@ async function toggleFaceSweep() {
   }
 }
 
-function buildStars(current, onPick, { compact = false } = {}) {
+function buildStars(current, onPick, { compact = false, edit = true } = {}) {
   const wrap = document.createElement('span');
-  wrap.className = 'stars' + (compact ? ' compact' : '');
-  for (let n = 1; n <= 5; n += 1) {
-    const star = document.createElement('button');
-    star.type = 'button';
+  wrap.className = 'stars' + (compact ? ' compact' : '') + (edit ? '' : ' stars-read');
+  // Read-only: show what the rating IS, not five slots waiting to be clicked.
+  // An unrated video shows nothing at all, which is the caller's job to skip.
+  const upto = edit ? 5 : current;
+  for (let n = 1; n <= upto; n += 1) {
+    const star = document.createElement(edit ? 'button' : 'span');
+    if (edit) star.type = 'button';
     star.className = 'star' + (n <= current ? ' on' : '');
     star.textContent = n <= current ? '★' : '☆';
+    if (!edit) { wrap.appendChild(star); continue; }
     // Clicking the rating you already have clears it — otherwise there is no
     // way back to unrated without a separate control.
     star.title = n === current ? 'Clear rating' : `Rate ${n}`;
@@ -3501,11 +3505,13 @@ for (const [field, spec] of Object.entries(LABEL_FIELDS)) {
 }
 
 /**
- * `add` puts an editing affordance on the row. Only tags carry one: two on a card
- * meant two buttons opening the same dialog, and the model names are reachable
- * from it either way.
+ * `add` puts an editing affordance on the row. Only tags carry one: two on a
+ * row meant two buttons opening the same dialog, and the model names are
+ * reachable from it either way. A card asks for none of them -- the tiles are
+ * for looking through, and a "+ tag" on every one of them is noise. The player
+ * keeps it, which is where a tag actually gets typed.
  */
-function buildLabelChips(file, field, { add: withAdd = true } = {}) {
+function buildLabelChips(file, field, { add: withAdd = true, edit = true } = {}) {
   const spec = LABEL_FIELDS[field];
   const Field = field[0].toUpperCase() + field.slice(1);
   const chips = document.createElement('span');
@@ -3516,16 +3522,23 @@ function buildLabelChips(file, field, { add: withAdd = true } = {}) {
     chip.type = 'button';
     chip.className = spec.chip;
     chip.textContent = value;
-    chip.title = `Filter by "${value}" — right-click to remove it from this video`;
+    chip.title = edit
+      ? `Filter by "${value}" — right-click to remove it from this video`
+      : `Filter by "${value}"`;
     chip.addEventListener('click', (ev) => {
       ev.stopPropagation();
       filterByLabel(field, value);
     });
-    chip.addEventListener('contextmenu', (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      editRecords([file.path], spec.single ? { [field]: '' } : { ['remove' + Field]: [value] });
-    });
+    // Filtering is navigation, so it stays everywhere. Removing is an edit,
+    // and a right-click that quietly strips a label off a tile you were only
+    // looking at is exactly what "the grid does not edit" is meant to stop.
+    if (edit) {
+      chip.addEventListener('contextmenu', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        editRecords([file.path], spec.single ? { [field]: '' } : { ['remove' + Field]: [value] });
+      });
+    }
     chips.appendChild(chip);
   }
 
@@ -3542,20 +3555,32 @@ function buildLabelChips(file, field, { add: withAdd = true } = {}) {
   return chips;
 }
 
-function buildRecordRow(file) {
+function buildRecordRow(file, { edit = true } = {}) {
   const row = document.createElement('div');
-  row.className = 'record-row';
+  row.className = 'record-row' + (edit ? '' : ' record-read');
 
-  row.appendChild(buildStars(file.rating || 0, (rating) => editRecords([file.path], { rating }), { compact: true }));
+  // On a card an unrated video shows no stars at all, the same as it shows no
+  // tags: the row is a read-out of what is there, not a set of empty slots.
+  if (edit || file.rating) {
+    row.appendChild(buildStars(
+      file.rating || 0,
+      (rating) => editRecords([file.path], { rating }),
+      { compact: true, edit },
+    ));
+  }
 
   // The studio leads: it is the one fact there can only be one of, so it reads
   // as a heading for the names rather than another entry among them.
-  if (file.studio) row.appendChild(buildLabelChips(file, 'studio', { add: false }));
-  if (file.production) row.appendChild(buildLabelChips(file, 'production', { add: false }));
+  if (file.studio) row.appendChild(buildLabelChips(file, 'studio', { add: false, edit }));
+  if (file.production) row.appendChild(buildLabelChips(file, 'production', { add: false, edit }));
 
   // Names show when there are names; nothing sits there inviting you to add one.
-  if ((file.models || []).length) row.appendChild(buildLabelChips(file, 'models', { add: false }));
-  row.appendChild(buildLabelChips(file, 'tags'));
+  if ((file.models || []).length) row.appendChild(buildLabelChips(file, 'models', { add: false, edit }));
+  // With no add button and no tags there is nothing to draw, and an empty
+  // chip row would still take its gap in the layout.
+  if (edit || (file.tags || []).length) {
+    row.appendChild(buildLabelChips(file, 'tags', { add: edit, edit }));
+  }
   return row;
 }
 
@@ -6335,7 +6360,7 @@ function buildCard(file, index, group = null, seq = null) {
   // time is on the picture, cloud-only has its own mark there, and the size,
   // codec, folder and dates are all in the player and the hover bar -- on a
   // card they were four lines of grey text between you and the next tile.
-  details.appendChild(buildRecordRow(file));
+  details.appendChild(buildRecordRow(file, { edit: false }));
 
   card.appendChild(details);
   attachDrag(card, file, index);

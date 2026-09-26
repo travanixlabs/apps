@@ -1088,6 +1088,12 @@ a.qbtn:hover { color: #dbe6f0; }
 .stars:hover .star { color: #f5b52b; }
 .stars .star:hover ~ .star { color: var(--text-faint); }
 
+/* On a card the rating is something to read, not somewhere to click: only the
+   stars it actually has are drawn, and none of the hover behaviour applies. */
+.stars-read .star { cursor: default; }
+.stars-read:hover .star,
+.stars-read .star:hover { color: #f5b52b; transform: none; }
+
 .chips {
   display: flex;
   flex-wrap: wrap;
