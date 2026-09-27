@@ -2411,6 +2411,168 @@ function setCardWidth(px, { save = false } = {}) {
   return want;
 }
 
+/** The three demo chips and their pickers, from whatever is saved. */
+function syncFacetColours() {
+  const held = (state.config || {}).facetColours || {};
+  for (const [facet, demo] of [['studio', '#studioDemo'], ['production', '#productionDemo'],
+    ['models', '#modelsDemo']]) {
+    const id = '#colour' + facet[0].toUpperCase() + facet.slice(1);
+    const input = $(id);
+    const chip = $(demo);
+    if (input && held[facet]) input.value = held[facet];
+    if (!chip) continue;
+    chip.style.removeProperty('--chip-colour');
+    if (held[facet]) chip.style.setProperty('--chip-colour', held[facet]);
+  }
+}
+
+async function setFacetColour(facet, colour) {
+  const held = { ...((state.config || {}).facetColours || {}) };
+  held[facet] = colour;
+  await saveConfig({ facetColours: held });
+  syncFacetColours();
+  render();
+}
+
+/**
+ * Every label, used or not, with what it is on and what colour it wears.
+ *
+ * A tag exists by being used, so a label you have just made has no videos and
+ * would vanish the moment the list was rebuilt -- `spareLabels` is where those
+ * live until something carries them.
+ */
+function labelRows() {
+  const counts = new Map();
+  for (const entry of state.tagVocab || []) counts.set(entry.tag.toLowerCase(), entry);
+  const rows = [...counts.values()].map((e) => ({ tag: e.tag, count: e.count }));
+  for (const spare of (state.config || {}).spareLabels || []) {
+    if (!counts.has(spare.toLowerCase())) rows.push({ tag: spare, count: 0 });
+  }
+  return rows.sort((a, b) => a.tag.localeCompare(b.tag, undefined, { sensitivity: 'base' }));
+}
+
+function renderLabelList() {
+  const host = $('#labelList');
+  if (!host) return;
+  const rows = labelRows();
+  host.replaceChildren();
+  if (!rows.length) {
+    const none = document.createElement('div');
+    none.className = 'label-empty';
+    none.textContent = 'No labels yet. Add one above, or tag a video.';
+    host.appendChild(none);
+    return;
+  }
+  for (const { tag, count } of rows) {
+    const row = document.createElement('div');
+    row.className = 'label-row';
+
+    const colour = document.createElement('input');
+    colour.type = 'color';
+    colour.value = chipColour('tags', tag) || '#8a94a6';
+    colour.title = `Colour for "${tag}"`;
+    colour.addEventListener('input', () => setLabelColour(tag, colour.value));
+    row.appendChild(colour);
+
+    // A text box rather than a rename button: the name IS the control, and a
+    // rename is committed by leaving it or pressing Enter.
+    const name = document.createElement('input');
+    name.type = 'text';
+    name.className = 'label-name';
+    name.value = tag;
+    name.title = 'Rename — every video carrying it is renamed too';
+    name.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); name.blur(); }
+      if (ev.key === 'Escape') { name.value = tag; name.blur(); }
+    });
+    name.addEventListener('blur', () => renameLabel(tag, name.value, name));
+    row.appendChild(name);
+
+    const on = document.createElement('span');
+    on.className = 'label-count';
+    on.textContent = count ? `${count} video${count === 1 ? '' : 's'}` : 'unused';
+    row.appendChild(on);
+
+    const drop = document.createElement('button');
+    drop.type = 'button';
+    drop.className = 'label-drop';
+    drop.textContent = '\u2715';
+    drop.title = `Delete "${tag}"`;
+    drop.addEventListener('click', () => deleteLabel(tag, count));
+    row.appendChild(drop);
+
+    host.appendChild(row);
+  }
+}
+
+async function setLabelColour(tag, colour) {
+  const held = { ...((state.config || {}).labelColours || {}) };
+  held[tag.toLowerCase()] = colour;
+  await saveConfig({ labelColours: held });
+  render();
+}
+
+/** Talks to the endpoint, then puts the answer back into the page. */
+async function labelAction(body) {
+  const res = await fetch('/api/labels', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (data.config) state.config = { ...state.config, ...data.config };
+  if (data.tags) state.tagVocab = data.tags;
+  return data;
+}
+
+async function addLabel() {
+  const field = $('#labelNew');
+  const name = field.value.trim();
+  if (!name) return;
+  try {
+    await labelAction({ action: 'add', name });
+    field.value = '';
+    renderLabelList();
+    toast(`Label "${name}" added`, 'ok');
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+async function renameLabel(from, to, field) {
+  const want = String(to || '').trim().replace(/\s+/g, ' ');
+  if (!want || want === from) { field.value = from; return; }
+  try {
+    const { changed } = await labelAction({ action: 'rename', name: from, to: want });
+    renderLabelList();
+    // The listing in hand still says the old name on every one of them.
+    if (changed) await relistQuietly();
+    render();
+    toast(changed
+      ? `"${from}" is now "${want}" on ${changed} video${changed === 1 ? '' : 's'}`
+      : `"${from}" is now "${want}"`, 'ok');
+  } catch (err) {
+    field.value = from;
+    toast(err.message, 'err');
+  }
+}
+
+async function deleteLabel(tag, count) {
+  const on = count ? ` It is on ${count} video${count === 1 ? '' : 's'}, and will come off all of them.` : '';
+  if (!window.confirm(`Delete the label "${tag}"?${on}`)) return;
+  try {
+    const { changed } = await labelAction({ action: 'delete', name: tag });
+    renderLabelList();
+    if (changed) await relistQuietly();
+    render();
+    toast(changed ? `"${tag}" removed from ${changed} video${changed === 1 ? '' : 's'}`
+      : `"${tag}" deleted`, 'ok');
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
 function closeFaceHover() {
   clearTimeout(hover.in);
   hover.token = null;
@@ -3548,6 +3710,26 @@ for (const [field, spec] of Object.entries(LABEL_FIELDS)) {
  * for looking through, and a "+ tag" on every one of them is noise. The player
  * keeps it, which is where a tag actually gets typed.
  */
+/**
+ * The colour a chip should wear, or '' for the default.
+ *
+ * A label carries its own, because a vocabulary is what you are telling apart
+ * at a glance. The other three are one value per video, so the KIND is what
+ * gets a colour and every studio shares it.
+ */
+function chipColour(field, value) {
+  const config = state.config || {};
+  if (field === 'tags') return (config.labelColours || {})[String(value).toLowerCase()] || '';
+  return (config.facetColours || {})[field] || '';
+}
+
+/** Wears it, or leaves the stylesheet's default alone. */
+function paintChip(el, field, value) {
+  const colour = chipColour(field, value);
+  if (colour) el.style.setProperty('--chip-colour', colour);
+  return el;
+}
+
 function buildLabelChips(file, field, { add: withAdd = true, edit = true } = {}) {
   const spec = LABEL_FIELDS[field];
   const Field = field[0].toUpperCase() + field.slice(1);
@@ -3559,6 +3741,7 @@ function buildLabelChips(file, field, { add: withAdd = true, edit = true } = {})
     chip.type = 'button';
     chip.className = spec.chip;
     chip.textContent = value;
+    paintChip(chip, field, value);
     chip.title = edit
       ? `Filter by "${value}" — right-click to remove it from this video`
       : `Filter by "${value}"`;
@@ -7156,8 +7339,22 @@ function wireEvents() {
     $('#setHomeFolders').value = (state.config.homeFolders || []).join(', ');
     $('#setHomeFollow').checked = state.config.homeFollowsAccount !== false;
     syncHomeFields();
+    syncFacetColours();
+    renderLabelList();
     $('#settingsModal').hidden = false;
   });
+  for (const facet of ['studio', 'production', 'models']) {
+    const id = '#colour' + facet[0].toUpperCase() + facet.slice(1);
+    $(id).addEventListener('input', (ev) => setFacetColour(facet, ev.target.value));
+  }
+  for (const btn of document.querySelectorAll('[data-colour-clear]')) {
+    btn.addEventListener('click', () => setFacetColour(btn.dataset.colourClear, ''));
+  }
+  $('#labelAdd').addEventListener('click', addLabel);
+  $('#labelNew').addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); addLabel(); }
+  });
+
   $('#setHomeFollow').addEventListener('change', syncHomeFields);
   $('#setHomeBrowse').addEventListener('click', () => {
     pickFolder('Choose the default folder', (dest) => {

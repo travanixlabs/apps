@@ -644,6 +644,41 @@
         judged while you set them. They are remembered without pressing Save.</p>
       <p class="hint">Changing frame count or tile width rebuilds previews on next hover. Existing sprites stay cached under <span class="mono">.cache</span>.</p>
       <button id="clearCacheBtn" class="btn btn-danger">Clear preview cache</button>
+
+      <!-- One colour per kind. A studio, a production and a performer are each
+           one value per video, so there is nothing to pick a colour per value
+           FOR -- the kind is the thing you are telling apart at a glance. -->
+      <h3 class="settings-head">Colours</h3>
+      <div class="facet-colours">
+        <label class="facet-colour">
+          <span class="chip chip-studio swatch-demo" id="studioDemo">Studio</span>
+          <input id="colourStudio" type="color" value="#7aa2f7">
+          <button class="linkish" data-colour-clear="studio">default</button>
+        </label>
+        <label class="facet-colour">
+          <span class="chip chip-production swatch-demo" id="productionDemo">Production</span>
+          <input id="colourProduction" type="color" value="#bb9af7">
+          <button class="linkish" data-colour-clear="production">default</button>
+        </label>
+        <label class="facet-colour">
+          <span class="chip chip-model swatch-demo" id="modelsDemo">Model</span>
+          <input id="colourModels" type="color" value="#9ece6a">
+          <button class="linkish" data-colour-clear="models">default</button>
+        </label>
+      </div>
+
+      <!-- Labels are a vocabulary, so each one gets its own colour, and the
+           list is where they are made, renamed and removed. A rename or a
+           delete here reaches every video carrying it. -->
+      <h3 class="settings-head">Labels</h3>
+      <div class="label-add">
+        <input id="labelNew" type="text" placeholder="New label" autocomplete="off">
+        <button id="labelAdd" class="btn btn-primary">Add</button>
+      </div>
+      <p class="hint">Renaming a label renames it on every video that carries it, and
+        deleting one takes it off every video. Neither can be undone from here, so a
+        delete asks first and says how many videos it will touch.</p>
+      <div id="labelList" class="label-list"></div>
     </div>
     <footer class="modal-foot">
       <button id="settingsSave" class="btn btn-primary">Save</button>

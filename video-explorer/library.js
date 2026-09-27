@@ -504,6 +504,53 @@ function rekey(oldStat, newStat, name) {
 }
 
 /** Everything in use for a field, most-used first — the autocomplete vocabulary. */
+/**
+ * Rename a label everywhere at once.
+ *
+ * The per-video edit cannot do this: it takes a list of paths, and "every video
+ * with this tag" is not a list the dialog has. Renaming by hand meant finding
+ * them, selecting them, adding the new one and removing the old -- four steps
+ * to fix a typo.
+ *
+ * Matching is case-insensitive, because that is how the tag vocabulary is
+ * counted and deduped everywhere else; the casing you type is what gets
+ * stored. A rename onto a tag that already exists merges the two, which is the
+ * only sane reading of it and is often the point.
+ */
+function renameTag(from, to, field = 'tags') {
+  refuseIfReadOnly();
+  const want = String(from || '').trim().toLowerCase();
+  const named = String(to || '').trim().replace(/\s+/g, ' ');
+  if (!want || !named) return { changed: 0 };
+  let changed = 0;
+  for (const record of Object.values(data.records)) {
+    const held = record[field] || [];
+    if (!held.some((t) => String(t).toLowerCase() === want)) continue;
+    record[field] = normaliseTags(held.map((t) => (String(t).toLowerCase() === want ? named : t)));
+    record.updated = Date.now();
+    changed += 1;
+  }
+  if (changed) save();
+  return { changed };
+}
+
+/** Take a label off every video that carries it. */
+function removeTagEverywhere(name, field = 'tags') {
+  refuseIfReadOnly();
+  const want = String(name || '').trim().toLowerCase();
+  if (!want) return { changed: 0 };
+  let changed = 0;
+  for (const record of Object.values(data.records)) {
+    const held = record[field] || [];
+    if (!held.some((t) => String(t).toLowerCase() === want)) continue;
+    record[field] = held.filter((t) => String(t).toLowerCase() !== want);
+    record.updated = Date.now();
+    changed += 1;
+  }
+  if (changed) save();
+  return { changed };
+}
+
 function counts(field = 'tags') {
   const found = new Map();
   for (const record of Object.values(data.records)) {
@@ -607,5 +654,6 @@ module.exports = {
   init, keyFor, get, all, decorate, apply, rekey, flush, status, snapshot,
   notModelsByKey,
   counts, tagCounts, modelCounts, studioCounts, productionCounts, stats, normaliseTags,
+  renameTag, removeTagEverywhere,
   favouriteModels, isFavouriteModel, setFavouriteModel,
 };

@@ -1127,6 +1127,117 @@ a.qbtn:hover { color: #dbe6f0; }
 }
 .chip:hover { border-color: var(--accent); color: var(--text); }
 
+/* A chip you have given a colour. One custom property carries it, so the same
+   three rules serve a label, a studio, a production and a performer -- and a
+   chip with no colour set never matches, keeping every default untouched.
+   The `!important` is not laziness: the per-kind rules below are written as
+   `.chip.chip-studio` to beat plain `.chip`, and a colour you chose has to beat
+   both of them. */
+.chip[style*="--chip-colour"] {
+  border-color: var(--chip-colour) !important;
+  background: color-mix(in srgb, var(--chip-colour) 20%, transparent) !important;
+  color: color-mix(in srgb, var(--chip-colour) 72%, white) !important;
+}
+.chip[style*="--chip-colour"]:hover {
+  background: color-mix(in srgb, var(--chip-colour) 34%, transparent) !important;
+  color: color-mix(in srgb, var(--chip-colour) 40%, white) !important;
+}
+
+/* ---- settings: colours and the label editor ---------------------------- */
+
+.settings-head {
+  margin: 18px 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .6px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.facet-colours { display: flex; flex-direction: column; gap: 8px; }
+.facet-colour {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+/* The demo chip is a sample, not a control. */
+.swatch-demo { cursor: default; pointer-events: none; min-width: 84px; text-align: center; }
+.facet-colour input[type="color"],
+.label-row input[type="color"] {
+  width: 30px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: none;
+  cursor: pointer;
+  flex: none;
+}
+
+.label-add { display: flex; gap: 8px; margin-bottom: 6px; }
+.label-add input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-elev-2);
+  color: var(--text);
+}
+/* Tall enough to be worth scrolling, short enough to leave the rest of the
+   panel reachable. */
+.label-list {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.label-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.label-row:last-child { border-bottom: 0; }
+.label-row .label-name {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: none;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* It only looks like a field once you are in it: a list of twenty boxes reads
+   as a form to fill in rather than a list to read. */
+.label-row .label-name:hover { border-color: var(--border-strong); }
+.label-row .label-name:focus {
+  border-color: var(--accent);
+  background: var(--bg-elev-2);
+  outline: none;
+}
+.label-row .label-count {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-faint);
+  min-width: 52px;
+  text-align: right;
+}
+.label-row .label-drop {
+  flex: none;
+  border: 0;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+.label-row .label-drop:hover { color: #ff8b8b; }
+.label-empty { padding: 10px; color: var(--text-faint); font-size: 12px; }
+
 /* On a card the pills are a read-out, not somewhere to aim: at roughly half
    their old height a tile shows what it is tagged with in the space one line
    of them used to take. The player's row keeps full size, because that is

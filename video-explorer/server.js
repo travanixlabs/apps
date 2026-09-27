@@ -98,6 +98,16 @@ const DEFAULT_CONFIG = {
   // build still means 'models'.
   grouped: '',
 
+  // What colour a label is drawn in, by lowercased label. A label with no
+  // entry gets the default chip colour, so this stays empty until you pick.
+  labelColours: {},
+  // Labels you have made but not put on anything yet. A tag otherwise exists
+  // only by being used, so without this "add" would have nothing to add to.
+  spareLabels: [],
+  // One colour each for the three facets that are one value per video. They
+  // are a kind, not a vocabulary, so they do not get a colour per value.
+  facetColours: { studio: '', production: '', models: '' },
+
   scrubWithMouse: false,
   // Highest rated first: your own judgement beats any property of the file.
   // Everything unrated falls below, in name order.
@@ -2279,6 +2289,56 @@ const server = http.createServer(async (req, res) => {
           productions: library.productionCounts(),
         });
       }
+    }
+
+    // The label vocabulary itself: rename it everywhere, take it off
+    // everything, or declare one that nothing carries yet. Colours live in the
+    // config and go through /api/config like every other preference.
+    if (req.method === 'POST' && route === '/api/labels') {
+      const body = await readBody(req);
+      const action = String(body.action || '');
+      const name = String(body.name || '').trim().replace(/\s+/g, ' ');
+      const spare = Array.isArray(config.spareLabels) ? config.spareLabels : [];
+      const without = (list, drop) => list.filter((t) => t.toLowerCase() !== drop.toLowerCase());
+
+      if (action === 'add') {
+        if (!name) return sendJson(res, 400, { error: 'A label needs a name' });
+        const used = library.tagCounts().some((t) => t.tag.toLowerCase() === name.toLowerCase());
+        const already = spare.some((t) => t.toLowerCase() === name.toLowerCase());
+        if (!used && !already) { config.spareLabels = [...spare, name]; saveConfigSoon(); }
+        return sendJson(res, 200, { changed: 0, config, tags: library.tagCounts() });
+      }
+
+      if (action === 'rename') {
+        const to = String(body.to || '').trim().replace(/\s+/g, ' ');
+        if (!name || !to) return sendJson(res, 400, { error: 'Both names are needed' });
+        const { changed } = library.renameTag(name, to);
+        // The colour belongs to the label, so it moves with it, and a spare
+        // label is renamed in place rather than left behind as a second one.
+        const colours = { ...(config.labelColours || {}) };
+        const held = colours[name.toLowerCase()];
+        delete colours[name.toLowerCase()];
+        if (held) colours[to.toLowerCase()] = held;
+        const nextSpare = spare.some((t) => t.toLowerCase() === name.toLowerCase())
+          ? [...without(spare, name), to] : spare;
+        config.labelColours = colours;
+        config.spareLabels = nextSpare;
+        saveConfigSoon();
+        return sendJson(res, 200, { changed, config, tags: library.tagCounts() });
+      }
+
+      if (action === 'delete') {
+        if (!name) return sendJson(res, 400, { error: 'Which label?' });
+        const { changed } = library.removeTagEverywhere(name);
+        const colours = { ...(config.labelColours || {}) };
+        delete colours[name.toLowerCase()];
+        config.labelColours = colours;
+        config.spareLabels = without(spare, name);
+        saveConfigSoon();
+        return sendJson(res, 200, { changed, config, tags: library.tagCounts() });
+      }
+
+      return sendJson(res, 400, { error: `Unknown action "${action}"` });
     }
 
     if (req.method === 'POST' && route === '/api/favourites') {
