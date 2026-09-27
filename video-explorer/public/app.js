@@ -2048,6 +2048,15 @@ function refreshCardRecord(file) {
   for (const card of cardsFor(file.path)) {
     const row = card.querySelector('.record-row');
     if (row) row.replaceWith(buildRecordRow(file, { edit: false }));
+    // The rating is a badge on the picture now, and the row above does not
+    // touch it -- so a rating set in the player would leave the tile showing
+    // the old one until the listing was rebuilt.
+    const corner = card.querySelector('.badge-corner');
+    if (corner) {
+      const badge = corner.querySelector('.badge-rating');
+      if (badge) badge.remove();
+      if (file.rating) corner.appendChild(buildCornerRating(file.rating));
+    }
     // The source link lives on the folder line, so a url arriving by edit has
     // nowhere to appear unless that line is rebuilt too.
     const line = card.querySelector('.folder-line');
@@ -2353,6 +2362,19 @@ function appendRefused(host, file, refused) {
     row.appendChild(back);
   }
   host.appendChild(row);
+}
+
+/**
+ * The rating as it reads on a tile: the stars it has and no empty ones, in the
+ * same badge the running time sits in. A read-out, like everything else on a
+ * card -- the player is where a rating is set.
+ */
+function buildCornerRating(rating) {
+  const badge = document.createElement('span');
+  badge.className = 'badge badge-rating';
+  badge.textContent = '\u2605'.repeat(Math.max(0, Math.min(5, Math.round(rating))));
+  badge.title = `${rating} out of 5`;
+  return badge;
 }
 
 function closeFaceHover() {
@@ -3540,13 +3562,14 @@ function buildRecordRow(file, { edit = true } = {}) {
   const row = document.createElement('div');
   row.className = 'record-row' + (edit ? '' : ' record-read');
 
-  // On a card an unrated video shows no stars at all, the same as it shows no
-  // tags: the row is a read-out of what is there, not a set of empty slots.
-  if (edit || file.rating) {
+  // Only the player rates. On a card the rating is a badge in the corner of the
+  // picture -- see buildCornerRating -- so the row below the name is labels
+  // alone, and an unlabelled video draws nothing at all.
+  if (edit) {
     row.appendChild(buildStars(
       file.rating || 0,
       (rating) => editRecords([file.path], { rating }),
-      { compact: true, edit },
+      { compact: true },
     ));
   }
 
@@ -6238,10 +6261,18 @@ function buildCard(file, index, group = null, seq = null) {
   selectMark.textContent = '✓';
   preview.appendChild(selectMark);
 
+  // Bottom right holds what the video is and what you made of it. The rating
+  // sits here rather than under the name because the corner was showing a file
+  // size, which is the least interesting fact about a video, and the row below
+  // was carrying a control on a page you only scroll through.
+  const corner = document.createElement('div');
+  corner.className = 'badge-corner';
   const durationBadge = document.createElement('span');
   durationBadge.className = 'badge badge-duration';
   durationBadge.textContent = info.duration ? fmtDuration(info.duration) : fmtBytes(file.size);
-  preview.appendChild(durationBadge);
+  corner.appendChild(durationBadge);
+  if (file.rating) corner.appendChild(buildCornerRating(file.rating));
+  preview.appendChild(corner);
 
   if (file.cloudOnly) {
     const cloudMark = document.createElement('div');

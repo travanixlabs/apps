@@ -626,7 +626,17 @@ main { padding: 16px; }
   letter-spacing: .2px;
   pointer-events: none;
 }
-.badge-duration { right: 6px; bottom: 10px; }
+/* Both corner badges in one row, so neither has to know about the other. */
+.badge-corner {
+  position: absolute;
+  right: 6px;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.badge-corner .badge { position: static; }
+.badge-rating { color: #f5b52b; letter-spacing: .5px; }
 .badge-frame { left: 6px; bottom: 10px; opacity: 0; transition: opacity .16s; }
 .card:hover .badge-frame { opacity: 1; }
 /* One of several copies of the same video. Above the frame counter rather than
@@ -1116,6 +1126,18 @@ a.qbtn:hover { color: #dbe6f0; }
   white-space: nowrap;
 }
 .chip:hover { border-color: var(--accent); color: var(--text); }
+
+/* On a card the pills are a read-out, not somewhere to aim: at roughly half
+   their old height a tile shows what it is tagged with in the space one line
+   of them used to take. The player's row keeps full size, because that is
+   where they are clicked. */
+.record-read .chips { gap: 3px; }
+.record-read .chip {
+  padding: 0 5px;
+  font-size: 8px;
+  line-height: 1.35;
+  max-width: 108px;
+}
 .chip-add {
   border-style: dashed;
   color: var(--text-faint);
