@@ -6221,8 +6221,21 @@ function updateCardMeta(filePath, known) {
     const line = card.querySelector('.meta-line');
     if (line) line.innerHTML = metaLineHtml(file, info);
 
-    const badge = card.querySelector('.badge-duration');
-    if (badge && info.duration) badge.textContent = fmtDuration(info.duration);
+    // The corner no longer falls back to a file size, so an unprobed tile has
+    // no duration badge at all -- it has to be made when the probe lands, and
+    // put in front of the rating rather than after it.
+    if (info.duration) {
+      let badge = card.querySelector('.badge-duration');
+      if (!badge) {
+        const corner = card.querySelector('.badge-corner');
+        if (corner) {
+          badge = document.createElement('span');
+          badge.className = 'badge badge-duration';
+          corner.prepend(badge);
+        }
+      }
+      if (badge) badge.textContent = fmtDuration(info.duration);
+    }
 
     const preview = card.querySelector('.preview');
     if (preview && info.duration) preview.dataset.duration = String(info.duration);
@@ -6267,10 +6280,16 @@ function buildCard(file, index, group = null, seq = null) {
   // was carrying a control on a page you only scroll through.
   const corner = document.createElement('div');
   corner.className = 'badge-corner';
-  const durationBadge = document.createElement('span');
-  durationBadge.className = 'badge badge-duration';
-  durationBadge.textContent = info.duration ? fmtDuration(info.duration) : fmtBytes(file.size);
-  corner.appendChild(durationBadge);
+  // How long it runs, when that is known. No size fallback: a video's weight in
+  // megabytes told you nothing you wanted while looking for something to watch,
+  // and a tile whose duration has not been read yet is better blank than
+  // padded out with it.
+  if (info.duration) {
+    const durationBadge = document.createElement('span');
+    durationBadge.className = 'badge badge-duration';
+    durationBadge.textContent = fmtDuration(info.duration);
+    corner.appendChild(durationBadge);
+  }
   if (file.rating) corner.appendChild(buildCornerRating(file.rating));
   preview.appendChild(corner);
 
