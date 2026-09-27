@@ -2377,6 +2377,40 @@ function buildCornerRating(rating) {
   return badge;
 }
 
+// The slider's own range, read from the slider so the two cannot disagree.
+const CARD_MIN = 200;
+const CARD_MAX = 520;
+const CARD_STEP = 20;
+
+/** How wide a tile is now, from the property that actually decides it. */
+function cardWidth() {
+  const at = getComputedStyle(document.documentElement).getPropertyValue('--card-width');
+  return Number(String(at).trim().replace('px', '')) || CARD_MIN;
+}
+
+let cardWidthSave = null;
+
+/**
+ * Set the tile width everywhere at once: the grid, the slider in settings, and
+ * -- when asked -- the saved config.
+ *
+ * The save is held back until the wheel stops. A notch is one step, so zooming
+ * from smallest to largest is sixteen of them, and sixteen writes of a number
+ * for one gesture is sixteen too many.
+ */
+function setCardWidth(px, { save = false } = {}) {
+  const want = Math.max(CARD_MIN, Math.min(CARD_MAX, Math.round(px / CARD_STEP) * CARD_STEP));
+  if (want === cardWidth() && !save) return want;
+  document.documentElement.style.setProperty('--card-width', want + 'px');
+  const slider = $('#cardWidth');
+  if (slider) slider.value = String(want);
+  if (save) {
+    clearTimeout(cardWidthSave);
+    cardWidthSave = setTimeout(() => saveConfig({ cardWidth: want }), 400);
+  }
+  return want;
+}
+
 function closeFaceHover() {
   clearTimeout(hover.in);
   hover.token = null;
@@ -6941,10 +6975,30 @@ function wireEvents() {
     }
   });
 
-  $('#cardWidth').addEventListener('input', (ev) => {
-    document.documentElement.style.setProperty('--card-width', ev.target.value + 'px');
-  });
+  $('#cardWidth').addEventListener('input', (ev) => setCardWidth(Number(ev.target.value)));
   $('#cardWidth').addEventListener('change', (ev) => saveConfig({ cardWidth: Number(ev.target.value) }));
+
+  // Ctrl and the wheel resize the tiles, the way every other picture viewer
+  // does it. Without this the only way to change tile size was to open
+  // settings, drag a slider you could not see the effect of, and close it
+  // again.
+  //
+  // On the document rather than on #grid: the grid is zero by zero whenever it
+  // is empty -- the folder view, an empty search -- so a listener bound to it
+  // would simply not fire there. The whole window answers, and the only thing
+  // that changes is the tiles; the app itself never zooms.
+  //
+  // passive: false because preventDefault is the entire point. Without it the
+  // browser zooms the interface instead, which is what this is here to stop. A
+  // trackpad pinch arrives as exactly this event, so pinching works too.
+  document.addEventListener('wheel', (ev) => {
+    if (!ev.ctrlKey) return;
+    ev.preventDefault();
+    // Up is bigger. One slider step per notch: the wheel reports its delta in
+    // wildly different units between devices, so only the sign is worth
+    // reading.
+    setCardWidth(cardWidth() + (ev.deltaY < 0 ? CARD_STEP : -CARD_STEP), { save: true });
+  }, { passive: false });
 
   $('#dwellMs').addEventListener('input', (ev) => {
     $('#dwellLabel').textContent = (Number(ev.target.value) / 1000).toFixed(1) + 's';
@@ -7631,8 +7685,7 @@ async function init() {
   if (state.grouped === 'dupes') fetchOtherCopies().then(() => render());
   $('#sortSelect').value = state.config.sort || 'name';
   syncSortButton();
-  $('#cardWidth').value = state.config.cardWidth || 200;
-  document.documentElement.style.setProperty('--card-width', (state.config.cardWidth || 200) + 'px');
+  setCardWidth(state.config.cardWidth || CARD_MIN);
   syncVolumeUI();
   syncAutoNext();
   // Bound once. The row that pages as you scroll is rebuilt for every video
