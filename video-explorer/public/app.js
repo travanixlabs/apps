@@ -3743,24 +3743,54 @@ function buildLabelChips(file, field, { add: withAdd = true, edit = true } = {})
   for (const value of spec.values(file)) {
     const chip = document.createElement('button');
     chip.type = 'button';
-    chip.className = spec.chip;
-    chip.textContent = value;
+    chip.className = spec.chip + (edit ? ' has-x' : '');
     paintChip(chip, field, value);
     chip.title = edit
-      ? `Filter by "${value}" — right-click to remove it from this video`
+      ? `Filter by "${value}" — the cross takes it off this video`
       : `Filter by "${value}"`;
     chip.addEventListener('click', (ev) => {
       ev.stopPropagation();
       filterByLabel(field, value);
     });
-    // Filtering is navigation, so it stays everywhere. Removing is an edit,
-    // and a right-click that quietly strips a label off a tile you were only
-    // looking at is exactly what "the grid does not edit" is meant to stop.
-    if (edit) {
+
+    const drop = () => editRecords(
+      [file.path],
+      spec.single ? { [field]: '' } : { ['remove' + Field]: [value] },
+    );
+
+    // Filtering is navigation, so it stays everywhere. Removing is an edit, and
+    // a cross on a tile you were only looking at is exactly what "the grid does
+    // not edit" is meant to stop -- so it is drawn where editing is allowed,
+    // which is the player.
+    if (!edit) {
+      chip.textContent = value;
+    } else {
+      // The label is its own element now, because the cross has to sit beside
+      // it rather than inside the run of text the ellipsis trims.
+      const text = document.createElement('span');
+      text.className = 'chip-text';
+      text.textContent = value;
+      chip.appendChild(text);
+
+      // A span, not a button: a button inside a button is invalid HTML, and
+      // this one is reached by the mouse. The chip itself is still a real
+      // button, and right-click still removes.
+      const cross = document.createElement('span');
+      cross.className = 'chip-x';
+      cross.textContent = '\u2715';
+      cross.title = `Remove "${value}" from this video`;
+      cross.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        drop();
+      });
+      chip.appendChild(cross);
+
+      // Kept: it was the only way to do this, and fingers remember.
       chip.addEventListener('contextmenu', (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
-        editRecords([file.path], spec.single ? { [field]: '' } : { ['remove' + Field]: [value] });
+        drop();
       });
     }
     chips.appendChild(chip);

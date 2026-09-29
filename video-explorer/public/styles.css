@@ -1127,6 +1127,24 @@ a.qbtn:hover { color: #dbe6f0; }
 }
 .chip:hover { border-color: var(--accent); color: var(--text); }
 
+/* A chip carrying its own remove. Flex, so the cross keeps its width while the
+   label takes what is left and ellipses -- `min-width: 0` is what lets a flex
+   item shrink below its own text, without which the cross is pushed out of the
+   pill. Only where editing is allowed: the grid's chips are for reading. */
+.chip.has-x { display: inline-flex; align-items: center; gap: 5px; }
+.chip.has-x .chip-text { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.chip-x {
+  flex: none;
+  font-size: 9px;
+  line-height: 1;
+  opacity: .4;
+  /* Bigger than it looks: a 9px glyph is not a target. The padding is taken
+     back by the negative margin, so the pill does not grow around it. */
+  padding: 4px;
+  margin: -4px -4px -4px 0;
+}
+.chip-x:hover { opacity: 1; color: #ff8b8b; }
+
 /* A chip you have given a colour. One custom property carries it, so the same
    three rules serve a label, a studio, a production and a performer -- and a
    chip with no colour set never matches, keeping every default untouched.
