@@ -941,8 +941,12 @@ function buildModelGroups(list, mode = 'models') {
   for (const file of list) {
     // The credited names, or the ones the recogniser put forward. Same shape of
     // view over a different question: who is in this, against who might be.
+    //
+    // The same floor the player shows at: a section built from guesses too weak
+    // to be offered anywhere else is a performer you cannot act on, and 86 of
+    // the 1,212 sections were made entirely of those.
     const names = (suggested
-      ? (file.suggested || []).map((s) => s.name)
+      ? (file.suggested || []).filter((s) => s.score >= FACE_FLOOR).map((s) => s.name)
       : (file.models || [])).map((n) => String(n).trim()).filter(Boolean);
     if (!names.length) { unnamed.push(file); continue; }
     const rating = Math.max(0, Math.min(5, Math.round(Number(file.rating) || 0)));
