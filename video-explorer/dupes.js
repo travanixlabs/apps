@@ -59,6 +59,7 @@ const state = {
   possible: [],            // kept for the digest's shape
   byKey: new Map(),        // key -> index into groups
   kindsByKey: new Map(),   // key -> { sound, picture, both }
+  dismissed: new Set(),    // signatures of sets you have said are not sets
   scanned: 0,
   matched: 0,
   // The in-app sweep: two videos at a time, only while nothing else is
@@ -97,6 +98,72 @@ const keyFromFileName = (name) => name.replace(/\.json$/, '').replace('_', ':');
 
 const ENTRIES = 'v';
 const DIGEST = 'duplicates.json';
+const DISMISSED = 'not-duplicates.json';
+
+/**
+ * A set you have said is not a set, named by what is in it.
+ *
+ * Keyed by the members rather than by the group's position, because that
+ * position is an index into the last matching run and means nothing after the
+ * next one. The members are size-and-modified-time keys, so the same set found
+ * again reproduces the same signature and stays put away.
+ *
+ * A set that gains or loses a copy gets a different signature and comes back.
+ * That is the intent: what you set aside was those files, and a new one is
+ * something you have not seen.
+ */
+const signatureOf = (keys) => [...keys].sort().join('|');
+
+function loadDismissed() {
+  try {
+    const held = JSON.parse(fs.readFileSync(path.join(state.dir, DISMISSED), 'utf8'));
+    state.dismissed = new Set(Array.isArray(held) ? held : []);
+  } catch {
+    state.dismissed = new Set();
+  }
+}
+
+function saveDismissed() {
+  try {
+    fs.writeFileSync(path.join(state.dir, DISMISSED),
+      JSON.stringify([...state.dismissed], null, 1));
+  } catch (err) {
+    log(`could not write ${DISMISSED}: ${err.message}`);
+  }
+}
+
+/** Whether the group at this index has been set aside. */
+function dismissedAt(at) {
+  const group = state.groups[at];
+  return Boolean(group) && state.dismissed.has(signatureOf(group));
+}
+
+/**
+ * Set aside the group holding this key. Returns what happened, so the page can
+ * say it plainly rather than guess.
+ */
+function dismissGroup(key) {
+  const at = state.byKey.get(key);
+  if (at === undefined) return { dismissed: false, copies: 0, sets: state.dismissed.size };
+  const sig = signatureOf(state.groups[at]);
+  const already = state.dismissed.has(sig);
+  if (!already) { state.dismissed.add(sig); saveDismissed(); }
+  return {
+    dismissed: !already,
+    copies: state.groups[at].length,
+    sets: state.dismissed.size,
+    signature: sig,
+  };
+}
+
+/** Put one back, or all of them when no signature is named. */
+function restoreDismissed(signature) {
+  const before = state.dismissed.size;
+  if (signature) state.dismissed.delete(signature);
+  else state.dismissed.clear();
+  if (state.dismissed.size !== before) saveDismissed();
+  return { restored: before - state.dismissed.size, sets: state.dismissed.size };
+}
 
 function init({ cacheDir, roots = [], home = null }) {
   state.dir = path.join(cacheDir, 'dupes');
@@ -105,6 +172,7 @@ function init({ cacheDir, roots = [], home = null }) {
   state.rootsOf = typeof roots === 'function' ? roots : () => roots;
   state.homeOf = typeof home === 'function' ? home : () => home;
   fs.mkdirSync(path.join(state.dir, ENTRIES), { recursive: true });
+  loadDismissed();
   return state.dir;
 }
 
@@ -676,6 +744,9 @@ function decorate(stat) {
   const key = keyFor(stat);
   const at = state.byKey.get(key);
   if (at === undefined) return EMPTY;
+  // One place decides whether a video is a copy, so setting a set aside takes
+  // it out of the grouping, the filter and the card's mark at once.
+  if (dismissedAt(at)) return EMPTY;
   return {
     duplicate: true,
     copies: state.groups[at].length,
@@ -926,6 +997,7 @@ async function prune() {
 function members() {
   const out = [];
   state.groups.forEach((group, at) => {
+    if (dismissedAt(at)) return;
     for (const key of group) {
       const light = state.light.get(key) || {};
       const where = state.pathByKey.get(key) || light.path;
@@ -975,10 +1047,13 @@ function status() {
     rate: state.done > 2 && state.startedAt
       ? Math.round(state.done / ((Date.now() - state.startedAt) / 3600000))
       : 0,
-    groups: state.groups.length,
+    // Sets you have set aside are not findings: the pill would otherwise go on
+    // promising copies the listing no longer shows.
+    groups: state.groups.reduce((n, g, at) => n + (dismissedAt(at) ? 0 : 1), 0),
     pairs: state.matched,
     possible: state.pairs.length - state.matched,
-    copies: state.groups.reduce((n, g) => n + g.length - 1, 0),
+    copies: state.groups.reduce((n, g, at) => n + (dismissedAt(at) ? 0 : g.length - 1), 0),
+    dismissedSets: state.dismissed.size,
   };
 }
 
@@ -998,6 +1073,8 @@ module.exports = {
   profile,
   has,
   keyFor,
+  dismissGroup,
+  restoreDismissed,
   readPrint,
   candidates,
   keysOf,

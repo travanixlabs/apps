@@ -1145,6 +1145,11 @@ a.qbtn:hover { color: #dbe6f0; }
 }
 .chip-x:hover { opacity: 1; color: #ff8b8b; }
 
+/* "not duplicates" on a set's heading. Quiet until pointed at: it is an answer
+   you give occasionally, not the thing the section is for. */
+.group-dismiss { margin-left: auto; opacity: .55; }
+.group-dismiss:hover { opacity: 1; color: #ff8b8b; }
+
 /* A chip you have given a colour. One custom property carries it, so the same
    three rules serve a label, a studio, a production and a performer -- and a
    chip with no colour set never matches, keeping every default untouched.

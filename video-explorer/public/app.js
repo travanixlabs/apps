@@ -3497,6 +3497,10 @@ function renderDupePill() {
         + `${n(copies)} file${copies === 1 ? '' : 's'} could go`
       : 'No duplicates found yet',
     possible ? `${n(possible)} more where only one of sound and picture agreed` : null,
+    dupeStatus.dismissedSets
+      ? `${n(dupeStatus.dismissedSets)} set${dupeStatus.dismissedSets === 1 ? '' : 's'} `
+        + 'set aside as not duplicates'
+      : null,
     done ? `${n(done)} read this session${rate ? `, about ${n(rate)} an hour` : ''}` : null,
     { text: 'Advanced filters \u2192 Duplicates to see them', dim: true },
     { text: enabled ? 'Click to pause' : 'Click to resume', dim: true },
@@ -6258,6 +6262,59 @@ function syncGridTail() {
  * everywhere at once — including the order of these very sections, which is why
  * pressing it re-renders rather than just repainting itself.
  */
+/**
+ * "Not duplicates" on a set of copies.
+ *
+ * The matcher is confident and still wrong sometimes -- two scenes cut from one
+ * shoot, the same trailer on the front of two films -- and until now the only
+ * answers were to delete a video that is not a copy or to scroll past the set
+ * forever. This is the third answer, and it is remembered by what is in the
+ * set rather than by where the set sat in the last matching run.
+ */
+function buildDupeDismiss(group) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'linkish group-dismiss';
+  btn.textContent = 'not duplicates';
+  btn.title = 'Set this aside: these stop being marked as copies of each other';
+  btn.addEventListener('click', async (ev) => {
+    ev.stopPropagation();
+    const first = group.files[0];
+    if (!first) return;
+    try {
+      const out = await api('/api/dupes/dismiss', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: first.path }),
+      });
+      // The endpoint hands back the counts it has just changed, so the pill is
+      // right immediately rather than at the next poll.
+      dupeStatus = out.status || dupeStatus;
+      await refreshDupeFlags();
+      render();
+      renderDupePill();
+      toast(`${out.copies} videos are no longer marked as copies`, 'ok', {
+        label: 'Undo',
+        run: async () => {
+          const back = await api('/api/dupes/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ signature: out.signature }),
+          });
+          dupeStatus = back.status || dupeStatus;
+          await refreshDupeFlags();
+          render();
+          renderDupePill();
+          toast('Put back', 'ok');
+        },
+      });
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
+  return btn;
+}
+
 function buildGroupHead(group) {
   const head = document.createElement('div');
   head.className = 'group-head' + (group.unnamed ? ' group-unnamed' : '');
@@ -6336,7 +6393,10 @@ function buildGroupHead(group) {
     // actually credited to her, rather than what looks like her -- and there is
     // no filter for the latter to send it to. So it says which, instead of
     // reading as "only this section" and quietly showing a different set.
-    if (group.dupe) return head;   // no performer to filter down to
+    if (group.dupe) {
+      head.appendChild(buildDupeDismiss(group));
+      return head;   // no performer to filter down to
+    }
     const guessed = state.grouped === 'suggested';
     const only = document.createElement('button');
     only.type = 'button';

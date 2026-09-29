@@ -2420,6 +2420,29 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { files });
     }
 
+    // Not a duplicate after all. Named by any one of its members, since the
+    // page is holding videos rather than the set's own identity.
+    if (req.method === 'POST' && route === '/api/dupes/dismiss') {
+      const body = await readBody(req);
+      const raw = String(body.path || '');
+      if (!raw) return sendJson(res, 400, { error: 'Which video?' });
+      try {
+        const target = authoriseOrThrow(raw);
+        const { stat } = await statWithCloud(target);
+        const out = dupes.dismissGroup(dupes.keyFor(stat));
+        if (!out.copies) return sendJson(res, 404, { error: 'That video is not in a set of copies' });
+        return sendJson(res, 200, { ...out, status: dupes.status() });
+      } catch (err) {
+        return sendJson(res, 400, { error: err.message });
+      }
+    }
+
+    if (req.method === 'POST' && route === '/api/dupes/restore') {
+      const body = await readBody(req);
+      const out = dupes.restoreDismissed(body.signature ? String(body.signature) : '');
+      return sendJson(res, 200, { ...out, status: dupes.status() });
+    }
+
     if (req.method === 'GET' && route === '/api/dupes/groups') {
       const body = await dupes.loadDigest();
       if (!body) {
