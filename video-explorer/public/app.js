@@ -69,36 +69,6 @@ const state = {
  * them was a chance for one to drift.
  */
 const CHOICE_ROWS = [
-  ['#advSuggested', 'suggested', [
-    ['match', 'profiled with matching model',
-      'read for faces, and every performer recognised in it is already named on '
-      + 'it \u2014 nothing left to do'],
-    ['nomatch', 'profiled without matching model',
-      'read for faces, and someone recognised in it is not named on it. Videos '
-      + 'that held no usable face are not in here'],
-    ['faceless', 'no usable face',
-      'read for faces and none came out usable \u2014 shot from behind, too dark, '
-      + 'or too few faces to be sure they are one person'],
-    ['unprofiled', 'not profiled', 'not read for faces yet'],
-  ]],
-  ['#advSuggestedCount', 'suggestedCount', [
-    ['one', 'one model suggested',
-      'the faces in it were matched to exactly one performer'],
-    ['many', 'multiple models suggested',
-      'the faces clustered into several people and each found a name. With '
-      + '"profiled without matching model", this is the missing co-star'],
-  ]],
-  ['#advSuggestedAct', 'suggestedAct', [
-    ['accepted', 'accepted (incl. already matched)',
-      'a suggested name is credited on it \u2014 whether you took it or it was '
-      + 'already there'],
-    ['rejected', 'rejected',
-      'a name has been turned down on it, so the recogniser stopped offering her'],
-    ['pending', 'pending',
-      'a name is still offered and not credited \u2014 a decision you have not made '
-      + 'yet. Videos with nothing suggested are not in here; there is nothing '
-      + 'pending on those'],
-  ]],
   ['#advDupe', 'duplicate', [
     ['both', 'both match',
       'the soundtrack AND the picture both found the same other video, and '
@@ -7301,12 +7271,7 @@ function wireEvents() {
   for (const btn of document.querySelectorAll('[data-clear]')) {
     btn.addEventListener('click', () => {
       const what = btn.dataset.clear;
-      // One label, one clear, so all three of the section's rows go with it.
-      if (what === 'suggested') {
-        advDraft.suggested.clear();
-        advDraft.suggestedCount.clear();
-        advDraft.suggestedAct.clear();
-      } else if (CHOICE_FACETS.includes(what)) advDraft[what].clear();
+      if (CHOICE_FACETS.includes(what)) advDraft[what].clear();
       else advDraft[what === 'rating' ? 'ratings' : what].clear();
       renderAdvanced();
     });
