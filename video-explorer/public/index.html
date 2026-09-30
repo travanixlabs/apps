@@ -43,8 +43,6 @@
         <option value="size">File size</option>
         <option value="duration">Duration</option>
         <option value="rating">Rating</option>
-        <option value="studio">Studio</option>
-        <option value="production">Production</option>
         <option value="models">Model</option>
         <option value="tags">Tag</option>
         <option value="relFolder">Folder</option>
@@ -486,26 +484,6 @@
 
       <div class="adv-block">
         <div class="adv-label">
-          Studio
-          <!-- No all/any here: a video has exactly one studio, so "all of these
-               two" could only ever match nothing. Several picks mean any. -->
-          <span class="adv-mode adv-mode-fixed" title="A video has one studio, so several picks mean any of them">any</span>
-          <button class="linkish" data-clear="studio">clear</button>
-        </div>
-        <div id="advStudio" class="chip-row scroller"></div>
-      </div>
-
-      <div class="adv-block">
-        <div class="adv-label">
-          Production
-          <span class="adv-mode adv-mode-fixed" title="A video has one production code, so several picks mean any of them">any</span>
-          <button class="linkish" data-clear="production">clear</button>
-        </div>
-        <div id="advProduction" class="chip-row scroller"></div>
-      </div>
-
-      <div class="adv-block">
-        <div class="adv-label">
           Models
           <span class="adv-mode">
             <label><input type="radio" name="modelMode" value="all" checked> all</label>
@@ -540,22 +518,6 @@
       <button class="btn btn-icon modal-close">✕</button>
     </header>
     <div class="tag-body">
-      <section class="label-section">
-        <h3 class="label-head">Studio <span class="label-note">one only</span></h3>
-        <input id="studioInput" type="text" class="tag-input" spellcheck="false"
-               placeholder="the production house" list="studioVocab" autocomplete="off">
-        <datalist id="studioVocab"></datalist>
-        <div id="studioSuggest" class="tag-suggest"></div>
-      </section>
-
-      <section class="label-section">
-        <h3 class="label-head">Production <span class="label-note">one only</span></h3>
-        <input id="productionInput" type="text" class="tag-input" spellcheck="false"
-               placeholder="the reference code — MD, RS, MCY" list="productionVocab" autocomplete="off">
-        <datalist id="productionVocab"></datalist>
-        <div id="productionSuggest" class="tag-suggest"></div>
-      </section>
-
       <section class="label-section">
         <h3 class="label-head">Models</h3>
         <input id="modelInput" type="text" class="tag-input" spellcheck="false"
@@ -633,21 +595,11 @@
       <p class="hint">Changing frame count or tile width rebuilds previews on next hover. Existing sprites stay cached under <span class="mono">.cache</span>.</p>
       <button id="clearCacheBtn" class="btn btn-danger">Clear preview cache</button>
 
-      <!-- One colour per kind. A studio, a production and a performer are each
-           one value per video, so there is nothing to pick a colour per value
-           FOR -- the kind is the thing you are telling apart at a glance. -->
+      <!-- One colour for performers: a video has one, so there is nothing to
+           pick a colour per value FOR -- the kind is what you are telling
+           apart at a glance. Labels get one each, below. -->
       <h3 class="settings-head">Colours</h3>
       <div class="facet-colours">
-        <label class="facet-colour">
-          <span class="chip chip-studio swatch-demo" id="studioDemo">Studio</span>
-          <input id="colourStudio" type="color" value="#7aa2f7">
-          <button class="linkish" data-colour-clear="studio">default</button>
-        </label>
-        <label class="facet-colour">
-          <span class="chip chip-production swatch-demo" id="productionDemo">Production</span>
-          <input id="colourProduction" type="color" value="#bb9af7">
-          <button class="linkish" data-colour-clear="production">default</button>
-        </label>
         <label class="facet-colour">
           <span class="chip chip-model swatch-demo" id="modelsDemo">Model</span>
           <input id="colourModels" type="color" value="#9ece6a">

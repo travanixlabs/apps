@@ -106,7 +106,7 @@ const DEFAULT_CONFIG = {
   spareLabels: [],
   // One colour each for the three facets that are one value per video. They
   // are a kind, not a vocabulary, so they do not get a colour per value.
-  facetColours: { studio: '', production: '', models: '' },
+  facetColours: { models: '' },
 
   scrubWithMouse: false,
   // Highest rated first: your own judgement beats any property of the file.

@@ -842,29 +842,6 @@ a.qbtn:hover { color: #dbe6f0; }
 
 /* Reads as part of the line until pointed at, so it does not compete with the
    name or the source link for attention. */
-/* Green, and ahead of the names: one studio per video, so it reads as the
-   heading of that row rather than another name in it. Placed after every .chip
-   rule on purpose -- at equal specificity the later block wins, which is how
-   the model chips lost their gold the first time round. */
-.chip.chip-studio {
-  border-color: #2f6b46;
-  background: #16301f;
-  color: #7fd6a0;
-}
-.chip.chip-studio:hover { border-color: #3f8b5c; color: #9ce8ba; }
-.chip.suggest.chip-studio.on { border-color: #4ea373; background: #1d3f28; color: #b6f0cd; }
-
-/* The production code: a violet, so it reads as a sibling of the green studio
-   without being mistaken for it at a glance. */
-.chip.chip-production {
-  border-color: #5a4a8c;
-  background: #24203c;
-  color: #c3b6ec;
-  font-variant-numeric: tabular-nums;
-}
-.chip.chip-production:hover { border-color: #7a66bd; color: #dcd3ff; }
-.chip.suggest.chip-production.on { border-color: #7a66bd; background: #2c2550; color: #ded6ff; }
-
 /* "one only", beside the section heading. */
 .label-note {
   margin-left: 7px;
@@ -1152,11 +1129,10 @@ a.qbtn:hover { color: #dbe6f0; }
 .group-dismiss:hover { opacity: 1; color: #ff8b8b; }
 
 /* A chip you have given a colour. One custom property carries it, so the same
-   three rules serve a label, a studio, a production and a performer -- and a
-   chip with no colour set never matches, keeping every default untouched.
-   The `!important` is not laziness: the per-kind rules below are written as
-   `.chip.chip-studio` to beat plain `.chip`, and a colour you chose has to beat
-   both of them. */
+   three rules serve a label and a performer alike -- and a chip with no colour
+   set never matches, keeping every default untouched. The `!important` is not
+   laziness: the per-kind rules are written as `.chip.chip-model` to beat plain
+   `.chip`, and a colour you chose has to beat both of them. */
 .chip[style*="--chip-colour"] {
   border-color: var(--chip-colour) !important;
   background: color-mix(in srgb, var(--chip-colour) 20%, transparent) !important;

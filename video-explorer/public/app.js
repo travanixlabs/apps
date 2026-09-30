@@ -53,8 +53,6 @@ const state = {
   favSet: new Set(),   // the same, lower-cased, for asking about one video
   tagVocab: [],        // [{ tag, count }] across the whole library
   modelVocab: [],      // the same, for performer names
-  studioVocab: [],     // and for production houses, of which a video has one
-  productionVocab: [], // and for reference codes — MD, RS, MCY — likewise one
   tagTargets: [],      // files the open label dialog will edit
   adv: newAdvFilter(), // the advanced filter currently applied
 };
@@ -86,7 +84,7 @@ const CHOICE_ROWS = [
   ]],
 ];
 
-/** Which radio group drives which facet's all/any. Studio has none. */
+/** Which radio group drives which facet's all/any. */
 const MODE_INPUTS = [['tags', 'tagMode'], ['models', 'modelMode']];
 
 /**
@@ -211,8 +209,6 @@ function hydrate(file) {
   file.tags = file.tags || [];
   file.models = file.models || [];
   file.notModels = file.notModels || [];
-  file.studio = file.studio || '';
-  file.production = file.production || '';
   file.url = file.url || '';
   file.marks = file.marks || [];
   file.resume = file.resume || 0;
@@ -737,9 +733,6 @@ function parseQuery(query) {
     } else if (raw.startsWith('@') || raw.startsWith('model:')) {
       field = 'models';
       value = raw.replace(/^(@|model:)/, '');
-    } else if (raw.startsWith('studio:')) {
-      field = 'studio';
-      value = raw.replace(/^studio:/, '');
     }
     return value ? { value, field } : null;
   }).filter(Boolean);
@@ -776,19 +769,18 @@ async function toggleFavouriteModel(name) {
 
 function matchesQuery(file, terms) {
   const haystack = (file.name + ' ' + file.relFolder).toLowerCase();
-  // The studio is one value rather than a list, so it is wrapped instead of
-  // being iterated -- a string would otherwise be walked character by character.
+  // Wrapped rather than iterated, so a field holding a single string is not
+  // walked character by character.
   const values = (field) => {
     const held = file[field];
     return (Array.isArray(held) ? held : (held ? [held] : [])).map((t) => t.toLowerCase());
   };
   return terms.every((term) => {
     if (term.field) return values(term.field).some((t) => t.includes(term.value));
-    // A bare term searches everything: name, subfolder, tags, models, studio.
+    // A bare term searches everything: name, subfolder, tags, models.
     return haystack.includes(term.value)
       || values('tags').some((t) => t.includes(term.value))
-      || values('models').some((t) => t.includes(term.value))
-      || values('studio').some((t) => t.includes(term.value));
+      || values('models').some((t) => t.includes(term.value));
   });
 }
 
@@ -855,9 +847,8 @@ function applyFilterSort() {
       // by dir would put the unrated bulk in reverse alphabetical order.
       if (cmp === 0) return a.name.localeCompare(b.name, undefined, { numeric: true });
     } else if (LABEL_SORTS[key]) {
-      // Sorting by a label sorts by its first value: a video has one studio but
-      // any number of performers, and "her name comes first alphabetically" is
-      // the only ordering a list of them has.
+      // Sorting by a label sorts by its first value: "her name comes first
+      // alphabetically" is the only ordering a list of them has.
       //
       // Unlabelled goes last whichever way the arrow points, like the unrated
       // do — reversing brings the labelled tail to the top, which is the half
@@ -886,8 +877,8 @@ function applyFilterSort() {
  * watchable videos outranks one good one.
  *
  * Scored from the listing rather than from the whole library on purpose: this is
- * a view of what is in front of you, so filtering to one studio should reorder
- * the sections by who is best *in that studio*.
+ * a view of what is in front of you, so filtering to one tag should reorder
+ * the sections by who is best *in that tag*.
  */
 const STAR_POINTS = [0, 0, 0, 10, 100, 1000];
 
@@ -1129,11 +1120,6 @@ function touchedAt(file) {
 
 /** Which label a sort key reads, and what it reads out of it. */
 const LABEL_SORTS = {
-  studio: (f) => (f.studio || '').trim(),
-  // One value per video, like the studio -- the series within the house, so
-  // sorting by it groups a production's shoots together and the numbering
-  // inside a group falls out of the numeric name tiebreak.
-  production: (f) => (f.production || '').trim(),
   models: (f) => firstAlphabetically(f.models),
   tags: (f) => firstAlphabetically(f.tags),
 };
@@ -1160,8 +1146,6 @@ const SORT_FIELDS = [
   { value: 'size', label: 'File size' },
   { value: 'duration', label: 'Duration' },
   { value: 'rating', label: 'Rating' },
-  { value: 'studio', label: 'Studio' },
-  { value: 'production', label: 'Production' },
   { value: 'models', label: 'Model' },
   { value: 'tags', label: 'Tag' },
   { value: 'relFolder', label: 'Folder' },
@@ -1378,9 +1362,6 @@ function renderAdvanced() {
     }
   }
   for (const [field, el, empty, none] of [
-    ['studio', '#advStudio', 'No studios yet — the import writes them.', 'no studio'],
-    ['production', '#advProduction', 'No production codes yet — the import writes them.',
-      'no production'],
     ['models', '#advModels', 'No models yet — name someone from a card first.', 'no models'],
     ['tags', '#advTags', 'No tags yet — add some from a card first.', 'no tags'],
   ]) {
@@ -1430,8 +1411,6 @@ function updateAdvMatch() {
     if (nothing === 'in') bits.push(`no ${many} at all`);
     if (nothing === 'out') bits.push(`some ${many}`);
   };
-  say('studio', 'studio', 'studios');
-  say('production', 'production code', 'production codes');
   say('models', 'model', 'models', ` (${advDraft.mode.models})`);
   say('tags', 'tag', 'tags', ` (${advDraft.mode.tags})`);
   say('ratings', 'rating');
@@ -1855,8 +1834,6 @@ async function editRecords(paths, patch) {
     });
     state.tagVocab = data.tags || state.tagVocab;
     state.modelVocab = data.models || state.modelVocab;
-    state.studioVocab = data.studios || state.studioVocab;
-    state.productionVocab = data.productions || state.productionVocab;
     for (const [filePath, record] of Object.entries(data.records || {})) {
       if (record.error) { toast(record.error, 'err'); continue; }
       // The open video first, and before the listing lookup: it is watchable
@@ -1880,8 +1857,6 @@ async function editRecords(paths, patch) {
       // changes what this video suggests, and the chip would otherwise stay.
       if (record.suggested !== undefined) file.suggested = record.suggested;
       if (record.people !== undefined) file.people = record.people;
-      file.studio = record.studio;
-      file.production = record.production;
       file.url = record.url;
       // Bookmarked moments. Copied back so the timeline redraws from the store
       // rather than from what the click optimistically assumed.
@@ -2376,11 +2351,10 @@ function setCardWidth(px, { save = false } = {}) {
   return want;
 }
 
-/** The three demo chips and their pickers, from whatever is saved. */
+/** The demo chip and its picker, from whatever is saved. */
 function syncFacetColours() {
   const held = (state.config || {}).facetColours || {};
-  for (const [facet, demo] of [['studio', '#studioDemo'], ['production', '#productionDemo'],
-    ['models', '#modelsDemo']]) {
+  for (const [facet, demo] of [['models', '#modelsDemo']]) {
     const id = '#colour' + facet[0].toUpperCase() + facet.slice(1);
     const input = $(id);
     const chip = $(demo);
@@ -3649,25 +3623,11 @@ function buildStars(current, onPick, { compact = false, edit = true } = {}) {
 const LABEL_FIELDS = {
   tags: { empty: '+ tag', chip: 'chip', values: (f) => f.tags || [] },
   models: { empty: '+ model', chip: 'chip chip-model', values: (f) => f.models || [] },
-  // One allowed answer, so it reads a single value rather than a list, and
-  // removing it means clearing the field instead of dropping one entry.
-  studio: {
-    empty: '+ studio',
-    chip: 'chip chip-studio',
-    values: (f) => (f.studio ? [f.studio] : []),
-  },
-  // The series within a house: Model Media ships MD, MDX, MCY, TZ and MSD, and
-  // "which of those is this" is a question the studio cannot answer.
-  production: {
-    empty: '+ production',
-    chip: 'chip chip-production',
-    values: (f) => (f.production ? [f.production] : []),
-  },
 };
 
 // Which of them hold one value rather than a list -- the matcher's list, read
-// here rather than restated, because "several studios can only mean any" is a
-// fact about the data and not about this dialog.
+// here rather than restated, because that is a fact about the data and not
+// about this dialog. None of them do, since studio and production went.
 for (const [field, spec] of Object.entries(LABEL_FIELDS)) {
   spec.single = SINGLE_VALUED[field] === true;
 }
@@ -3683,8 +3643,8 @@ for (const [field, spec] of Object.entries(LABEL_FIELDS)) {
  * The colour a chip should wear, or '' for the default.
  *
  * A label carries its own, because a vocabulary is what you are telling apart
- * at a glance. The other three are one value per video, so the KIND is what
- * gets a colour and every studio shares it.
+ * at a glance. A performer is one value per video, so the KIND is what gets a
+ * colour and every name shares it.
  */
 function chipColour(field, value) {
   const config = state.config || {};
@@ -3789,11 +3749,6 @@ function buildRecordRow(file, { edit = true } = {}) {
     ));
   }
 
-  // The studio leads: it is the one fact there can only be one of, so it reads
-  // as a heading for the names rather than another entry among them.
-  if (file.studio) row.appendChild(buildLabelChips(file, 'studio', { add: false, edit }));
-  if (file.production) row.appendChild(buildLabelChips(file, 'production', { add: false, edit }));
-
   // Names show when there are names; nothing sits there inviting you to add one.
   if ((file.models || []).length) row.appendChild(buildLabelChips(file, 'models', { add: false, edit }));
   // With no add button and no tags there is nothing to draw, and an empty
@@ -3811,15 +3766,13 @@ function buildRecordRow(file, { edit = true } = {}) {
  * for it. The count stays on each chip, so nothing is lost by reordering.
  */
 function vocabByName(field) {
-  const vocab = { models: state.modelVocab, studio: state.studioVocab,
-    production: state.productionVocab }[field] || state.tagVocab;
+  const vocab = field === 'models' ? state.modelVocab : state.tagVocab;
   return vocab.slice().sort((a, b) =>
     a.tag.localeCompare(b.tag, undefined, { numeric: true, sensitivity: 'base' }));
 }
 
 function syncTagVocab() {
-  for (const [field, id] of [['tags', '#tagVocab'], ['models', '#modelVocab'],
-    ['studio', '#studioVocab'], ['production', '#productionVocab']]) {
+  for (const [field, id] of [['tags', '#tagVocab'], ['models', '#modelVocab']]) {
     const list = $(id);
     if (!list) continue;
     list.innerHTML = '';
@@ -3836,8 +3789,6 @@ function syncTagVocab() {
 const LABEL_INPUTS = {
   tags: { input: '#tagInput', suggest: '#tagSuggest' },
   models: { input: '#modelInput', suggest: '#modelSuggest' },
-  studio: { input: '#studioInput', suggest: '#studioSuggest' },
-  production: { input: '#productionInput', suggest: '#productionSuggest' },
 };
 
 function parseTags(text) {
@@ -3863,12 +3814,6 @@ function openTagDialog(files) {
   for (const field of ['tags', 'models']) {
     $(LABEL_INPUTS[field].input).value = single ? (files[0][field] || []).join(', ') : '';
   }
-  // Across several videos a shared value is a sensible starting point; a mixed
-  // selection starts blank, so Add leaves each one's own alone.
-  for (const field of ['studio', 'production']) {
-    const shared = new Set(files.map((f) => f[field] || ''));
-    $(LABEL_INPUTS[field].input).value = shared.size === 1 ? [...shared][0] : '';
-  }
   $('#tagHint').textContent = single
     ? 'Add appends, Replace overwrites — every section at once. Right-click a chip on the card to remove one.'
     : `Add appends to each video's existing tags and models. Replace overwrites all ${files.length}.`;
@@ -3880,10 +3825,9 @@ function openTagDialog(files) {
   renderDialogSuggestions(files);
   $('#tagModal').hidden = false;
 
-  // The dialog opens at the top. Focusing the tag box scrolls it into view, and
-  // with four sections that means opening halfway down with Studio and
-  // Production above the fold — so the caret goes there without the scroll, and
-  // the body is put back to the top explicitly in case anything else moved it.
+  // The dialog opens at the top. Focusing the tag box scrolls it into view, so
+  // the caret goes there without the scroll, and the body is put back to the
+  // top explicitly in case anything else moved it.
   $('#tagInput').focus({ preventScroll: true });
   $('#tagInput').select();
   $('#tagModal .tag-body').scrollTop = 0;
@@ -3898,8 +3842,7 @@ function renderTagSuggestions() {
     box.innerHTML = '';
     const single = LABEL_FIELDS[field].single;
     const used = new Set(parseTags($(input).value).map((t) => t.toLowerCase()));
-    const extra = { models: ' chip-model', studio: ' chip-studio',
-      production: ' chip-production' }[field] || '';
+    const extra = field === 'models' ? ' chip-model' : '';
     // Every value, not the first 60. The cap was invisible: with 778 performers
     // the box looked complete and simply had no more to scroll to, which is the
     // one thing a truncated list must never look like. `.tag-suggest` already
@@ -3911,7 +3854,7 @@ function renderTagSuggestions() {
       chip.textContent = `${entry.tag} · ${entry.count}`;
       chip.addEventListener('click', () => {
         // A one-value field swaps rather than accumulates: picking a second
-        // studio replaces the first, and picking the current one clears it.
+        // value replaces the first, and picking the current one clears it.
         if (single) {
           const now = $(input).value.trim().toLowerCase();
           $(input).value = now === entry.tag.toLowerCase() ? '' : entry.tag;
@@ -3933,24 +3876,15 @@ function renderTagSuggestions() {
 async function commitTags(mode) {
   const tags = parseTags($('#tagInput').value);
   const models = parseTags($('#modelInput').value);
-  const studio = $('#studioInput').value.trim();
-  const production = $('#productionInput').value.trim();
   const paths = state.tagTargets.map((f) => f.path);
 
   $('#tagModal').hidden = true;
-  // One request for every field: separate ones would mean separate saves,
+  // One request for both fields: separate ones would mean separate saves,
   // separate vocabulary refreshes, and a window where a card shows half the
-  // edit. Add leaves a blank studio box alone, since there is nothing to append
-  // to a field that holds one value; Replace sends it either way, so clearing
-  // the box is how you clear the studio.
+  // edit.
   await editRecords(paths, mode === 'add'
-    ? {
-      addTags: tags,
-      addModels: models,
-      ...(studio ? { studio } : {}),
-      ...(production ? { production } : {}),
-    }
-    : { tags, models, studio, production });
+    ? { addTags: tags, addModels: models }
+    : { tags, models });
 
   const say = (n, noun) => `${n} ${noun}${n === 1 ? '' : 's'}`;
   const videos = say(paths.length, 'video');
@@ -7376,7 +7310,7 @@ function wireEvents() {
     renderLabelList();
     $('#settingsModal').hidden = false;
   });
-  for (const facet of ['studio', 'production', 'models']) {
+  for (const facet of ['models']) {
     const id = '#colour' + facet[0].toUpperCase() + facet.slice(1);
     $(id).addEventListener('input', (ev) => setFacetColour(facet, ev.target.value));
   }
@@ -7913,6 +7847,11 @@ async function init() {
   // The mode is remembered across launches, so the fetch has to happen on the
   // way in as well as on the click.
   if (state.grouped === 'dupes') fetchOtherCopies().then(() => render());
+  // A sort saved under a key that has since gone -- studio, production -- would
+  // leave the box blank and the listing in whatever order it arrived in.
+  if (state.config.sort && !SORT_FIELDS.some((s) => s.value === state.config.sort)) {
+    state.config.sort = 'name';
+  }
   $('#sortSelect').value = state.config.sort || 'name';
   syncSortButton();
   setCardWidth(state.config.cardWidth || CARD_MIN);
@@ -7930,8 +7869,6 @@ async function init() {
     // Both vocabularies, or the dialog's Models section sits empty until an edit
     // happens to bring the second one back with its response.
     state.modelVocab = data.models || [];
-    state.studioVocab = data.studios || [];
-    state.productionVocab = data.productions || [];
     setFavourites(data.favourites);
     syncTagVocab();
   }).catch(() => {});
