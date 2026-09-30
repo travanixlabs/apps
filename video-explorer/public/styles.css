@@ -1238,16 +1238,16 @@ a.qbtn:hover { color: #dbe6f0; }
 .label-row .label-drop:hover { color: #ff8b8b; }
 .label-empty { padding: 10px; color: var(--text-faint); font-size: 12px; }
 
-/* On a card the pills are a read-out, not somewhere to aim: at roughly half
-   their old height a tile shows what it is tagged with in the space one line
-   of them used to take. The player's row keeps full size, because that is
-   where they are clicked. */
-.record-read .chips { gap: 3px; }
+/* On a card the pills are a read-out, not somewhere to aim, so they are
+   smaller than the player's -- but half size was too small to read at a
+   glance, and this is a quarter back up from there. The player's row keeps
+   full size, because that is where they are clicked. */
+.record-read .chips { gap: 4px; }
 .record-read .chip {
-  padding: 0 5px;
-  font-size: 8px;
+  padding: 0 6px;
+  font-size: 10px;
   line-height: 1.35;
-  max-width: 108px;
+  max-width: 135px;
 }
 .chip-add {
   border-style: dashed;

@@ -62,27 +62,11 @@ const state = {
 /**
  * Which row draws which facet, and what each answer is called.
  *
- * One table rather than six near-identical loops in the renderer: they differed
- * only in their host element and their labels, and every difference between
- * them was a chance for one to drift.
+ * One table rather than a loop each in the renderer: they differed only in
+ * their host element and their labels, and every difference between them was a
+ * chance for one to drift. Empty while no one-question facet is on the dialog.
  */
-const CHOICE_ROWS = [
-  ['#advDupe', 'duplicate', [
-    ['both', 'both match',
-      'the soundtrack AND the picture both found the same other video, and '
-      + 'agreed on the same offset between them. As certain as this gets'],
-    ['sound', 'sound matches',
-      'the soundtrack lines up with another video. Finds a copy that was '
-      + 're-cropped, letterboxed or watermarked, which the picture would miss'],
-    ['picture', 'video matches',
-      'the frames and the shot-change rhythm line up with another video. Finds '
-      + 'a copy that was re-dubbed, re-scored or muted, which the sound '
-      + 'would miss'],
-    ['no', 'the only copy',
-      'read and found unique. Cloud videos are not in here, because nothing '
-      + 'has been read of them and neither answer would be true'],
-  ]],
-];
+const CHOICE_ROWS = [];
 
 /** Which radio group drives which facet's all/any. */
 const MODE_INPUTS = [['tags', 'tagMode'], ['models', 'modelMode']];
