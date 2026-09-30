@@ -740,6 +740,23 @@ function digestSoon() {
 const EMPTY = Object.freeze({ duplicate: false, copies: 0, dupeKinds: null });
 
 /** What a listing needs to know about one video. */
+/**
+ * How long a video runs, according to its fingerprint.
+ *
+ * Reading a cloud-only video to ask ffprobe would download it, so those tiles
+ * had no running time at all -- which is most of the library. The duplicate
+ * index already knows: ffmpeg reported the runtime when the video was
+ * fingerprinted, and the key is size and modified time, so freeing the file up
+ * to the cloud does not touch it.
+ *
+ * Zero when the fingerprint predates the runtime being recorded, and the caller
+ * treats that as "not known" rather than "zero seconds".
+ */
+function secsFor(stat) {
+  const row = state.light.get(keyFor(stat));
+  return (row && row.secs) || 0;
+}
+
 function decorate(stat) {
   const key = keyFor(stat);
   const at = state.byKey.get(key);
@@ -1073,6 +1090,7 @@ module.exports = {
   profile,
   has,
   keyFor,
+  secsFor,
   dismissGroup,
   restoreDismissed,
   readPrint,

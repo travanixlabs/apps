@@ -1453,8 +1453,7 @@ function slim(entry) {
  * had only just finished stat'ing.
  */
 function knownMeta(video) {
-  const held = cachedMeta(video.path, video);
-  if (!held) return null;
+  const held = cachedMeta(video.path, video) || {};
   const { duration, width, height, fps, codec, bitrate } = held;
   const out = {};
   if (duration) out.duration = duration;
@@ -1463,6 +1462,13 @@ function knownMeta(video) {
   if (fps) out.fps = fps;
   if (codec) out.codec = codec;
   if (bitrate) out.bitrate = bitrate;
+  // Nothing probed, but it may still have been fingerprinted -- and a cloud-only
+  // video can never be probed, so for most of the library this is the only
+  // running time there will ever be. Never overrides a real probe.
+  if (!out.duration) {
+    const secs = dupes.secsFor(video);
+    if (secs) out.duration = secs;
+  }
   return Object.keys(out).length ? out : null;
 }
 
@@ -2217,7 +2223,10 @@ const server = http.createServer(async (req, res) => {
             return;
           }
           if (cloudOnly && !allowCloud) {
-            meta[raw] = { cloudOnly: true, skipped: true };
+            // Refused the probe, but the fingerprint may still say how long it
+            // runs -- which is the whole answer for a library kept in the cloud.
+            const secs = dupes.secsFor(stat);
+            meta[raw] = { cloudOnly: true, skipped: true, ...(secs ? { duration: secs } : {}) };
             return;
           }
           const probed = await getMeta(target, stat);
