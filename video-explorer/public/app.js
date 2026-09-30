@@ -43,9 +43,9 @@ const state = {
   pending: new Map(),  // path -> in-flight poster/sprite promise
   failed: new Set(),
   picker: null,        // { dir, onConfirm, title }
-  // '' | 'models' | 'suggested' -- off, by who is credited, by who the faces
-  // look like. Empty rather than false because everything downstream asks
-  // whether it is grouped far more often than it asks how.
+  // '' | 'models' | 'dupes' -- off, by who is credited, by copies of the same
+  // video. Empty rather than false because everything downstream asks whether
+  // it is grouped far more often than it asks how.
   grouped: '',
   groups: [],          // [{ key, name, files }] when grouped, favourites first
   slots: [],           // the grouped layout flattened: a heading or a card
@@ -903,21 +903,15 @@ const STAR_POINTS = [0, 0, 0, 10, 100, 1000];
  * Favourites lead, then alphabetical. Ordering by how many videos each has would
  * move a section every time the filter changed.
  */
-function buildModelGroups(list, mode = 'models') {
+function buildModelGroups(list) {
   const groups = new Map();
   const unnamed = [];
-  const suggested = mode === 'suggested';
 
   for (const file of list) {
-    // The credited names, or the ones the recogniser put forward. Same shape of
-    // view over a different question: who is in this, against who might be.
-    //
-    // The same floor the player shows at: a section built from guesses too weak
-    // to be offered anywhere else is a performer you cannot act on, and 86 of
-    // the 1,212 sections were made entirely of those.
-    const names = (suggested
-      ? (file.suggested || []).filter((s) => s.score >= FACE_FLOOR).map((s) => s.name)
-      : (file.models || [])).map((n) => String(n).trim()).filter(Boolean);
+    // Who is credited on it. This used to answer a second question as well --
+    // who the faces look like -- and that view is gone: with every suggestion
+    // at the floor now credited, it was showing the same sections as this one.
+    const names = (file.models || []).map((n) => String(n).trim()).filter(Boolean);
     if (!names.length) { unnamed.push(file); continue; }
     const rating = Math.max(0, Math.min(5, Math.round(Number(file.rating) || 0)));
     for (const name of names) {
@@ -951,9 +945,7 @@ function buildModelGroups(list, mode = 'models') {
       name: '',
       files: unnamed,
       unnamed: true,
-      // Not the same absence: one is nobody credited, the other is nobody the
-      // recogniser could put a name to -- including every video it has not read.
-      label: suggested ? 'Nobody suggested' : 'Nobody named',
+      label: 'Nobody named',
     });
   }
   return out;
@@ -1073,7 +1065,7 @@ function buildDupeGroups(list) {
 function buildSlots() {
   state.groups = !state.grouped ? []
     : state.grouped === 'dupes' ? buildDupeGroups(withOtherCopies(state.view))
-      : buildModelGroups(state.view, state.grouped);
+      : buildModelGroups(state.view);
   state.slots = [];
   state.cards = [];
   if (!state.grouped) return;
@@ -2080,8 +2072,7 @@ const BAND_LABEL = {
  * place in a row where every other tile was a decision waiting to be made.
  *
  * Only the display is thinned. `file.suggested` still holds every name the
- * recogniser offered, which is what the "a suggested name is credited" filter
- * and the grouped-by-suggested listing are counting.
+ * recogniser offered, which is what the refusal list is read against.
  */
 function uncredited(file, list) {
   const named = new Set((file.models || []).map((m) => m.toLowerCase()));
@@ -6389,23 +6380,14 @@ function buildGroupHead(group) {
     // card behaves: the grouped view is for finding someone, not for working
     // through them.
     //
-    // Grouped by suggestion it lands somewhere else on purpose -- what is
-    // actually credited to her, rather than what looks like her -- and there is
-    // no filter for the latter to send it to. So it says which, instead of
-    // reading as "only this section" and quietly showing a different set.
     if (group.dupe) {
       head.appendChild(buildDupeDismiss(group));
       return head;   // no performer to filter down to
     }
-    const guessed = state.grouped === 'suggested';
     const only = document.createElement('button');
     only.type = 'button';
     only.className = 'linkish group-only';
-    only.textContent = guessed ? 'her credited videos' : 'only this one';
-    if (guessed) {
-      only.title = `Everything credited to ${group.name}, which is not the same `
-        + 'set as the videos that look like her';
-    }
+    only.textContent = 'only this one';
     only.addEventListener('click', (ev) => {
       ev.stopPropagation();
       filterByLabel('models', group.name);
@@ -7046,11 +7028,11 @@ async function dropOnto(paths, destPath, copy, label) {
  * search and the sort all still apply, and every video in it is still there —
  * just once per person named in it.
  */
-const GROUP_MODES = ['', 'models', 'suggested', 'dupes'];
+const GROUP_MODES = ['', 'models', 'dupes'];
 
 async function toggleGrouped() {
-  // Off, credited, suggested, duplicates, off. The plain listing is never more
-  // than one more press away, whichever grouping you are in.
+  // Off, credited, duplicates, off. The plain listing is never more than one
+  // more press away, whichever grouping you are in.
   state.grouped = GROUP_MODES[(GROUP_MODES.indexOf(state.grouped) + 1) % GROUP_MODES.length];
   syncGroupButton();
   // The whole set, not the part of it in this folder.
@@ -7070,12 +7052,6 @@ async function toggleGrouped() {
       : 'No copies found in this listing', sets ? 'ok' : 'info');
     return;
   }
-  if (state.grouped === 'suggested') {
-    toast(named
-      ? `${named} performer${named === 1 ? '' : 's'} the faces look like, best rated first`
-      : 'Nobody suggested in this listing', 'ok');
-    return;
-  }
   toast(named
     ? `${named} performer${named === 1 ? '' : 's'}, best rated first`
       + (marked ? ` — ${marked} marked` : '')
@@ -7088,13 +7064,11 @@ function syncGroupButton() {
   btn.classList.toggle('on', Boolean(state.grouped));
   // Two different groupings behind one button, so the state has to be
   // legible without pressing it: the heart changes colour as well as filling.
-  btn.classList.toggle('by-suggested', state.grouped === 'suggested');
   btn.classList.toggle('by-dupes', state.grouped === 'dupes');
   btn.title = {
     '': 'Ungrouped — click to group this listing by credited performer',
-    models: 'Grouped by credited performer — click to group by suggested performer',
-    suggested: 'Grouped by suggested performer, from the face index '
-      + '— click to group copies of the same video together',
+    models: 'Grouped by credited performer — click to group copies of the same '
+      + 'video together',
     dupes: 'Grouped by duplicate — each section is one video and every copy of '
       + 'it, side by side — click for the plain listing',
   }[state.grouped];

@@ -1063,7 +1063,6 @@ a.qbtn:hover { color: #dbe6f0; }
    different question, so it is the same button in another colour rather than a
    second control beside it. Violet is the suggestion colour elsewhere. Must
    follow .on -- same specificity, so source order settles it. */
-#groupBtn.on.by-suggested { color: #c3b6ec; border-color: #6b5ea8; }
 
 /* -------------------------------------------------------- ratings and tags */
 
