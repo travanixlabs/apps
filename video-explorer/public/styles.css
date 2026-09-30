@@ -976,6 +976,22 @@ a.qbtn:hover { color: #dbe6f0; }
 .linkish:hover { color: var(--text); }
 
 .chip-row { display: flex; flex-wrap: wrap; gap: 5px; }
+
+/* Over a list long enough to need it. Full width, because it belongs to the
+   list below rather than to the label above. */
+.chip-find {
+  display: block;
+  width: 100%;
+  margin: 0 0 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-elev-2);
+  color: var(--text);
+  font-size: 12px;
+}
+.chip-find:focus { border-color: var(--accent); outline: none; }
+.chip-find::placeholder { color: var(--text-faint); }
 /* Five whole rows. Row-aligned for the same reason the suggestion boxes are:
    a row cut in half looks broken rather than scrollable. Four 34px pitches plus
    a 29px chip. */

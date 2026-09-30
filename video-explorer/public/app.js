@@ -1350,20 +1350,28 @@ function renderAdvanced() {
     ['tags', '#advTags', 'No tags yet — add some from a card first.', 'no tags'],
   ]) {
     const box = $(el);
+    const which = el.replace('#', '');
     // Alphabetical, like the editor: a facet is picked by looking a word up.
-    const vocab = vocabByName(field);
+    const vocab = vocabFound(field, which);
+    const searching = Boolean(String(chipFind[which] || '').trim());
     box.innerHTML = '';
 
     // First, because "which of these have nothing" is a question about the whole
-    // listing rather than one more value in it.
-    const gap = chipCycle(none, advDraft[field].get(NOTHING), () => {
-      cycleIn(advDraft[field], NOTHING);
-      renderAdvanced();
-    });
-    gap.classList.add('chip-none');
-    box.appendChild(gap);
+    // listing rather than one more value in it. Not while searching: it answers
+    // a different question and would sit there matching nothing you typed.
+    if (!searching) {
+      const gap = chipCycle(none, advDraft[field].get(NOTHING), () => {
+        cycleIn(advDraft[field], NOTHING);
+        renderAdvanced();
+      });
+      gap.classList.add('chip-none');
+      box.appendChild(gap);
+    }
 
-    if (!vocab.length) box.insertAdjacentHTML('beforeend', `<span class="dim">${empty}</span>`);
+    if (!vocab.length) {
+      box.insertAdjacentHTML('beforeend',
+        `<span class="dim">${searching ? 'Nothing matches that.' : empty}</span>`);
+    }
     for (const entry of vocab) {
       box.appendChild(chipCycle(`${entry.tag} · ${entry.count}`, advDraft[field].get(entry.tag), () => {
         cycleIn(advDraft[field], entry.tag);
@@ -1673,16 +1681,20 @@ function renderShuffle() {
 
   const box = $('#shuffleTags');
   box.innerHTML = '';
-  const gap = chipCycle('no tags', shuffle.draft.tags.get(NOTHING), () => {
-    cycleIn(shuffle.draft.tags, NOTHING);
-    renderShuffle();
-  });
-  gap.classList.add('chip-none');
-  box.appendChild(gap);
-  const vocab = vocabByName('tags');
+  const searching = Boolean(String(chipFind.shuffleTags || '').trim());
+  if (!searching) {
+    const gap = chipCycle('no tags', shuffle.draft.tags.get(NOTHING), () => {
+      cycleIn(shuffle.draft.tags, NOTHING);
+      renderShuffle();
+    });
+    gap.classList.add('chip-none');
+    box.appendChild(gap);
+  }
+  const vocab = vocabFound('tags', 'shuffleTags');
   if (!vocab.length) {
     box.insertAdjacentHTML('beforeend',
-      '<span class="dim">No tags yet — add some from a card first.</span>');
+      `<span class="dim">${searching ? 'Nothing matches that.'
+        : 'No tags yet — add some from a card first.'}</span>`);
   }
   for (const entry of vocab) {
     box.appendChild(chipCycle(`${entry.tag} · ${entry.count}`, shuffle.draft.tags.get(entry.tag),
@@ -3749,6 +3761,33 @@ function buildRecordRow(file, { edit = true } = {}) {
  * `nurse` already in here", and for that you look the word up rather than scan
  * for it. The count stays on each chip, so nothing is lost by reordering.
  */
+/**
+ * What has been typed into each list's search box.
+ *
+ * Held here rather than read off the input, because the shuffle dialog and the
+ * filter have their own boxes over the same vocabulary and each has to keep its
+ * own answer.
+ */
+const chipFind = { advTags: '', advModels: '', shuffleTags: '' };
+
+/**
+ * The vocabulary a box is currently showing.
+ *
+ * Plain substring, case-insensitive. Not a fuzzy match: with 5,400 performers
+ * a loose one puts the name you typed somewhere in the middle of the results,
+ * which is worse than nothing when you already know what you are looking for.
+ *
+ * Chips you have picked are NOT kept in view. They live in the draft rather
+ * than in the list, so nothing is lost by filtering them out of sight, and the
+ * line at the foot of the dialog goes on counting them.
+ */
+function vocabFound(field, which) {
+  const vocab = vocabByName(field);
+  const want = String(chipFind[which] || '').trim().toLowerCase();
+  if (!want) return vocab;
+  return vocab.filter((entry) => entry.tag.toLowerCase().includes(want));
+}
+
 function vocabByName(field) {
   const vocab = field === 'models' ? state.modelVocab : state.tagVocab;
   return vocab.slice().sort((a, b) =>
@@ -7301,6 +7340,28 @@ function wireEvents() {
   for (const btn of document.querySelectorAll('[data-colour-clear]')) {
     btn.addEventListener('click', () => setFacetColour(btn.dataset.colourClear, ''));
   }
+  // Each box narrows its own list. Escape empties it, since a search you have
+  // finished with is otherwise a filter you cannot see the effect of.
+  for (const [id, which, redraw] of [
+    ['#advTagsFind', 'advTags', () => renderAdvanced()],
+    ['#advModelsFind', 'advModels', () => renderAdvanced()],
+    ['#shuffleTagsFind', 'shuffleTags', () => renderShuffle()],
+  ]) {
+    const box = $(id);
+    if (!box) continue;
+    box.addEventListener('input', () => { chipFind[which] = box.value; redraw(); });
+    box.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Escape' || !box.value) return;
+      // Swallowed: the dialog closes on Escape, and clearing the box is what
+      // the first press means while the caret is in it.
+      ev.stopPropagation();
+      ev.preventDefault();
+      box.value = '';
+      chipFind[which] = '';
+      redraw();
+    });
+  }
+
   $('#labelAdd').addEventListener('click', addLabel);
   $('#labelNew').addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter') { ev.preventDefault(); addLabel(); }
