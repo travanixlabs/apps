@@ -1038,12 +1038,18 @@ function buildDupeGroups(list) {
  * videos would render in one go.
  */
 function buildSlots() {
+  // Which copy of the open video the arrows were walking from, before every
+  // card is renumbered. Rating a video from the player re-sorts the sections,
+  // and a video credited to three performers sits in three of them.
+  const was = state.grouped && state.playing && state.playingCard !== null
+    ? state.cards[state.playingCard] || null : null;
+
   state.groups = !state.grouped ? []
     : state.grouped === 'dupes' ? buildDupeGroups(withOtherCopies(state.view))
       : buildModelGroups(state.view);
   state.slots = [];
   state.cards = [];
-  if (!state.grouped) return;
+  if (!state.grouped) { state.playingCard = null; return; }
   for (const group of state.groups) {
     state.slots.push({ head: group });
     for (const [at, file] of group.files.entries()) {
@@ -1055,6 +1061,39 @@ function buildSlots() {
       state.cards.push(slot);
     }
   }
+  if (!state.playing) { state.playingCard = null; return; }
+
+  // The arrows go on from the section you were in. Not from the video's first
+  // copy, which is whichever of its performers happens to sort highest and
+  // felt random from where you sat.
+  const copies = state.cards.filter((slot) => slot.file.path === state.playing.path);
+  const same = was ? copies.find((slot) => slot.group.key === was.group.key) : null;
+  if (same) { state.playingCard = same.seq; return; }
+  if (!was) { state.playingCard = copies.length ? copies[0].seq : null; return; }
+  state.playingCard = null;
+  // Still listed, but out of the section you were walking -- its credit to this
+  // performer was just taken off. The slot it left is where next is, as when a
+  // filter drops it; a video gone from the view entirely is the caller's to
+  // anchor, with the position it had before the view changed.
+  if (copies.length && state.cards.length) {
+    state.playingAnchor = Math.min(was.seq, state.cards.length - 1);
+  }
+}
+
+/**
+ * The card to walk from when a video is opened without one -- from the
+ * "similar" strip, say -- grouped. The copy in the section you were already
+ * in, if it has one; else the nearest copy to where you were; else the first.
+ */
+function nearestCard(file, near) {
+  if (!state.grouped || !file) return null;
+  const copies = state.cards.filter((slot) => slot.file.path === file.path);
+  if (!copies.length) return null;
+  if (!near) return copies[0].seq;
+  const same = copies.find((slot) => slot.group.key === near.group.key);
+  if (same) return same.seq;
+  return copies.reduce((best, slot) =>
+    (Math.abs(slot.seq - near.seq) < Math.abs(best.seq - near.seq) ? slot : best)).seq;
 }
 
 /** The cards in the order they appear, which is state.view unless grouped. */
@@ -1072,6 +1111,9 @@ function playingAt() {
   if (state.grouped) {
     const seq = state.playingCard;
     if (seq !== null && list[seq] && list[seq].file.path === state.playing.path) return seq;
+    // Adrift on purpose: the video left the section the arrows were walking,
+    // and the slot it left is where to go on from, not its copy elsewhere.
+    if (state.playingAnchor !== null) return -1;
     return list.findIndex((slot) => slot.file.path === state.playing.path);
   }
   return list.findIndex((f) => f.path === state.playing.path);
@@ -1372,7 +1414,16 @@ function renderAdvanced() {
       box.insertAdjacentHTML('beforeend',
         `<span class="dim">${searching ? 'Nothing matches that.' : empty}</span>`);
     }
-    for (const entry of vocab) {
+    // What you have picked comes first, included before excluded, each still in
+    // alphabetical order. Over five thousand names, a chip you clicked at the
+    // letter S is otherwise gone from sight the moment you scroll, and the
+    // only record of your choice is the count at the foot of the dialog.
+    const picked = advDraft[field];
+    const rank = (entry) => (picked.get(entry.tag) === 'in' ? 0 : picked.get(entry.tag) === 'out' ? 1 : 2);
+    const ordered = vocab.map((entry, i) => [entry, i])
+      .sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1])
+      .map(([entry]) => entry);
+    for (const entry of ordered) {
       box.appendChild(chipCycle(`${entry.tag} · ${entry.count}`, advDraft[field].get(entry.tag), () => {
         cycleIn(advDraft[field], entry.tag);
         renderAdvanced();
@@ -1450,11 +1501,18 @@ async function commitFilter() {
  * It used to type `@name` into the quick search box, which worked but left the
  * advanced dialog describing filters that were not the ones in force -- and the
  * two then stacked, so a pill clicked under an existing filter showed a
- * narrower listing than the pill promised. Now the pill IS the filter: exactly
- * that one value, in its own facet, and everything else cleared.
+ * narrower listing than the pill promised. Now the pill IS the filter for its
+ * own facet: exactly that one value, replacing whatever that facet held. The
+ * other facets stay -- a performer's pill clicked under "4 stars and up"
+ * means her good ones, not a fresh start -- and the quick search is dropped,
+ * since it is the one thing that cannot be seen in the dialog.
  */
 async function filterByLabel(field, value) {
-  const adv = newAdvFilter();
+  const adv = { ...state.adv, mode: { ...state.adv.mode } };
+  for (const [key, held] of Object.entries(state.adv)) {
+    if (held instanceof Map) adv[key] = new Map(held);
+  }
+  adv[field].clear();
   adv[field].set(value, 'in');
   state.adv = adv;
   $('#searchInput').value = '';
@@ -1916,11 +1974,6 @@ function pruneFiltered(paths) {
     $('#grid').innerHTML = '';
     state.rendered = 0;
     while (state.rendered < Math.min(loaded, state.slots.length)) appendPage();
-    // The rebuild renumbered every card, so the remembered one is stale.
-    state.playingCard = state.playing
-      ? state.cards.findIndex((slot) => slot.file.path === state.playing.path)
-      : null;
-    if (state.playingCard < 0) state.playingCard = null;
   }
 
   syncFileCount();
@@ -4814,9 +4867,12 @@ function buildPlayerActions(file) {
 function playFile(file, seq = null) {
   stopLive(); // free the hover decoder before opening a second one
   clearLoop(); // a loop is about a moment in the video that is going away
+  // Where the arrows were, so a video opened without a card -- from the similar
+  // strip -- is walked from the section you were already in.
+  const from = state.grouped && state.playingCard !== null ? state.cards[state.playingCard] || null : null;
   state.playing = file;
   state.playingAnchor = null; // this one is in the listing until told otherwise
-  state.playingCard = seq;
+  state.playingCard = seq !== null ? seq : nearestCard(file, from);
   buildPlayerActions(file);
   buildPlayerSuggestions(file);
   buildPlayerSimilar(file);
