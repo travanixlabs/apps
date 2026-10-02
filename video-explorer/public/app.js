@@ -3896,6 +3896,12 @@ function openTagDialog(files) {
   $('#tagReplace').textContent = single ? 'Replace' : `Replace on ${files.length}`;
   $('#tagAdd').textContent = single ? 'Add' : `Add to ${files.length}`;
 
+  // One video starts from its own rating. Across several there is no shared
+  // one, so nothing is picked and the save leaves each video's rating alone
+  // unless a star is clicked.
+  tagRating = single ? (Number(files[0].rating) || 0) : null;
+  renderTagRating();
+
   syncTagVocab();
   renderTagSuggestions();
   renderDialogSuggestions(files);
@@ -3907,6 +3913,19 @@ function openTagDialog(files) {
   $('#tagInput').focus({ preventScroll: true });
   $('#tagInput').select();
   $('#tagModal .tag-body').scrollTop = 0;
+}
+
+/** The rating the editor will save; null means "leave it as it is". */
+let tagRating = null;
+
+function renderTagRating() {
+  const box = $('#tagRating');
+  if (!box) return;
+  box.innerHTML = '';
+  box.appendChild(buildStars(tagRating || 0, (n) => { tagRating = n; renderTagRating(); }));
+  if (tagRating === null) {
+    box.insertAdjacentHTML('beforeend', '<span class="dim">unchanged</span>');
+  }
 }
 
 /** The existing vocabulary as one-click chips — faster than typing, and it
@@ -3923,7 +3942,14 @@ function renderTagSuggestions() {
     // the box looked complete and simply had no more to scroll to, which is the
     // one thing a truncated list must never look like. `.tag-suggest` already
     // scrolls, so the length costs nothing but the height it is clamped to.
-    for (const entry of vocabByName(field)) {
+    // What the video already has comes first, as in the filter dialog: with
+    // five thousand performers its own names are otherwise somewhere far down.
+    const vocab = vocabByName(field);
+    const ordered = [
+      ...vocab.filter((entry) => used.has(entry.tag.toLowerCase())),
+      ...vocab.filter((entry) => !used.has(entry.tag.toLowerCase())),
+    ];
+    for (const entry of ordered) {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'chip suggest' + extra + (used.has(entry.tag.toLowerCase()) ? ' on' : '');
@@ -3958,9 +3984,10 @@ async function commitTags(mode) {
   // One request for both fields: separate ones would mean separate saves,
   // separate vocabulary refreshes, and a window where a card shows half the
   // edit.
+  const rating = tagRating === null ? {} : { rating: tagRating };
   await editRecords(paths, mode === 'add'
-    ? { addTags: tags, addModels: models }
-    : { tags, models });
+    ? { addTags: tags, addModels: models, ...rating }
+    : { tags, models, ...rating });
 
   const say = (n, noun) => `${n} ${noun}${n === 1 ? '' : 's'}`;
   const videos = say(paths.length, 'video');
