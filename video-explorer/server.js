@@ -150,7 +150,31 @@ function saveConfigSoon() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     fsp.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2)).catch(() => {});
+    writeColours();
   }, 300);
+}
+
+/**
+ * The colours Settings picked, where the phone can read them.
+ *
+ * The config file is this machine's alone -- it lives in %APPDATA%, not in
+ * OneDrive -- so the phone had no way to know a label's colour and drew every
+ * tag grey. Beside the cache manifest, which it already reads, and only
+ * rewritten when the colours actually change, so a synced folder is not
+ * re-uploading the same bytes.
+ */
+async function writeColours() {
+  const body = JSON.stringify({
+    version: 1,
+    labels: config.labelColours || {},
+    facets: config.facetColours || {},
+  });
+  try {
+    const at = path.join(CACHE_DIR, 'colours.json');
+    if (await fsp.readFile(at, 'utf8').catch(() => '') === body) return;
+    await fsp.mkdir(CACHE_DIR, { recursive: true });
+    await fsp.writeFile(at, body);
+  } catch { /* an offline sync folder is not worth an error */ }
 }
 
 let metaTimer = null;
@@ -2802,6 +2826,7 @@ async function loadCore(mark) {
   // The geometry behind the cache names, for anything reading them from the
   // sync root rather than from here.
   await writeCacheManifest();
+  await writeColours();
 
   const face = faces.init({
     cacheDir: path.join(path.dirname(CACHE_DIR), 'faces'),

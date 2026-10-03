@@ -3963,6 +3963,7 @@ function renderTagSuggestions() {
     for (const name of labelDraft[field]) {
       const pill = document.createElement('span');
       pill.className = 'chip has-x' + extra;
+      paintChip(pill, field, name);
       const text = document.createElement('span');
       text.className = 'chip-text';
       text.textContent = name;
@@ -3995,6 +3996,9 @@ function renderTagSuggestions() {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'chip suggest' + extra;
+      // In the colour Settings gave it, as on a card: the editor is where a
+      // label is chosen, and it should look like what it will become.
+      paintChip(chip, field, entry.tag);
       chip.textContent = `${entry.tag} · ${entry.count}`;
       chip.addEventListener('click', () => {
         draftAdd(field, entry.tag);
