@@ -3858,7 +3858,8 @@ function buildRecordRow(file, { edit = true } = {}) {
 
   // Race first: the performers' races, as you labelled them. Not editable
   // here -- it belongs to a person, and is set on her section's heading.
-  const races = racesOf(file, filterCtx());
+  // In the player only: on a tile it was one pill too many.
+  const races = edit ? racesOf(file, filterCtx()) : [];
   if (races.length) row.appendChild(buildRaceChips(races));
   // Names show when there are names; nothing sits there inviting you to add one.
   if ((file.models || []).length) row.appendChild(buildLabelChips(file, 'models', { add: false, edit }));
