@@ -55,6 +55,7 @@ const state = {
   modelVocab: [],      // the same, for performer names
   tagTargets: [],      // files the open label dialog will edit
   adv: newAdvFilter(), // the advanced filter currently applied
+  raceOf: new Map(),   // lower-cased performer name -> the race you gave her
 };
 
 
@@ -69,7 +70,7 @@ const state = {
 const CHOICE_ROWS = [];
 
 /** Which radio group drives which facet's all/any. */
-const MODE_INPUTS = [['tags', 'tagMode'], ['models', 'modelMode']];
+const MODE_INPUTS = [['race', 'raceMode'], ['tags', 'tagMode'], ['models', 'modelMode']];
 
 /**
  * How the listing is set up, as opposed to how the app is configured. A refresh
@@ -104,7 +105,7 @@ function advActive(adv = state.adv) {
  * library when it counts a folder, so both sides answer "a favourite is in it"
  * the same way.
  */
-const filterCtx = () => ({ favSet: state.favSet });
+const filterCtx = () => ({ favSet: state.favSet, raceOf: state.raceOf });
 
 // ----------------------------------------------------------------- utilities
 
@@ -405,7 +406,8 @@ const folderCounts = { key: '', counts: null };
 /** The folder and filter a count would be for, or '' when nothing is filtered. */
 function folderCountKey() {
   if (!advActive()) return '';
-  return state.dir + '\u0000' + JSON.stringify(packFilter(state.adv));
+  const raced = state.adv.race && state.adv.race.size ? '\u0000r' + (state.raceVersion || 0) : '';
+  return state.dir + '\u0000' + JSON.stringify(packFilter(state.adv)) + raced;
 }
 
 /**
@@ -729,6 +731,40 @@ const isFavouriteModel = (name) => state.favSet.has(String(name || '').trim().to
 function setFavourites(list) {
   state.favourites = Array.isArray(list) ? list : [];
   state.favSet = new Set(state.favourites.map((n) => String(n).toLowerCase()));
+}
+
+/** The performers' races as the server holds them. */
+function setRaces(map) {
+  state.raceOf = new Map(Object.entries(map && typeof map === 'object' ? map : {}));
+  state.raceVersion = (state.raceVersion || 0) + 1;
+}
+
+const raceOfName = (name) => state.raceOf.get(String(name || '').trim().toLowerCase()) || '';
+
+/**
+ * Gives a performer a race, or takes it away, and repaints what shows it: her
+ * section's heading and every card she is credited on. Not the whole grid --
+ * labelling is done section after section, and a rebuild would throw the
+ * scroll back to the top each time. With a race filter on, though, the
+ * listing itself may have changed, so then it is rebuilt.
+ */
+async function setPerformerRace(group, race) {
+  try {
+    const out = await api('/api/races', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: group.name, race }),
+    });
+    setRaces(out.races);
+  } catch (err) {
+    toast(err.message, 'err');
+    return;
+  }
+  if (state.adv.race && state.adv.race.size) { render(); return; }
+  for (const head of document.querySelectorAll('.group-head')) {
+    if (head.dataset.group === group.key) head.replaceWith(buildGroupHead(group));
+  }
+  for (const file of group.files) refreshCardRecord(file);
 }
 
 /**
@@ -1357,7 +1393,25 @@ function openAdvanced() {
   renderAdvanced();
 }
 
+/**
+ * A race row: its four answers and "no race", the picked ones first as in the
+ * long lists, each cycling include -> exclude -> off.
+ */
+function renderRaceRow(box, facet, redraw) {
+  if (!box) return;
+  box.innerHTML = '';
+  const rank = (r) => (facet.get(r) === 'in' ? 0 : facet.get(r) === 'out' ? 1 : 2);
+  const order = RACES.map((r, i) => [r, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]);
+  for (const [race] of order) {
+    box.appendChild(chipCycle(race, facet.get(race), () => { cycleIn(facet, race); redraw(); }));
+  }
+  const gap = chipCycle('no race', facet.get(NOTHING), () => { cycleIn(facet, NOTHING); redraw(); });
+  gap.classList.add('chip-none');
+  box.appendChild(gap);
+}
+
 function renderAdvanced() {
+  renderRaceRow($('#advRace'), advDraft.race, () => renderAdvanced());
   // Rating, 0 standing for unrated — a facet in its own right, since "never
   // been looked at" is a thing you want to list.
   const ratings = $('#advRating');
@@ -1454,6 +1508,7 @@ function updateAdvMatch() {
     if (nothing === 'in') bits.push(`no ${many} at all`);
     if (nothing === 'out') bits.push(`some ${many}`);
   };
+  say('race', 'race', 'races', ` (${advDraft.mode.race || 'all'})`);
   say('models', 'model', 'models', ` (${advDraft.mode.models})`);
   say('tags', 'tag', 'tags', ` (${advDraft.mode.tags})`);
   say('ratings', 'rating');
@@ -1679,21 +1734,21 @@ function openShuffle() {
   shuffle.draft = newAdvFilter();
   if (shuffle.filter) {
     shuffle.draft.mode = { ...shuffle.filter.mode };
-    for (const facet of ['tags', 'ratings']) {
+    for (const facet of ['race', 'tags', 'ratings']) {
       shuffle.draft[facet] = new Map(shuffle.filter[facet]);
     }
   }
-  shuffle.draftDirs = new Set(shuffle.dirs);
+  // No folder picking any more: a shuffle draws from the folder you are in.
+  shuffle.draftDirs = new Set();
   for (const radio of document.querySelectorAll('input[name="shuffleTagMode"]')) {
     radio.checked = radio.value === shuffle.draft.mode.tags;
+  }
+  for (const radio of document.querySelectorAll('input[name="shuffleRaceMode"]')) {
+    radio.checked = radio.value === (shuffle.draft.mode.race || 'all');
   }
   $('#shuffleMatch').textContent = '';
   $('#shuffleModal').hidden = false;
   renderShuffle();
-  // The row fills in when the listing lands, without holding the dialog shut.
-  loadShuffleRoots().then(() => {
-    if (!$('#shuffleModal').hidden) renderShuffle();
-  });
 }
 
 /** A plain on/off chip. Folders are picked or not; there is no "everything but
@@ -1711,22 +1766,9 @@ function chipPick(label, on, onClick) {
   return chip;
 }
 
-function renderShuffleDirs() {
-  const roots = shuffleRoots || [];
-  $('#shuffleDirsBlock').hidden = !roots.length;
-  const box = $('#shuffleDirs');
-  box.innerHTML = '';
-  for (const root of roots) {
-    box.appendChild(chipPick(root.name, shuffle.draftDirs.has(root.path), () => {
-      if (!shuffle.draftDirs.delete(root.path)) shuffle.draftDirs.add(root.path);
-      renderShuffle();
-    }));
-  }
-  $('#shuffleWhere').textContent = shuffleWhere();
-}
-
 function renderShuffle() {
-  renderShuffleDirs();
+  $('#shuffleWhere').textContent = shuffleWhere();
+  renderRaceRow($('#shuffleRace'), shuffle.draft.race, () => renderShuffle());
   const ratings = $('#shuffleRating');
   ratings.innerHTML = '';
   for (const value of [0, 1, 2, 3, 4, 5]) {
@@ -1770,6 +1812,9 @@ function renderShuffle() {
 async function startShuffle() {
   for (const radio of document.querySelectorAll('input[name="shuffleTagMode"]:checked')) {
     shuffle.draft.mode.tags = radio.value;
+  }
+  for (const radio of document.querySelectorAll('input[name="shuffleRaceMode"]:checked')) {
+    shuffle.draft.mode.race = radio.value;
   }
   shuffle.filter = shuffle.draft;
   shuffle.dirs = new Set(shuffle.draftDirs);
@@ -2403,7 +2448,7 @@ function setCardWidth(px, { save = false } = {}) {
 /** The demo chip and its picker, from whatever is saved. */
 function syncFacetColours() {
   const held = (state.config || {}).facetColours || {};
-  for (const [facet, demo] of [['models', '#modelsDemo']]) {
+  for (const [facet, demo] of [['race', '#raceDemo'], ['models', '#modelsDemo']]) {
     const id = '#colour' + facet[0].toUpperCase() + facet.slice(1);
     const input = $(id);
     const chip = $(demo);
@@ -3780,6 +3825,22 @@ function buildLabelChips(file, field, { add: withAdd = true, edit = true } = {})
   return chips;
 }
 
+function buildRaceChips(races) {
+  const chips = document.createElement('span');
+  chips.className = 'chips';
+  for (const race of races) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chip chip-race';
+    paintChip(chip, 'race', race);
+    chip.textContent = race;
+    chip.title = `Filter by ${race}`;
+    chip.addEventListener('click', (ev) => { ev.stopPropagation(); filterByLabel('race', race); });
+    chips.appendChild(chip);
+  }
+  return chips;
+}
+
 function buildRecordRow(file, { edit = true } = {}) {
   const row = document.createElement('div');
   row.className = 'record-row' + (edit ? '' : ' record-read');
@@ -3795,6 +3856,10 @@ function buildRecordRow(file, { edit = true } = {}) {
     ));
   }
 
+  // Race first: the performers' races, as you labelled them. Not editable
+  // here -- it belongs to a person, and is set on her section's heading.
+  const races = racesOf(file, filterCtx());
+  if (races.length) row.appendChild(buildRaceChips(races));
   // Names show when there are names; nothing sits there inviting you to add one.
   if ((file.models || []).length) row.appendChild(buildLabelChips(file, 'models', { add: false, edit }));
   // With no add button and no tags there is nothing to draw, and an empty
@@ -6462,6 +6527,32 @@ function buildGroupHead(group) {
     head.appendChild(read);
   }
 
+  // Her race, as you label it: four small choices, the current one lit.
+  // Clicking the lit one takes it off again.
+  if (!group.unnamed && !group.dupe) {
+    const now = raceOfName(group.name);
+    const pick = document.createElement('span');
+    pick.className = 'group-race';
+    const lead = document.createElement('span');
+    lead.className = 'group-race-lead';
+    lead.textContent = 'Race';
+    pick.appendChild(lead);
+    for (const race of RACES) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'group-race-opt' + (race === now ? ' on' : '');
+      if (race === now) paintChip(btn, 'race', race);
+      btn.textContent = race;
+      btn.title = race === now ? `Take ${race} off ${group.name}` : `${group.name} is ${race}`;
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        setPerformerRace(group, race === now ? '' : race);
+      });
+      pick.appendChild(btn);
+    }
+    head.appendChild(pick);
+  }
+
   if (!group.unnamed) {
     // Straight to the flat listing for this one performer, the way a pill on a
     // card behaves: the grouped view is for finding someone, not for working
@@ -7397,10 +7488,6 @@ function wireEvents() {
     }
     renderShuffle();
   });
-  $('#shuffleDirsClear').addEventListener('click', () => {
-    shuffle.draftDirs.clear();
-    renderShuffle();
-  });
   for (const btn of document.querySelectorAll('[data-shuffle-clear]')) {
     btn.addEventListener('click', () => {
       shuffle.draft[btn.dataset.shuffleClear].clear();
@@ -7481,7 +7568,7 @@ function wireEvents() {
     renderLabelList();
     $('#settingsModal').hidden = false;
   });
-  for (const facet of ['models']) {
+  for (const facet of ['race', 'models']) {
     const id = '#colour' + facet[0].toUpperCase() + facet.slice(1);
     $(id).addEventListener('input', (ev) => setFacetColour(facet, ev.target.value));
   }
@@ -8065,6 +8152,9 @@ async function init() {
     // happens to bring the second one back with its response.
     state.modelVocab = data.models || [];
     setFavourites(data.favourites);
+    setRaces(data.races);
+    // The cards already drawn were drawn before anyone's race was known.
+    if (state.raceOf.size) render();
     syncTagVocab();
   }).catch(() => {});
 

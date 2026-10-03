@@ -154,6 +154,7 @@ async function init(oneDriveRoot) {
   // A file written before favourites existed has no list; the rest of the module
   // may then assume there is one.
   if (!Array.isArray(data.favourites)) data.favourites = [];
+  if (!data.races || typeof data.races !== 'object' || Array.isArray(data.races)) data.races = {};
   lastWritten = Object.keys(data.records).length;
   // Today's copy, taken before this session can change anything.
   if (!readOnly && raw !== null) await dailyBackup(raw);
@@ -634,6 +635,32 @@ function setFavouriteModel(name, on) {
   return list.slice();
 }
 
+/**
+ * Race, per performer: lower-cased name -> 'Asian' | 'Black' | 'White' | 'Other'.
+ *
+ * Beside the favourites and for the same reason: it belongs to a person, not a
+ * file. Given by hand -- nothing here infers it -- and read by the phone from
+ * the same file.
+ */
+const RACES = ['Asian', 'Black', 'White', 'Other'];
+
+function performerRaces() {
+  return { ...(data.races || {}) };
+}
+
+/** Sets or clears one performer's race, and returns the whole map. */
+function setPerformerRace(name, race) {
+  refuseIfReadOnly();
+  const key = String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  if (!key) return performerRaces();
+  const races = { ...(data.races || {}) };
+  if (RACES.includes(race)) races[key] = race;
+  else delete races[key];
+  data.races = races;
+  save();
+  return performerRaces();
+}
+
 function stats() {
   const records = Object.values(data.records);
   return {
@@ -656,4 +683,5 @@ module.exports = {
   counts, tagCounts, modelCounts, studioCounts, productionCounts, stats, normaliseTags,
   renameTag, removeTagEverywhere,
   favouriteModels, isFavouriteModel, setFavouriteModel,
+  performerRaces, setPerformerRace,
 };

@@ -1522,6 +1522,7 @@ function describeVideo(video, dir) {
  */
 function countUnderFolders(dir, videos, subs, adv) {
   const favSet = new Set(library.favouriteModels().map((n) => String(n).toLowerCase()));
+  const raceOf = new Map(Object.entries(library.performerRaces()));
   const counts = {};
   for (const sub of subs) counts[sub.path] = 0;
   for (const video of videos) {
@@ -1533,7 +1534,7 @@ function countUnderFolders(dir, videos, subs, adv) {
       if (lower.startsWith(sub.prefix)) { hit = sub; break; }
     }
     if (!hit) continue;
-    if (!filter.matchesAdvanced(filterView(video), adv, { favSet })) continue;
+    if (!filter.matchesAdvanced(filterView(video), adv, { favSet, raceOf })) continue;
     counts[hit.path] += 1;
   }
   return counts;
@@ -2271,6 +2272,7 @@ const server = http.createServer(async (req, res) => {
           studios: library.studioCounts(),
           productions: library.productionCounts(),
           favourites: library.favouriteModels(),
+          races: library.performerRaces(),
           stats: library.stats(),
         });
       }
@@ -2372,6 +2374,12 @@ const server = http.createServer(async (req, res) => {
       }
 
       return sendJson(res, 400, { error: `Unknown action "${action}"` });
+    }
+
+    if (req.method === 'POST' && route === '/api/races') {
+      const body = await readBody(req);
+      const races = library.setPerformerRace(body.name, body.race || '');
+      return sendJson(res, 200, { races });
     }
 
     if (req.method === 'POST' && route === '/api/favourites') {
