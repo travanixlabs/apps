@@ -7580,7 +7580,6 @@ function wireEvents() {
   for (const [id, which, redraw] of [
     ['#advTagsFind', 'advTags', () => renderAdvanced()],
     ['#advModelsFind', 'advModels', () => renderAdvanced()],
-    ['#shuffleTagsFind', 'shuffleTags', () => renderShuffle()],
   ]) {
     const box = $(id);
     if (!box) continue;
