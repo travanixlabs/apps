@@ -498,7 +498,7 @@ function renderFolders() {
   section.classList.toggle('collapsed', state.config.foldersCollapsed === true);
   // With no videos listed, folders get the full window rather than 38vh.
   section.classList.toggle('expanded', state.files.length === 0);
-  // The grid is the thing that scrolls now -- three rows of it, then a bar --
+  // The grid is the thing that scrolls now -- two rows of it, then a bar --
   // so a new folder starts at its own top rather than wherever the last one
   // was left.
   section.scrollTop = 0;

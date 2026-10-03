@@ -255,7 +255,7 @@ kbd {
 .section { margin-bottom: 22px; }
 .section[hidden], .folders-pane[hidden] { display: none; }
 
-/* Pinned folders pane. The grid inside it is capped at three rows and scrolls
+/* Pinned folders pane. The grid inside it is capped at two rows and scrolls
    on its own, so this is only the frame around it. */
 .folders-pane {
   padding: 12px 16px 13px;
@@ -326,11 +326,11 @@ kbd {
   grid-auto-rows: min-content;
   align-content: start;
   gap: var(--folder-gap);
-  /* Three rows, then this scrolls. A folder of folders was showing seven rows
+  /* Two rows, then this scrolls. A folder of folders was showing seven rows
      and taking half the window before a single video had a chance to appear.
      The cap is on the grid rather than the pane so the heading -- which says
      how many there are, and so is the reason to scroll -- stays put. */
-  max-height: calc(var(--folder-row) * 3 + var(--folder-gap) * 2);
+  max-height: calc(var(--folder-row) * 2 + var(--folder-gap));
   overflow-y: auto;
   overscroll-behavior: contain;
 }
