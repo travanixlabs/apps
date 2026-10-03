@@ -1432,6 +1432,17 @@ body.dragging .card { cursor: grabbing; }
   border-top: 1px solid var(--border);
 }
 .modal-foot .btn-primary { margin-left: auto; }
+/* The label editor's Add sits beside Replace rather than across the footer. */
+#tagModal .modal-foot #tagAdd { margin-left: auto; }
+#tagModal .modal-foot #tagReplace { margin-left: 0; }
+
+/* The editor's picked labels, each with its cross. */
+.label-picked { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.label-picked[hidden] { display: none; }
+.label-picked .chip.has-x { font-size: 12px; padding: 2px 8px; max-width: none; }
+.label-picked .chip-x { background: none; border: none; color: inherit; cursor: pointer;
+  font-size: 10px; opacity: .55; padding: 4px; margin: -4px -4px -4px 0; }
+.label-picked .chip-x:hover { opacity: 1; }
 .hint { color: var(--text-faint); font-size: 12px; }
 
 /* The stage is a positioning context so the preview badge and play button can

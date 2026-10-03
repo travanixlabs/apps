@@ -3066,10 +3066,7 @@ function renderDialogSuggestions(files) {
     host.appendChild(buildFaceChip(single ? file : { ...file, models: [] }, sug, {
       showFace: single,
       onPick: (name) => {
-        const box = $('#modelInput');
-        const have = box.value.split(',').map((t) => t.trim()).filter(Boolean);
-        if (!have.some((t) => t.toLowerCase() === name.toLowerCase())) have.push(name);
-        box.value = have.join(', ');
+        draftAdd('models', name);
         renderTagSuggestions();
       },
     }));
@@ -3863,9 +3860,34 @@ function syncTagVocab() {
 
 /** Which input holds which field, so the two sections stay symmetrical. */
 const LABEL_INPUTS = {
-  tags: { input: '#tagInput', suggest: '#tagSuggest' },
-  models: { input: '#modelInput', suggest: '#modelSuggest' },
+  tags: { input: '#tagInput', suggest: '#tagSuggest', picked: '#tagPicked' },
+  models: { input: '#modelInput', suggest: '#modelSuggest', picked: '#modelPicked' },
 };
+
+/**
+ * What the editor will save, per field, as a list -- not the text in a box.
+ *
+ * The box used to BE the value: a comma-separated string you edited by hand,
+ * which left every name you had picked sitting in it as text. Now picked
+ * labels are pills with a cross, and the box is only for finding the next one.
+ */
+const labelDraft = { tags: [], models: [] };
+
+/** Puts a label in the draft once, in the vocabulary's own spelling if known. */
+function draftAdd(field, raw) {
+  const value = String(raw || '').trim().replace(/\s+/g, ' ');
+  if (!value) return false;
+  const known = (field === 'models' ? state.modelVocab : state.tagVocab)
+    .find((e) => e.tag.toLowerCase() === value.toLowerCase());
+  const name = known ? known.tag : value;
+  if (labelDraft[field].some((t) => t.toLowerCase() === name.toLowerCase())) return false;
+  labelDraft[field].push(name);
+  return true;
+}
+
+function draftDrop(field, name) {
+  labelDraft[field] = labelDraft[field].filter((t) => t.toLowerCase() !== name.toLowerCase());
+}
 
 function parseTags(text) {
   return text.split(',').map((t) => t.trim()).filter(Boolean);
@@ -3888,11 +3910,12 @@ function openTagDialog(files) {
   // many files there is no shared starting point, so the boxes start empty and
   // Add is the safe verb.
   for (const field of ['tags', 'models']) {
-    $(LABEL_INPUTS[field].input).value = single ? (files[0][field] || []).join(', ') : '';
+    labelDraft[field] = single ? [...(files[0][field] || [])] : [];
+    $(LABEL_INPUTS[field].input).value = '';
   }
   $('#tagHint').textContent = single
-    ? 'Add appends, Replace overwrites — every section at once. Right-click a chip on the card to remove one.'
-    : `Add appends to each video's existing tags and models. Replace overwrites all ${files.length}.`;
+    ? 'Pick from the list or type a new one and press Enter. The cross on a pill takes it off. Add appends, Replace saves exactly these.'
+    : `Pick or type labels, then Add puts them on all ${files.length}. Replace overwrites all ${files.length} with exactly these.`;
   $('#tagReplace').textContent = single ? 'Replace' : `Replace on ${files.length}`;
   $('#tagAdd').textContent = single ? 'Add' : `Add to ${files.length}`;
 
@@ -3911,7 +3934,6 @@ function openTagDialog(files) {
   // the caret goes there without the scroll, and the body is put back to the
   // top explicitly in case anything else moved it.
   $('#tagInput').focus({ preventScroll: true });
-  $('#tagInput').select();
   $('#tagModal .tag-body').scrollTop = 0;
 }
 
@@ -3932,52 +3954,73 @@ function renderTagRating() {
  *  keeps names from splintering into near-duplicates. */
 function renderTagSuggestions() {
   for (const field of LABEL_FACETS) {
-    const { input, suggest } = LABEL_INPUTS[field];
+    const { input, suggest, picked } = LABEL_INPUTS[field];
+    const extra = field === 'models' ? ' chip-model' : '';
+
+    // The pills: what will be saved, each with its own way off.
+    const pills = $(picked);
+    pills.innerHTML = '';
+    for (const name of labelDraft[field]) {
+      const pill = document.createElement('span');
+      pill.className = 'chip has-x' + extra;
+      const text = document.createElement('span');
+      text.className = 'chip-text';
+      text.textContent = name;
+      const cross = document.createElement('button');
+      cross.type = 'button';
+      cross.className = 'chip-x';
+      cross.textContent = '\u2715';
+      cross.title = `Take off ${name}`;
+      cross.addEventListener('click', () => { draftDrop(field, name); renderTagSuggestions(); });
+      pill.append(text, cross);
+      pills.appendChild(pill);
+    }
+    pills.hidden = !labelDraft[field].length;
+
     const box = $(suggest);
     box.innerHTML = '';
-    const single = LABEL_FIELDS[field].single;
-    const used = new Set(parseTags($(input).value).map((t) => t.toLowerCase()));
-    const extra = field === 'models' ? ' chip-model' : '';
+    // The list is for finding the next one: what is typed narrows it, and what
+    // is already a pill is not offered twice.
+    const want = $(input).value.trim().toLowerCase();
+    const used = new Set(labelDraft[field].map((t) => t.toLowerCase()));
     // Every value, not the first 60. The cap was invisible: with 778 performers
     // the box looked complete and simply had no more to scroll to, which is the
     // one thing a truncated list must never look like. `.tag-suggest` already
     // scrolls, so the length costs nothing but the height it is clamped to.
     // What the video already has comes first, as in the filter dialog: with
     // five thousand performers its own names are otherwise somewhere far down.
-    const vocab = vocabByName(field);
-    const ordered = [
-      ...vocab.filter((entry) => used.has(entry.tag.toLowerCase())),
-      ...vocab.filter((entry) => !used.has(entry.tag.toLowerCase())),
-    ];
-    for (const entry of ordered) {
+    const found = vocabByName(field).filter((entry) => !used.has(entry.tag.toLowerCase())
+      && (!want || entry.tag.toLowerCase().includes(want)));
+    for (const entry of found) {
       const chip = document.createElement('button');
       chip.type = 'button';
-      chip.className = 'chip suggest' + extra + (used.has(entry.tag.toLowerCase()) ? ' on' : '');
+      chip.className = 'chip suggest' + extra;
       chip.textContent = `${entry.tag} · ${entry.count}`;
       chip.addEventListener('click', () => {
-        // A one-value field swaps rather than accumulates: picking a second
-        // value replaces the first, and picking the current one clears it.
-        if (single) {
-          const now = $(input).value.trim().toLowerCase();
-          $(input).value = now === entry.tag.toLowerCase() ? '' : entry.tag;
-          renderTagSuggestions();
-          return;
-        }
-        const current = parseTags($(input).value);
-        const at = current.findIndex((t) => t.toLowerCase() === entry.tag.toLowerCase());
-        if (at >= 0) current.splice(at, 1);
-        else current.push(entry.tag);
-        $(input).value = current.join(', ');
+        draftAdd(field, entry.tag);
+        // Picked: the search is done with, so the box empties for the next.
+        $(input).value = '';
         renderTagSuggestions();
+        $(input).focus({ preventScroll: true });
       });
       box.appendChild(chip);
+    }
+    if (!found.length && want) {
+      box.insertAdjacentHTML('beforeend',
+        '<span class="dim">Nothing by that name \u2014 press Enter to add it as new.</span>');
     }
   }
 }
 
 async function commitTags(mode) {
-  const tags = parseTags($('#tagInput').value);
-  const models = parseTags($('#modelInput').value);
+  // Something typed but not yet Entered still counts: pressing Add with a name
+  // in the box means that name.
+  for (const field of ['tags', 'models']) {
+    const box = $(LABEL_INPUTS[field].input);
+    if (draftAdd(field, box.value)) box.value = '';
+  }
+  const tags = [...labelDraft.tags];
+  const models = [...labelDraft.models];
   const paths = state.tagTargets.map((f) => f.path);
 
   $('#tagModal').hidden = true;
@@ -7291,11 +7334,29 @@ function wireEvents() {
   // dialog rather than just its own field, since the two are saved together.
   for (const field of ['tags', 'models']) {
     const input = $(LABEL_INPUTS[field].input);
-    input.addEventListener('input', renderTagSuggestions);
+    input.addEventListener('input', () => {
+      // A comma still works as "that one's done", for anyone used to typing them.
+      if (input.value.includes(',')) {
+        const parts = input.value.split(',');
+        const rest = parts.pop();
+        for (const part of parts) draftAdd(field, part);
+        input.value = rest.trimStart();
+      }
+      renderTagSuggestions();
+    });
     input.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Enter') return;
-      // Enter does the safe thing for the context: replacing one video's labels
-      // is what the pre-filled boxes imply, but across a selection it appends.
+      ev.preventDefault();
+      // Something typed: add it as a pill and empty the box for the next.
+      if (input.value.trim()) {
+        draftAdd(field, input.value);
+        input.value = '';
+        renderTagSuggestions();
+        return;
+      }
+      // An empty box: Enter saves, doing the safe thing for the context --
+      // replacing one video's labels is what the pre-filled pills imply, but
+      // across a selection it appends.
       commitTags(state.tagTargets.length === 1 ? 'replace' : 'add');
     });
   }
@@ -7807,7 +7868,9 @@ function onKeyDown(ev) {
   // Arrows step through the listing while the player is open. Once playback has
   // started the bare arrows seek the video instead, as they always did when the
   // browser owned the controls, so from then on stepping needs Shift.
-  if (!ev.ctrlKey && !ev.metaKey && !$('#playerModal').hidden
+  // Not while typing, and not with a dialog open over the player: left and
+  // right were moving the caret in the label box AND changing the video behind.
+  if (!ev.ctrlKey && !ev.metaKey && playerHasKeys() && !isTyping()
       && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) {
     if (previewing() || ev.shiftKey) {
       ev.preventDefault();
