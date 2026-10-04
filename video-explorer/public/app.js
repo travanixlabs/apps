@@ -6566,25 +6566,7 @@ function buildGroupHead(group) {
     head.appendChild(pick);
   }
 
-  if (!group.unnamed) {
-    // Straight to the flat listing for this one performer, the way a pill on a
-    // card behaves: the grouped view is for finding someone, not for working
-    // through them.
-    //
-    if (group.dupe) {
-      head.appendChild(buildDupeDismiss(group));
-      return head;   // no performer to filter down to
-    }
-    const only = document.createElement('button');
-    only.type = 'button';
-    only.className = 'linkish group-only';
-    only.textContent = 'only this one';
-    only.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      filterByLabel('models', group.name);
-    });
-    head.appendChild(only);
-  }
+  if (!group.unnamed && group.dupe) head.appendChild(buildDupeDismiss(group));
 
   return head;
 }
