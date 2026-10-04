@@ -79,6 +79,11 @@ const MODE_INPUTS = [['race', 'raceMode'], ['tags', 'tagMode'], ['models', 'mode
  */
 const VIEW_DEFAULTS = { sort: 'rating', sortDir: 'desc', recursive: false, grouped: '' };
 const RESET_KEY = 've-reset-home';
+// The filters and the search, carried across an F5. Session storage, so it
+// lasts exactly as long as this window: a fresh launch starts with none of it.
+const VIEW_KEY = 've-view';
+// Set by Ctrl+Shift+F5 on the way out: the reload that follows starts clean.
+const HARD_KEY = 've-reset-view';
 
 /** Drops filters, search and sort back to the defaults, saving as it goes. */
 function resetView() {
@@ -7989,6 +7994,15 @@ function onKeyDown(ev) {
     return;
   }
 
+  // Ctrl+F5 / Ctrl+Shift+F5, the hard refresh: same folder, view back to
+  // defaults. A plain F5 is left to the shell, and keeps the view.
+  if (ev.key === 'F5' && (ev.ctrlKey || ev.metaKey)) {
+    ev.preventDefault();
+    sessionStorage.setItem(HARD_KEY, '1');
+    location.reload();
+    return;
+  }
+
   // Alt+arrows navigate history, as in a browser or File Explorer.
   if (ev.altKey && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) {
     if (modalOpen()) return;
@@ -8144,20 +8158,43 @@ async function init() {
     };
   }
 
-  // Three ways in, and they differ only in where you land:
+  // Four ways in:
   //
-  //   cold launch    the default folder, keeping how you had the view set up
-  //   F5             the folder you were in, with the view back to defaults
-  //   Ctrl+Shift+R   the default folder, with the view back to defaults
+  //   cold launch     the default folder, the view at its defaults
+  //   F5              the folder you were in, the view as you left it
+  //   Ctrl+Shift+F5   the folder you were in, the view at its defaults
+  //   Ctrl+Shift+R    the default folder, the view at its defaults
   //
-  // A refresh is what you press when the view has got away from you, so both
-  // reload paths drop the filters and the sort. Only the folder is at stake
-  // between them, which is why Ctrl+Shift+R needs nothing more than a flag.
+  // "The view" is the sort, the grouping, the filters and the search. Sort and
+  // grouping live in the saved config, so an F5 keeps them by leaving them be;
+  // the filters live only in memory, and ride the reload in session storage.
   const reloaded = (performance.getEntriesByType('navigation')[0] || {}).type === 'reload';
   const toHome = sessionStorage.getItem(RESET_KEY) === '1';
+  const hard = sessionStorage.getItem(HARD_KEY) === '1';
   sessionStorage.removeItem(RESET_KEY);
+  sessionStorage.removeItem(HARD_KEY);
+  let kept = null;
+  try { kept = JSON.parse(sessionStorage.getItem(VIEW_KEY) || 'null'); } catch { kept = null; }
+  sessionStorage.removeItem(VIEW_KEY);
 
-  if (reloaded || toHome) resetView();
+  if (!reloaded || toHome || hard) {
+    resetView();
+  } else if (kept) {
+    state.adv = unpackFilter(kept.adv);
+    advDraft = unpackFilter(kept.adv);
+    $('#searchInput').value = typeof kept.search === 'string' ? kept.search : '';
+    syncAdvBadge();
+  }
+  // Written on the way out of every reload, unless the reload is the one that
+  // is meant to forget it.
+  window.addEventListener('pagehide', () => {
+    if (sessionStorage.getItem(HARD_KEY) === '1' || sessionStorage.getItem(RESET_KEY) === '1') return;
+    try {
+      sessionStorage.setItem(VIEW_KEY, JSON.stringify({
+        adv: packFilter(state.adv), search: $('#searchInput').value,
+      }));
+    } catch { /* storage refused: the reload simply starts clean */ }
+  });
 
   const start = (reloaded && !toHome ? state.config.lastDir : '')
     || state.config.homeDir || state.config.lastDir || '';
