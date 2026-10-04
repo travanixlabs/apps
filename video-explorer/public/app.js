@@ -5136,6 +5136,8 @@ function syncPlayerNav() {
     pos.hidden = !state.playing;
     pos.textContent = `shuffling ${shuffle.pool.length.toLocaleString()}`
       + ` · ${(shuffle.at + 1).toLocaleString()} so far`;
+    setPlayerCount(state.playing && shuffle.at >= 0
+      ? `${(shuffle.at + 1).toLocaleString()} of ${shuffle.pool.length.toLocaleString()}` : '');
     return;
   }
   const list = visibleCards();
@@ -5159,6 +5161,25 @@ function syncPlayerNav() {
   } else {
     pos.textContent = '';
   }
+  setPlayerCount(at >= 0 ? `${(at + 1).toLocaleString()} of ${list.length.toLocaleString()}`
+    : state.playing && list.length ? `filtered out · ${list.length.toLocaleString()} left` : '');
+
+  // Full window, the grid is out of sight behind the player. A filter that
+  // leaves it nothing at all has nothing to go on to, so the player gives the
+  // screen back to the (empty) grid rather than sitting on a video that is no
+  // longer in it. After the render that got here has finished, not inside it.
+  if (playerExpanded && state.playing && !list.length && !$('#playerModal').hidden) {
+    queueMicrotask(() => {
+      if (state.playing && !visibleCards().length && !shuffle.on) closePlayer();
+    });
+  }
+}
+
+/** Where you are in the listing, left of the title. Full window only (CSS). */
+function setPlayerCount(text) {
+  const el = $('#playerCount');
+  el.textContent = text;
+  el.hidden = !text;
 }
 
 /**
@@ -6350,6 +6371,9 @@ function render() {
   updateSelectionBar();
   renderEmptyState();
   updateStatusLine();
+  // A new filter, sort or search moves the open video's place in the listing
+  // -- or takes the listing away from under it.
+  if (state.playing) syncPlayerNav();
 }
 
 /**

@@ -1426,6 +1426,17 @@ body.dragging .card { cursor: grabbing; }
 /* The full-window button sits beside the close cross, so it takes the push
    to the right and the cross follows it. */
 .modal-head .player-expand { margin-left: auto; }
+/* "10 of 42", left of the title. Only in full window, where the grid that
+   would otherwise say where you are is hidden behind the player. */
+.player-count {
+  flex: none;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+#playerModal:not(.expanded) .player-count { display: none; }
 .modal-head .player-expand + .modal-close { margin-left: 0; }
 
 .modal-foot {
