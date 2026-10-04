@@ -1093,6 +1093,9 @@ function buildSlots() {
   if (!state.grouped) { state.playingCard = null; return; }
   for (const group of state.groups) {
     state.slots.push({ head: group });
+    // Folded: the heading stays, the cards go -- from the page and from what
+    // the player's arrows walk, since a hidden video is not one you are on.
+    if (foldedGroups.has(group.key)) continue;
     for (const [at, file] of group.files.entries()) {
       // `seq` is the card's place in reading order across the whole page, which
       // is what the player's arrows follow. It is not the same as `at`, the
@@ -6473,8 +6476,24 @@ function buildDupeDismiss(group) {
 
 function buildGroupHead(group) {
   const head = document.createElement('div');
-  head.className = 'group-head' + (group.unnamed ? ' group-unnamed' : '');
+  const folded = foldedGroups.has(group.key);
+  head.className = 'group-head' + (group.unnamed ? ' group-unnamed' : '') + (folded ? ' folded' : '');
   head.dataset.group = group.key;
+
+  const fold = document.createElement('button');
+  fold.type = 'button';
+  fold.className = 'group-fold';
+  fold.textContent = folded ? '\u25B8' : '\u25BE';
+  fold.title = folded ? 'Expand this section' : 'Collapse this section';
+  fold.setAttribute('aria-label', fold.title);
+  fold.setAttribute('aria-expanded', String(!folded));
+  fold.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    if (foldedGroups.has(group.key)) foldedGroups.delete(group.key);
+    else foldedGroups.add(group.key);
+    relayoutGroups(group.key);
+  });
+  head.appendChild(fold);
 
   if (!group.unnamed && !group.dupe) {
     const marked = isFavouriteModel(group.name);
@@ -6615,6 +6634,7 @@ async function notAPerformer(name) {
 
 /** Loaded of matching, or matching of scanned — whichever the listing is short of. */
 function syncFileCount() {
+  syncGroupsFold();
   // Grouped, the honest number is cards rather than videos: the same video is on
   // screen once per performer in it, and "12 of 9" would look like a bug.
   const total = slotCards();
@@ -7245,10 +7265,41 @@ async function dropOnto(paths, destPath, copy, label) {
  */
 const GROUP_MODES = ['', 'models', 'dupes'];
 
+// Sections folded away, by key. Every grouping starts with all of them open:
+// cleared when the grouping changes, and never saved.
+const foldedGroups = new Set();
+
+/**
+ * Rebuilds the grouped page in place after a fold, keeping as much loaded as
+ * before -- and at least down to the heading that was clicked -- so the page
+ * stays where it was rather than jumping back to the top.
+ */
+function relayoutGroups(key) {
+  if (!state.grouped) return;
+  const loaded = state.rendered;
+  buildSlots();
+  const at = key ? state.slots.findIndex((s) => s.head && s.head.key === key) : -1;
+  $('#grid').innerHTML = '';
+  state.rendered = 0;
+  const want = Math.min(state.slots.length, Math.max(loaded, at + 1));
+  while (state.rendered < want) appendPage();
+  syncFileCount();
+  if (state.playing) syncPlayerNav();
+}
+
+function syncGroupsFold() {
+  const btn = $('#groupsFold');
+  if (!btn) return;
+  btn.hidden = !state.grouped || !state.groups.length;
+  const all = state.groups.length && state.groups.every((g) => foldedGroups.has(g.key));
+  btn.textContent = all ? 'Expand all' : 'Collapse all';
+}
+
 async function toggleGrouped() {
   // Off, credited, duplicates, off. The plain listing is never more than one
   // more press away, whichever grouping you are in.
   state.grouped = GROUP_MODES[(GROUP_MODES.indexOf(state.grouped) + 1) % GROUP_MODES.length];
+  foldedGroups.clear();
   syncGroupButton();
   // The whole set, not the part of it in this folder.
   if (state.grouped === 'dupes') await fetchOtherCopies();
@@ -7354,6 +7405,14 @@ function wireEvents() {
   $('#scanBtn').addEventListener('click', () => scan());
   $('#dirInput').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') scan(); });
   $('#recursiveToggle').addEventListener('change', () => scan());
+
+  $('#groupsFold').addEventListener('click', () => {
+    const all = state.groups.length && state.groups.every((g) => foldedGroups.has(g.key));
+    foldedGroups.clear();
+    if (!all) for (const g of state.groups) foldedGroups.add(g.key);
+    relayoutGroups(null);
+    window.scrollTo(0, Math.min(window.scrollY, $('#filesSection').offsetTop));
+  });
 
   $('#foldersCollapse').addEventListener('click', (ev) => {
     ev.stopPropagation();

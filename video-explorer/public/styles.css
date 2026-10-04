@@ -1015,6 +1015,25 @@ a.qbtn:hover { color: #dbe6f0; }
   border-bottom: 1px solid var(--border);
 }
 .group-head:first-child { margin-top: 0; }
+/* The fold toggle, first in the heading. */
+.group-fold {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.group-fold:hover { color: var(--text); background: var(--bg-elev-2); }
+.group-head.folded { margin-bottom: 0; }
+/* Folded sections stack close, so a collapsed page reads as a list. */
+.group-head.folded + .group-head { margin-top: 2px; }
+.groups-fold { font-size: 12px; font-weight: 500; margin-left: 10px; }
 .group-name { font-size: 15px; font-weight: 600; }
 .group-count { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
 /* How much of this performer the face index has read. Quieter than the video
