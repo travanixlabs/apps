@@ -8162,6 +8162,12 @@ async function init() {
   try { kept = JSON.parse(sessionStorage.getItem(VIEW_KEY) || 'null'); } catch { kept = null; }
   sessionStorage.removeItem(VIEW_KEY);
 
+  // The folders open out on a launch and on Ctrl+Shift+R; a refresh keeps
+  // them however you left them.
+  if ((!reloaded || toHome) && state.config.foldersCollapsed) {
+    state.config.foldersCollapsed = false;
+    saveConfig({ foldersCollapsed: false });
+  }
   if (!reloaded || toHome || hard) {
     resetView();
   } else if (kept) {
