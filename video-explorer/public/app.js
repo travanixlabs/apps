@@ -4960,9 +4960,6 @@ function closePicker() {
 /** Drops the stream so the OS lets go of the file, keeping the modal open. */
 function releasePlayer() {
   const player = $('#player');
-  // Before the bar hides: the pause below fires with watching() already false,
-  // so the close-path save has to happen here or not at all.
-  saveResume();
   stopPlayerPreview(); // a timer left running would seek a released element
   hidePlayerBar();
   // The captured frames belong to the file that is going away, and the second
@@ -5460,50 +5457,6 @@ const scrub = {
 
 /** Whether this is a playthrough rather than a preview. */
 const watching = () => !$('#playerBar').hidden;
-
-// -------------------------------------------------------- resume where you were
-
-/**
- * Where a video should start, given what the sidecar remembers.
- *
- * The first half-minute is not worth resuming into, and neither is the credits
- * end of it -- a position within 45 seconds of the end means it was watched,
- * and next time starts from the top.
- */
-function resumeAt(file, duration) {
-  const at = Number(file && file.resume) || 0;
-  if (at < 30) return 0;
-  if (duration > 0 && at > duration - 45) return 0;
-  return at;
-}
-
-/**
- * What to write back, or null for "nothing worth a write".
- *
- * The sidecar is one synced file, so a resume point is only recorded when it
- * says something new: finished or barely-started clears a stored point, and a
- * position is stored when it has moved ten seconds past what is already there.
- */
-function resumeToKeep(current, duration, had) {
-  const done = duration > 0 && current > duration - 45;
-  if (done || current < 30) return had ? 0 : null;
-  if (Math.abs(current - had) < 10) return null;
-  return Math.round(current);
-}
-
-let resumeWrote = 0; // when the last periodic save went out
-
-function saveResume() {
-  const file = state.playing;
-  if (!file || !watching()) return;
-  const player = $('#player');
-  const keep = resumeToKeep(Number(player.currentTime) || 0, playerDuration(),
-    Number(file.resume) || 0);
-  if (keep === null) return;
-  file.resume = keep;
-  resumeWrote = Date.now();
-  editRecords([file.path], { resume: keep });
-}
 
 // ------------------------------------------------- speed, loops and what's next
 
@@ -6312,16 +6265,9 @@ function beginPlayback() {
   player.volume = masterVolume();
   player.playbackRate = playRate;
   syncLoopUI();
-  // Picking up where any device left off. The offer to start over rides the
-  // toast, so the common case -- carry on -- costs nothing.
-  const back = resumeAt(state.playing, playerDuration());
-  try { player.currentTime = back; } catch { /* not seekable yet; it will start at 0 anyway */ }
-  if (back) {
-    toast(`Resumed at ${fmtDuration(back)}`, 'ok', {
-      label: 'Start over',
-      run: () => { try { $('#player').currentTime = 0; } catch { /* fine */ } },
-    });
-  }
+  // Always from the top. It used to pick up where the last session left off,
+  // which was more surprising than useful.
+  try { player.currentTime = 0; } catch { /* not seekable yet; it starts at 0 anyway */ }
   const played = player.play();
   if (played && played.catch) played.catch(() => {});
   showPlayerBar();
@@ -7751,15 +7697,6 @@ function wireEvents() {
   }
   player.addEventListener('play', wakeBar);
   player.addEventListener('pause', wakeBar);
-  // Where you stood, written when it can matter: on a pause -- which is also
-  // what closing fires on the way out -- at the end, and once a minute during
-  // playback so a crash costs a minute, not the evening. resumeToKeep already
-  // refuses writes that say nothing new, so none of these spam the sync root.
-  player.addEventListener('pause', () => saveResume());
-  player.addEventListener('ended', () => saveResume());
-  player.addEventListener('timeupdate', () => {
-    if (watching() && Date.now() - resumeWrote > 60000) saveResume();
-  });
   // Autoplay next: on by its bar toggle, and never over a loop -- a loop
   // means "stay here", whatever the toggle says.
   player.addEventListener('ended', () => {
