@@ -1423,6 +1423,10 @@ body.dragging .card { cursor: grabbing; }
   white-space: nowrap;
 }
 .modal-head .modal-close { margin-left: auto; }
+/* The full-window button sits beside the close cross, so it takes the push
+   to the right and the cross follows it. */
+.modal-head .player-expand { margin-left: auto; }
+.modal-head .player-expand + .modal-close { margin-left: 0; }
 
 .modal-foot {
   display: flex;
