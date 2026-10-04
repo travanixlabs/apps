@@ -1030,6 +1030,19 @@ a.qbtn:hover { color: #dbe6f0; }
   white-space: nowrap;
 }
 .group-profiled.all { color: #7fd1a3; border-color: #2f5a44; }
+/* Beside the profiled count: quiet until pointed at, red when it is. */
+.group-notperf {
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-faint);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 7px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.group-notperf:hover { color: #ff8b8b; border-color: #7a3a3a; }
 /* The score the sections are ordered by, gold as it is in Top performers. */
 .group-score { color: #f0c060; font-size: 12px; font-variant-numeric: tabular-nums; cursor: help; }
 .group-unnamed .group-name { color: var(--text-faint); font-style: italic; font-weight: 500; }

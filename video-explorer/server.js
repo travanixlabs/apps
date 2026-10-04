@@ -2376,6 +2376,33 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 400, { error: `Unknown action "${action}"` });
     }
 
+    // "Not a performer": a credited name that is not a person -- a word out of
+    // a filename, a studio, a scene title. It comes off every video in one
+    // write, takes its race and favourite mark with it, and goes on the list
+    // the filename suggester reads first, so it is never offered again.
+    if (req.method === 'POST' && route === '/api/models') {
+      const body = await readBody(req);
+      const name = String(body.name || '').trim().replace(/\s+/g, ' ');
+      if (body.action !== 'not-a-performer') return sendJson(res, 400, { error: `Unknown action "${body.action}"` });
+      if (!name) return sendJson(res, 400, { error: 'Which name?' });
+      const { changed } = library.removeTagEverywhere(name, 'models');
+      if (library.isFavouriteModel(name)) library.setFavouriteModel(name, false);
+      const races = library.setPerformerRace(name, '');
+      try {
+        const file = path.join(ONEDRIVE_ROOT, '.video-explorer', 'not-model-names.json');
+        const held = loadJsonSync(file, null) || { names: [] };
+        if (!Array.isArray(held.names)) held.names = [];
+        if (!held.names.some((n) => String(n.name || '').toLowerCase() === name.toLowerCase())) {
+          held.names.push({ name, why: 'marked not a performer in the app', when: new Date().toISOString().slice(0, 10) });
+          held.updated = new Date().toISOString();
+          await fsp.writeFile(file, JSON.stringify(held, null, 2));
+        }
+      } catch (err) {
+        log(`not-a-performer: could not note "${name}" for the suggester: ${err.message}`);
+      }
+      return sendJson(res, 200, { changed, races, models: library.modelCounts(), favourites: library.favouriteModels() });
+    }
+
     if (req.method === 'POST' && route === '/api/races') {
       const body = await readBody(req);
       const races = library.setPerformerRace(body.name, body.race || '');

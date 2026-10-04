@@ -6540,6 +6540,21 @@ function buildGroupHead(group) {
     head.appendChild(read);
   }
 
+  // A credited name that is not a person at all -- a word lifted out of a
+  // filename. Off every video in one go, and never suggested again.
+  if (!group.unnamed && !group.dupe) {
+    const not = document.createElement('button');
+    not.type = 'button';
+    not.className = 'group-notperf';
+    not.textContent = 'not a performer';
+    not.title = `"${group.name}" is not a person: take the name off every video`;
+    not.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      notAPerformer(group.name);
+    });
+    head.appendChild(not);
+  }
+
   // Her race, as you label it: four small choices, the current one lit.
   // Clicking the lit one takes it off again.
   if (!group.unnamed && !group.dupe) {
@@ -6569,6 +6584,33 @@ function buildGroupHead(group) {
   if (!group.unnamed && group.dupe) head.appendChild(buildDupeDismiss(group));
 
   return head;
+}
+
+/** Takes a credited name off every video in the library, after asking. */
+async function notAPerformer(name) {
+  const on = (state.modelVocab || []).find((m) => m.tag.toLowerCase() === name.toLowerCase());
+  const count = on ? on.count : 0;
+  const where = count ? ` It comes off ${count.toLocaleString()} video${count === 1 ? '' : 's'}` : ' It comes off every video';
+  if (!window.confirm(`"${name}" is not a performer?${where} in the library, and will not be suggested again.`)) return;
+  try {
+    const res = await fetch('/api/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'not-a-performer', name }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    state.modelVocab = data.models || state.modelVocab;
+    setFavourites(data.favourites);
+    setRaces(data.races);
+    syncTagVocab();
+    // The listing in hand still credits the name on every one of them.
+    await relistQuietly();
+    render();
+    toast(`"${name}" removed from ${data.changed.toLocaleString()} video${data.changed === 1 ? '' : 's'}`, 'ok');
+  } catch (err) {
+    toast(err.message, 'err');
+  }
 }
 
 /** Loaded of matching, or matching of scanned — whichever the listing is short of. */
