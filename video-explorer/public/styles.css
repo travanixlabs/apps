@@ -1857,9 +1857,50 @@ body.dragging .card { cursor: grabbing; }
 .player-bar.muted .pb-cross { display: block; }
 .player-bar.muted .pb-waves { display: none; }
 
-/* Fullscreen is the stage, not the video, so the bar goes with it. */
-.player-stage:fullscreen { background: #000; }
-.player-stage:fullscreen #player { max-height: none; height: 100%; }
+/* Full window: the player is the whole app window, nothing of the grid
+   behind it, and the footer -- labels, names, look-alikes -- under the video. */
+.player-expand .pe-shrink { display: none; }
+#playerModal.expanded .player-expand .pe-grow { display: none; }
+#playerModal.expanded .player-expand .pe-shrink { display: block; }
+#playerModal.expanded .player-expand { color: var(--accent); }
+#playerModal.expanded,
+#playerModal.fs {
+  padding: 0;
+  background: var(--bg);
+  backdrop-filter: none;
+}
+#playerModal.expanded .modal-card,
+#playerModal.fs .modal-card {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+#playerModal.expanded .player-stage { flex: 1 1 auto; min-height: 120px; }
+#playerModal.expanded #player,
+#playerModal.fs #player { max-height: none; height: 100%; }
+
+/* Fullscreen: the picture is the whole screen, and the footer floats over its
+   bottom edge under the control bar, coming and going with it. */
+#playerModal.fs { background: #000; }
+#playerModal.fs .modal-card { position: relative; background: #000; }
+#playerModal.fs .modal-head { display: none; }
+#playerModal.fs .player-stage { position: absolute; inset: 0; min-height: 0; }
+#playerModal.fs .player-bar { bottom: var(--foot-h, 0px); }
+#playerModal.fs .modal-foot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  border-top: 0;
+  background: rgba(0, 0, 0, .82);
+  transition: opacity .18s;
+}
+#playerModal.fs.bar-idle .modal-foot { opacity: 0; pointer-events: none; }
+#playerModal.fs.bar-idle { cursor: none; }
 
 /* A narrow window loses the volume slider before it loses the seek bar, and
    the preview shrinks rather than hanging off the side. */

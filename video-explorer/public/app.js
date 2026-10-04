@@ -5697,6 +5697,7 @@ function wakeBar() {
   const stage = $('#player').closest('.player-stage');
   if (!stage) return;
   stage.classList.remove('bar-idle');
+  $('#playerModal').classList.remove('bar-idle');
   clearTimeout(scrub.idle);
   scrub.idle = null;
   if (!watching()) return;
@@ -5707,8 +5708,10 @@ function wakeBar() {
   if (player.paused || scrub.dragging || !$('#pbMarkMenu').hidden) return;
   scrub.idle = setTimeout(() => {
     const now = $('#player');
-    if (watching() && !now.paused && !scrub.dragging && $('#pbMarkMenu').hidden) {
+    if (watching() && !now.paused && !scrub.dragging && $('#pbMarkMenu').hidden
+      && !$('#playerModal .modal-foot').matches(':hover')) {
       stage.classList.add('bar-idle');
+      $('#playerModal').classList.add('bar-idle');
     }
   }, 2500);
 }
@@ -6222,10 +6225,43 @@ function seekBy(seconds) {
 }
 
 function toggleFullscreen() {
-  const stage = $('#player').closest('.player-stage');
-  if (!stage) return;
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-  else stage.requestFullscreen().catch(() => {});
+  else document.documentElement.requestFullscreen().catch(() => {});
+}
+
+/**
+ * Fullscreen is the whole page, not the stage, with the player dressed to
+ * cover it. The stage alone took the footer away -- the labels, the names, the
+ * look-alikes -- and anything that opens over the player (the label editor, the
+ * face lineup) would have opened outside the fullscreen layer, where it cannot
+ * be seen. The page as the layer keeps all of them; the class does the look.
+ */
+function syncFullscreen() {
+  const on = Boolean(document.fullscreenElement) && !$('#playerModal').hidden;
+  $('#playerModal').classList.toggle('fs', on);
+  syncFootHeight();
+  wakeBar();
+}
+
+/** The control bar sits on top of the footer in fullscreen, so it needs its height. */
+function syncFootHeight() {
+  const foot = $('#playerModal .modal-foot');
+  if (!foot) return;
+  $('#playerModal').style.setProperty('--foot-h', `${foot.offsetHeight}px`);
+}
+
+// The player filling the app window instead of floating over the grid. Held
+// for as long as the app runs -- every video opens that way until it is
+// switched back -- and not across a restart: the app opens on the usual view.
+let playerExpanded = false;
+
+function setPlayerExpanded(on) {
+  playerExpanded = Boolean(on);
+  $('#playerModal').classList.toggle('expanded', playerExpanded);
+  const btn = $('#playerExpand');
+  btn.setAttribute('aria-pressed', String(playerExpanded));
+  btn.title = playerExpanded ? 'Back to the usual view' : 'Full window';
+  btn.setAttribute('aria-label', btn.title);
 }
 
 /**
@@ -6272,6 +6308,7 @@ function closePlayer() {
   state.playing = null;
   state.playingAnchor = null;
   $('#playerModal').hidden = true;
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   // Closing the player is how a shuffle ends. The grid underneath is the one
   // that was there before it started -- nothing about it was changed to get
   // here, so there is nothing to put back.
@@ -7704,6 +7741,10 @@ function wireEvents() {
   // Moving over the picture is asking for the controls back.
   $('#playerModal .player-stage').addEventListener('pointermove', wakeBar);
   $('#playerBar').addEventListener('pointerenter', wakeBar);
+  // Over the labels is using them: they stay, and so does the bar above them.
+  $('#playerModal .modal-foot').addEventListener('pointermove', wakeBar);
+  $('#playerExpand').addEventListener('click', () => setPlayerExpanded(!playerExpanded));
+  new ResizeObserver(syncFootHeight).observe($('#playerModal .modal-foot'));
 
   $('#pbPlay').addEventListener('click', togglePlayback);
   $('#pbFull').addEventListener('click', toggleFullscreen);
@@ -7853,7 +7894,7 @@ function wireEvents() {
 
   // Leaving fullscreen any way at all -- Escape, the button, the OS -- has to
   // put the bar back where it belongs.
-  document.addEventListener('fullscreenchange', wakeBar);
+  document.addEventListener('fullscreenchange', syncFullscreen);
 
   // modal chrome
   for (const btn of document.querySelectorAll('.modal-close')) {
