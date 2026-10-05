@@ -1975,6 +1975,8 @@ body.dragging .card { cursor: grabbing; }
    you are watching it rather than only from the grid. */
 .player-record { flex: none; }
 .player-record .record-row { margin-top: 0; }
+/* In the player the stars are the thing you reach for: twice their card size. */
+.player-record .stars .star { font-size: 30px; padding: 0 2px; }
 /* The footer already has the metadata line and the actions competing for width,
    so the chips wrap rather than push them apart. */
 .player-record .chips { max-width: 260px; }
