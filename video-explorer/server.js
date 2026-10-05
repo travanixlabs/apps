@@ -586,7 +586,7 @@ async function probe(file) {
     '-show_entries', 'format=duration,size,bit_rate',
     // Free to ask for while we have ffprobe open, and it is how tags written
     // into a file on another device find their way into this one's sidecar.
-    '-show_entries', 'format_tags=keywords,rating',
+    '-show_entries', 'format_tags=keywords,rating,rating_scale',
     '-of', 'json',
     file,
   ];
@@ -612,6 +612,9 @@ async function probe(file) {
     embedded: {
       tags: String(tags.keywords || '').split(';').map((t) => t.trim()).filter(Boolean),
       rating: Number(tags.rating) || 0,
+      // Written alongside the rating since ratings went to ten. A file without
+      // it was rated out of five.
+      scale: Number(tags.rating_scale) || 5,
     },
   };
 }
@@ -626,7 +629,9 @@ function adoptEmbedded(file, stat, meta) {
   const found = meta && meta.embedded;
   if (!found || library.get(stat)) return;
   if (!found.tags.length && !found.rating) return;
-  library.apply(stat, path.basename(file), { tags: found.tags, rating: found.rating });
+  // A probe cached before the scale moved has no `scale`, and was out of five.
+  const rating = (found.scale === 10 ? found.rating : found.rating * 2) || 0;
+  library.apply(stat, path.basename(file), { tags: found.tags, rating });
   log(`adopted embedded tags from ${path.basename(file)}`);
 }
 
@@ -1723,6 +1728,7 @@ async function embedTags(file) {
     '-movflags', 'use_metadata_tags',
     '-metadata', `keywords=${tags.join('; ')}`,
     '-metadata', `rating=${record.rating || ''}`,
+    '-metadata', 'rating_scale=10',
     tmp,
   ];
 

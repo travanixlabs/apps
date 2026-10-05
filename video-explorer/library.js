@@ -158,6 +158,24 @@ async function init(oneDriveRoot) {
   lastWritten = Object.keys(data.records).length;
   // Today's copy, taken before this session can change anything.
   if (!readOnly && raw !== null) await dailyBackup(raw);
+  // Five stars became ten. Done once, on whichever device reads the file
+  // first: every rating doubles and the file says so, so a second reader --
+  // the phone, or this app tomorrow -- finds nothing left to do. A copy of
+  // the file as it was goes into backups first, whatever the daily one did.
+  if (!readOnly && raw !== null && data.ratingScale !== RATING_MAX) {
+    await snapshot(raw);
+    let moved = 0;
+    for (const record of Object.values(data.records)) {
+      const was = Math.round(Number(record.rating) || 0);
+      if (was > 0) {
+        record.rating = Math.min(RATING_MAX, was * 2);
+        moved += 1;
+      }
+    }
+    data.ratingScale = RATING_MAX;
+    save();
+    console.log(`ratings: moved ${moved} to the ten-star scale`);
+  }
   return { file: FILE, count: lastWritten, readOnly };
 }
 
@@ -167,6 +185,9 @@ function status() {
 }
 
 const backupDir = () => path.join(path.dirname(FILE), 'backups');
+
+// Ratings run 0 (unrated) to 10. They ran to 5 until 2026-10-05.
+const RATING_MAX = 10;
 
 const stamp = () => new Date().toISOString().replace(/[:.]/g, '-');
 
@@ -390,7 +411,7 @@ function apply(stat, name, patch) {
   }
 
   if (patch.rating !== undefined) {
-    next.rating = Math.max(0, Math.min(5, Math.round(Number(patch.rating) || 0)));
+    next.rating = Math.max(0, Math.min(RATING_MAX, Math.round(Number(patch.rating) || 0)));
   }
 
   if (patch.studio !== undefined) {
@@ -594,9 +615,9 @@ function singleCounts(field) {
 /**
  * The performers with the most well-rated videos, best first.
  *
- * Ranked by the count of five-star videos, then four, and so on down: a
- * performer with twelve fives outranks one with forty threes, which is what
- * "top" means here. A plain average would put someone with a single five above
+ * Ranked by the count of ten-star videos, then nine, and so on down: a
+ * performer with twelve tens outranks one with forty sixes, which is what
+ * "top" means here. A plain average would put someone with a single ten above
  * them both, and a plain total would rank by how much you happen to own.
  *
  * Read from the sidecar rather than a listing, so it describes the whole

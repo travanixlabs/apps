@@ -77,6 +77,27 @@ const MODE_INPUTS = [['race', 'raceMode'], ['tags', 'tagMode'], ['models', 'mode
  * puts these back; card size, preview engine and the default folder are
  * preferences and survive it.
  */
+// Ratings run 0 (unrated) to 10. They ran to 5 until 2026-10-05; the
+// library doubled every one of them the first time it was opened after.
+const RATING_MAX = 10;
+const RATING_VALUES = Array.from({ length: RATING_MAX + 1 }, (_, n) => n);
+
+/** A rating as a filter chip: a number, since eleven rows of stars will not fit. */
+function ratingChipLabel(value) {
+  return value === 0 ? 'unrated' : `${value}\u2605`;
+}
+
+/**
+ * A digit as a rating: 1-9 are themselves and 0 is ten. Pressing the rating a
+ * video already has takes it off, the way clicking its lit star does -- with
+ * ten ratings on ten keys there is no spare key left to mean "clear".
+ */
+function keyRating(key, files) {
+  const want = key === '0' ? RATING_MAX : Number(key);
+  const all = files.length && files.every((f) => (Number(f.rating) || 0) === want);
+  return all ? 0 : want;
+}
+
 const VIEW_DEFAULTS = { sort: 'rating', sortDir: 'desc', recursive: false, grouped: '' };
 const RESET_KEY = 've-reset-home';
 // The filters and the search, carried across an F5. Session storage, so it
@@ -898,14 +919,16 @@ function applyFilterSort() {
 
 /**
  * What a rating is worth to a performer's standing — the Top performers weights,
- * client side. A five is worth ten fours and a four ten threes, so no pile of
+ * client side. A ten is worth ten eights and an eight ten sixes, so no pile of
  * watchable videos outranks one good one.
  *
  * Scored from the listing rather than from the whole library on purpose: this is
  * a view of what is in front of you, so filtering to one tag should reorder
  * the sections by who is best *in that tag*.
  */
-const STAR_POINTS = [0, 0, 0, 10, 100, 1000];
+// Ten stars since the scale doubled: what were 3, 4 and 5 are 6, 8 and 10, at
+// the same weights, and the odd steps sit halfway between their neighbours.
+const STAR_POINTS = [0, 0, 0, 0, 0, 3, 10, 32, 100, 316, 1000];
 
 /**
  * The current listing, split into one section per performer.
@@ -929,7 +952,7 @@ function buildModelGroups(list) {
     // at the floor now credited, it was showing the same sections as this one.
     const names = (file.models || []).map((n) => String(n).trim()).filter(Boolean);
     if (!names.length) { unnamed.push(file); continue; }
-    const rating = Math.max(0, Math.min(5, Math.round(Number(file.rating) || 0)));
+    const rating = Math.max(0, Math.min(RATING_MAX, Math.round(Number(file.rating) || 0)));
     for (const name of names) {
       const key = name.toLowerCase();
       let group = groups.get(key);
@@ -939,7 +962,7 @@ function buildModelGroups(list) {
       }
       group.files.push(file);
       group.points += STAR_POINTS[rating];
-      if (rating >= 4) group.good += 1;
+      if (rating >= 8) group.good += 1;
     }
   }
 
@@ -1424,9 +1447,9 @@ function renderAdvanced() {
   // been looked at" is a thing you want to list.
   const ratings = $('#advRating');
   ratings.innerHTML = '';
-  for (const value of [0, 1, 2, 3, 4, 5]) {
+  for (const value of RATING_VALUES) {
     ratings.appendChild(chipCycle(
-      value === 0 ? 'unrated' : '★'.repeat(value),
+      ratingChipLabel(value),
       advDraft.ratings.get(value),
       () => { cycleIn(advDraft.ratings, value); renderAdvanced(); },
     ));
@@ -1779,9 +1802,9 @@ function renderShuffle() {
   renderRaceRow($('#shuffleRace'), shuffle.draft.race, () => renderShuffle());
   const ratings = $('#shuffleRating');
   ratings.innerHTML = '';
-  for (const value of [0, 1, 2, 3, 4, 5]) {
+  for (const value of RATING_VALUES) {
     ratings.appendChild(chipCycle(
-      value === 0 ? 'unrated' : '★'.repeat(value),
+      ratingChipLabel(value),
       shuffle.draft.ratings.get(value),
       () => { cycleIn(shuffle.draft.ratings, value); renderShuffle(); },
     ));
@@ -2414,8 +2437,8 @@ function appendRefused(host, file, refused) {
 function buildCornerRating(rating) {
   const badge = document.createElement('span');
   badge.className = 'badge badge-rating';
-  badge.textContent = '\u2605'.repeat(Math.max(0, Math.min(5, Math.round(rating))));
-  badge.title = `${rating} out of 5`;
+  badge.textContent = '\u2605'.repeat(Math.max(0, Math.min(RATING_MAX, Math.round(rating))));
+  badge.title = `${rating} out of ${RATING_MAX}`;
   return badge;
 }
 
@@ -3694,7 +3717,7 @@ function buildStars(current, onPick, { compact = false, edit = true } = {}) {
   wrap.className = 'stars' + (compact ? ' compact' : '') + (edit ? '' : ' stars-read');
   // Read-only: show what the rating IS, not five slots waiting to be clicked.
   // An unrated video shows nothing at all, which is the caller's job to skip.
-  const upto = edit ? 5 : current;
+  const upto = edit ? RATING_MAX : current;
   for (let n = 1; n <= upto; n += 1) {
     const star = document.createElement(edit ? 'button' : 'span');
     if (edit) star.type = 'button';
@@ -6525,8 +6548,8 @@ function buildGroupHead(group) {
     const score = document.createElement('span');
     score.className = 'group-score';
     score.textContent = group.points.toLocaleString();
-    score.title = 'A five-star video is worth a thousand points, a four-star a hundred,'
-      + ' a three-star ten — counting only what is in this listing.';
+    score.title = 'A ten-star video is worth a thousand points, an eight-star a hundred,'
+      + ' a six-star ten — counting only what is in this listing.';
     head.appendChild(score);
   }
 
@@ -8139,9 +8162,9 @@ function onKeyDown(ev) {
   // the player is not what you are looking at, and rating one as you finish
   // watching it is the whole reason the shortcut is wanted here.
   if (playerHasKeys() && !isTyping() && !ev.ctrlKey && !ev.metaKey && !ev.altKey
-      && ev.key >= '0' && ev.key <= '5') {
+      && ev.key >= '0' && ev.key <= '9') {
     ev.preventDefault();
-    if (state.playing) editRecords([state.playing.path], { rating: Number(ev.key) });
+    if (state.playing) editRecords([state.playing.path], { rating: keyRating(ev.key, [state.playing]) });
     return;
   }
 
@@ -8174,9 +8197,9 @@ function onKeyDown(ev) {
   const paths = selectedPaths();
   if (!paths.length) return;
 
-  if (ev.key >= '0' && ev.key <= '5') {
+  if (ev.key >= '0' && ev.key <= '9') {
     ev.preventDefault();
-    editRecords(paths, { rating: Number(ev.key) });
+    editRecords(paths, { rating: keyRating(ev.key, state.files.filter((f) => state.selected.has(f.path))) });
   } else if (ev.key === 't' || ev.key === 'T') {
     ev.preventDefault();
     openTagDialog(state.files.filter((f) => state.selected.has(f.path)));
