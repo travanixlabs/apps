@@ -82,9 +82,9 @@ const MODE_INPUTS = [['race', 'raceMode'], ['tags', 'tagMode'], ['models', 'mode
 const RATING_MAX = 10;
 const RATING_VALUES = Array.from({ length: RATING_MAX + 1 }, (_, n) => n);
 
-/** A rating as a filter chip: 7 reads "3½★". */
+/** A rating as a filter chip: its stars, half one and all. */
 function ratingChipLabel(value) {
-  return value === 0 ? 'unrated' : `${starsNumber(value)}\u2605`;
+  return value === 0 ? 'unrated' : starsNode(value);
 }
 
 /**
@@ -109,17 +109,26 @@ function keyRating(ev, files) {
   return all ? 0 : want;
 }
 
-/** A stored rating (0-10) as stars: 7 is 3½. */
-function starsText(rating) {
+/**
+ * A stored rating (0-10) drawn as stars: 7 is three whole stars and a half
+ * one -- the star glyph with only its left half gold.
+ */
+function starsNode(rating) {
   const r = Math.max(0, Math.min(RATING_MAX, Math.round(Number(rating) || 0)));
-  return '\u2605'.repeat(Math.floor(r / 2)) + (r % 2 ? '\u00BD' : '');
+  const run = document.createElement('span');
+  run.className = 'star-run';
+  for (let i = 1; i <= Math.ceil(r / 2); i += 1) {
+    const star = document.createElement('span');
+    star.className = 'sr' + (r >= i * 2 ? '' : ' half');
+    star.textContent = '\u2605';
+    run.appendChild(star);
+  }
+  return run;
 }
 
-/** A stored rating as a number of stars, for labels: 7 is "3½". */
+/** A stored rating as a number of stars, for tooltips: 7 is "3.5". */
 function starsNumber(rating) {
-  const r = Math.round(Number(rating) || 0);
-  const whole = Math.floor(r / 2);
-  return r % 2 ? `${whole || ''}\u00BD` : String(whole);
+  return String((Math.round(Number(rating) || 0)) / 2);
 }
 
 /** Lights a row of five for a value: whole stars, then a half if it is odd. */
@@ -1702,7 +1711,7 @@ function chipCycle(label, mode, onClick) {
   mark.className = 'tri-mark';
   mark.textContent = mode === 'in' ? '+' : mode === 'out' ? '−' : '';
   chip.appendChild(mark);
-  chip.appendChild(document.createTextNode(label));
+  chip.appendChild(typeof label === 'string' ? document.createTextNode(label) : label);
   chip.addEventListener('click', onClick);
   return chip;
 }
@@ -1863,7 +1872,7 @@ function chipPick(label, on, onClick) {
   mark.className = 'tri-mark';
   mark.textContent = on ? '+' : '';
   chip.appendChild(mark);
-  chip.appendChild(document.createTextNode(label));
+  chip.appendChild(typeof label === 'string' ? document.createTextNode(label) : label);
   chip.addEventListener('click', onClick);
   return chip;
 }
@@ -2508,8 +2517,8 @@ function appendRefused(host, file, refused) {
 function buildCornerRating(rating) {
   const badge = document.createElement('span');
   badge.className = 'badge badge-rating';
-  badge.textContent = starsText(rating);
-  badge.title = `${starsNumber(rating)} out of 5`;
+  badge.replaceChildren(starsNode(rating));
+  badge.title = `${starsNumber(rating)} out of 5 stars`;
   return badge;
 }
 
@@ -3064,7 +3073,7 @@ function buildSimilarTile(other) {
     other.name,
     `${Math.round(other.score * 100)}% like a face in this video`,
     credited ? `credited: ${credited}` : 'nobody credited on it',
-    other.rating ? starsText(other.rating) : null,
+    other.rating ? `${starsNumber(other.rating)} out of 5 stars` : null,
     other.folder,
   ].filter(Boolean).join('\n');
 
@@ -3086,7 +3095,7 @@ function buildSimilarTile(other) {
   if (other.rating) {
     const stars = document.createElement('span');
     stars.className = 'similar-stars';
-    stars.textContent = starsText(other.rating);
+    stars.appendChild(starsNode(other.rating));
     shot.appendChild(stars);
   }
 
@@ -3798,7 +3807,7 @@ function buildStars(current, onPick, { compact = false, edit = true } = {}) {
     star.textContent = '\u2605';
     wrap.appendChild(star);
   }
-  wrap.title = `${starsNumber(r)} out of 5`;
+  wrap.title = `${starsNumber(r)} out of 5 stars`;
   return wrap;
 }
 
@@ -6613,8 +6622,8 @@ function buildGroupHead(group) {
     const score = document.createElement('span');
     score.className = 'group-score';
     score.textContent = group.points.toLocaleString();
-    score.title = 'Points per video: 5★ 1000 · 4½★ 750 · 4★ 500 · 3½★ 250 · 3★ 100'
-      + ' · 2½★ 75 · 2★ 50 · 1½★ 25 · 1★ 10 · ½★ 5 — counting only what is in this listing.';
+    score.title = 'Points per video: 5★ 1000 · 4.5★ 750 · 4★ 500 · 3.5★ 250 · 3★ 100'
+      + ' · 2.5★ 75 · 2★ 50 · 1.5★ 25 · 1★ 10 · 0.5★ 5 — counting only what is in this listing.';
     head.appendChild(score);
   }
 
