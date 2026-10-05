@@ -919,16 +919,15 @@ function applyFilterSort() {
 
 /**
  * What a rating is worth to a performer's standing — the Top performers weights,
- * client side. A ten is worth ten eights and an eight ten sixes, so no pile of
- * watchable videos outranks one good one.
+ * client side. Every rating counts for something, rising steeply at the top:
+ * a ten is twice an eight and ten times a six.
  *
  * Scored from the listing rather than from the whole library on purpose: this is
  * a view of what is in front of you, so filtering to one tag should reorder
  * the sections by who is best *in that tag*.
  */
-// Ten stars since the scale doubled: what were 3, 4 and 5 are 6, 8 and 10, at
-// the same weights, and the odd steps sit halfway between their neighbours.
-const STAR_POINTS = [0, 0, 0, 0, 0, 3, 10, 32, 100, 316, 1000];
+// Points per rating, unrated to ten stars.
+const STAR_POINTS = [0, 5, 10, 25, 50, 75, 100, 250, 500, 750, 1000];
 
 /**
  * The current listing, split into one section per performer.
@@ -6548,8 +6547,8 @@ function buildGroupHead(group) {
     const score = document.createElement('span');
     score.className = 'group-score';
     score.textContent = group.points.toLocaleString();
-    score.title = 'A ten-star video is worth a thousand points, an eight-star a hundred,'
-      + ' a six-star ten — counting only what is in this listing.';
+    score.title = 'Points per video: 10★ 1000 · 9★ 750 · 8★ 500 · 7★ 250 · 6★ 100'
+      + ' · 5★ 75 · 4★ 50 · 3★ 25 · 2★ 10 · 1★ 5 — counting only what is in this listing.';
     head.appendChild(score);
   }
 
