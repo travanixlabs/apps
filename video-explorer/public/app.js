@@ -82,21 +82,93 @@ const MODE_INPUTS = [['race', 'raceMode'], ['tags', 'tagMode'], ['models', 'mode
 const RATING_MAX = 10;
 const RATING_VALUES = Array.from({ length: RATING_MAX + 1 }, (_, n) => n);
 
-/** A rating as a filter chip: a number, since eleven rows of stars will not fit. */
+/** A rating as a filter chip: 7 reads "3½★". */
 function ratingChipLabel(value) {
-  return value === 0 ? 'unrated' : `${value}\u2605`;
+  return value === 0 ? 'unrated' : `${starsNumber(value)}\u2605`;
 }
 
 /**
- * A digit as a rating: 1-9 are themselves and 0 is ten. Pressing the rating a
- * video already has takes it off, the way clicking its lit star does -- with
- * ten ratings on ten keys there is no spare key left to mean "clear".
+ * The digit a rating key means, from the physical key -- Shift+3 reports "#"
+ * as its key, so the code is read instead. 0-5 only; anything else is null.
  */
-function keyRating(key, files) {
-  const want = key === '0' ? RATING_MAX : Number(key);
+function ratingDigit(ev) {
+  const m = /^(?:Digit|Numpad)([0-5])$/.exec(ev.code || '');
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * A key as a rating: 1-5 are whole stars, Shift takes off a half (Shift+4 is
+ * 3½), and 0 clears. Pressing the rating a video already has also clears it,
+ * the way clicking its lit star does.
+ */
+function keyRating(ev, files) {
+  const digit = ratingDigit(ev);
+  if (!digit) return 0;
+  const want = digit * 2 - (ev.shiftKey ? 1 : 0);
   const all = files.length && files.every((f) => (Number(f.rating) || 0) === want);
   return all ? 0 : want;
 }
+
+/** A stored rating (0-10) as stars: 7 is 3½. */
+function starsText(rating) {
+  const r = Math.max(0, Math.min(RATING_MAX, Math.round(Number(rating) || 0)));
+  return '\u2605'.repeat(Math.floor(r / 2)) + (r % 2 ? '\u00BD' : '');
+}
+
+/** A stored rating as a number of stars, for labels: 7 is "3½". */
+function starsNumber(rating) {
+  const r = Math.round(Number(rating) || 0);
+  const whole = Math.floor(r / 2);
+  return r % 2 ? `${whole || ''}\u00BD` : String(whole);
+}
+
+/** Lights a row of five for a value: whole stars, then a half if it is odd. */
+function paintStarRow(wrap, value) {
+  wrap.querySelectorAll('.star').forEach((star, i) => {
+    const full = value >= (i + 1) * 2;
+    const half = !full && value === i * 2 + 1;
+    star.classList.toggle('on', full);
+    star.classList.toggle('half', half);
+    star.textContent = full || half ? '\u2605' : '\u2606';
+  });
+}
+
+/**
+ * Five stars, each worth two steps: the left half of a star is the half, the
+ * right half the whole. Hovering previews where a click would land; clicking
+ * the rating already held clears it.
+ */
+function buildStarRow(current, onPick, className = 'stars') {
+  const wrap = document.createElement('span');
+  wrap.className = className;
+  const at = (star, ev) => {
+    const box = star.getBoundingClientRect();
+    const i = Number(star.dataset.n);
+    return ev.clientX - box.left < box.width / 2 ? i * 2 - 1 : i * 2;
+  };
+  for (let i = 1; i <= RATING_MAX / 2; i += 1) {
+    const star = document.createElement('button');
+    star.type = 'button';
+    star.className = 'star';
+    star.dataset.n = String(i);
+    star.addEventListener('pointermove', (ev) => {
+      const v = at(star, ev);
+      paintStarRow(wrap, v);
+      star.title = v === current ? 'Clear rating' : `Rate ${starsNumber(v)}`;
+    });
+    star.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      const v = at(star, ev);
+      onPick(v === current ? 0 : v);
+    });
+    wrap.appendChild(star);
+  }
+  wrap.addEventListener('pointerleave', () => paintStarRow(wrap, current));
+  paintStarRow(wrap, current);
+  return wrap;
+}
+
 
 const VIEW_DEFAULTS = { sort: 'rating', sortDir: 'desc', recursive: false, grouped: '' };
 const RESET_KEY = 've-reset-home';
@@ -2436,8 +2508,8 @@ function appendRefused(host, file, refused) {
 function buildCornerRating(rating) {
   const badge = document.createElement('span');
   badge.className = 'badge badge-rating';
-  badge.textContent = '\u2605'.repeat(Math.max(0, Math.min(RATING_MAX, Math.round(rating))));
-  badge.title = `${rating} out of ${RATING_MAX}`;
+  badge.textContent = starsText(rating);
+  badge.title = `${starsNumber(rating)} out of 5`;
   return badge;
 }
 
@@ -2992,7 +3064,7 @@ function buildSimilarTile(other) {
     other.name,
     `${Math.round(other.score * 100)}% like a face in this video`,
     credited ? `credited: ${credited}` : 'nobody credited on it',
-    other.rating ? `${'\u2605'.repeat(other.rating)}` : null,
+    other.rating ? starsText(other.rating) : null,
     other.folder,
   ].filter(Boolean).join('\n');
 
@@ -3014,7 +3086,7 @@ function buildSimilarTile(other) {
   if (other.rating) {
     const stars = document.createElement('span');
     stars.className = 'similar-stars';
-    stars.textContent = '\u2605'.repeat(other.rating);
+    stars.textContent = starsText(other.rating);
     shot.appendChild(stars);
   }
 
@@ -3712,27 +3784,21 @@ async function toggleFaceSweep() {
 }
 
 function buildStars(current, onPick, { compact = false, edit = true } = {}) {
+  const cls = 'stars' + (compact ? ' compact' : '') + (edit ? '' : ' stars-read');
+  if (edit) return buildStarRow(current, onPick, cls);
+  // Read-only: show what the rating IS, not five slots waiting to be clicked --
+  // its whole stars and a half if it has one. An unrated video shows nothing at
+  // all, which is the caller's job to skip.
   const wrap = document.createElement('span');
-  wrap.className = 'stars' + (compact ? ' compact' : '') + (edit ? '' : ' stars-read');
-  // Read-only: show what the rating IS, not five slots waiting to be clicked.
-  // An unrated video shows nothing at all, which is the caller's job to skip.
-  const upto = edit ? RATING_MAX : current;
-  for (let n = 1; n <= upto; n += 1) {
-    const star = document.createElement(edit ? 'button' : 'span');
-    if (edit) star.type = 'button';
-    star.className = 'star' + (n <= current ? ' on' : '');
-    star.textContent = n <= current ? '★' : '☆';
-    if (!edit) { wrap.appendChild(star); continue; }
-    // Clicking the rating you already have clears it — otherwise there is no
-    // way back to unrated without a separate control.
-    star.title = n === current ? 'Clear rating' : `Rate ${n}`;
-    star.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      ev.preventDefault();
-      onPick(n === current ? 0 : n);
-    });
+  wrap.className = cls;
+  const r = Math.max(0, Math.min(RATING_MAX, Math.round(Number(current) || 0)));
+  for (let i = 1; i <= Math.ceil(r / 2); i += 1) {
+    const star = document.createElement('span');
+    star.className = 'star ' + (r >= i * 2 ? 'on' : 'half');
+    star.textContent = '\u2605';
     wrap.appendChild(star);
   }
+  wrap.title = `${starsNumber(r)} out of 5`;
   return wrap;
 }
 
@@ -6547,8 +6613,8 @@ function buildGroupHead(group) {
     const score = document.createElement('span');
     score.className = 'group-score';
     score.textContent = group.points.toLocaleString();
-    score.title = 'Points per video: 10★ 1000 · 9★ 750 · 8★ 500 · 7★ 250 · 6★ 100'
-      + ' · 5★ 75 · 4★ 50 · 3★ 25 · 2★ 10 · 1★ 5 — counting only what is in this listing.';
+    score.title = 'Points per video: 5★ 1000 · 4½★ 750 · 4★ 500 · 3½★ 250 · 3★ 100'
+      + ' · 2½★ 75 · 2★ 50 · 1½★ 25 · 1★ 10 · ½★ 5 — counting only what is in this listing.';
     head.appendChild(score);
   }
 
@@ -7411,8 +7477,8 @@ function updateSelectionBar() {
   const first = picked[0].rating || 0;
   const uniform = picked.every((f) => (f.rating || 0) === first);
   const holder = $('#batchStars');
-  holder.replaceChildren(...buildStars(uniform ? first : 0,
-    (rating) => editRecords(selectedPaths(), { rating })).childNodes);
+  holder.replaceChildren(buildStars(uniform ? first : 0,
+    (rating) => editRecords(selectedPaths(), { rating })));
 }
 
 /** All selected files, including any hidden by the current filter — so the
@@ -8161,9 +8227,9 @@ function onKeyDown(ev) {
   // the player is not what you are looking at, and rating one as you finish
   // watching it is the whole reason the shortcut is wanted here.
   if (playerHasKeys() && !isTyping() && !ev.ctrlKey && !ev.metaKey && !ev.altKey
-      && ev.key >= '0' && ev.key <= '9') {
+      && ratingDigit(ev) !== null) {
     ev.preventDefault();
-    if (state.playing) editRecords([state.playing.path], { rating: keyRating(ev.key, [state.playing]) });
+    if (state.playing) editRecords([state.playing.path], { rating: keyRating(ev, [state.playing]) });
     return;
   }
 
@@ -8196,9 +8262,9 @@ function onKeyDown(ev) {
   const paths = selectedPaths();
   if (!paths.length) return;
 
-  if (ev.key >= '0' && ev.key <= '9') {
+  if (ratingDigit(ev) !== null) {
     ev.preventDefault();
-    editRecords(paths, { rating: keyRating(ev.key, state.files.filter((f) => state.selected.has(f.path))) });
+    editRecords(paths, { rating: keyRating(ev, state.files.filter((f) => state.selected.has(f.path))) });
   } else if (ev.key === 't' || ev.key === 'T') {
     ev.preventDefault();
     openTagDialog(state.files.filter((f) => state.selected.has(f.path)));

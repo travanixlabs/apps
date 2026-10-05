@@ -1115,11 +1115,16 @@ a.qbtn:hover { color: #dbe6f0; }
 }
 .stars.compact .star { font-size: 13.5px; }
 .star.on { color: #f5b52b; }
-.star:hover { color: #f5b52b; transform: scale(1.15); }
-/* Hovering star 4 should preview 4 stars, so everything before it lights up
-   too — a plain :hover would only paint the one under the cursor. */
-.stars:hover .star { color: #f5b52b; }
-.stars .star:hover ~ .star { color: var(--text-faint); }
+.star:hover { transform: scale(1.15); }
+/* The hover preview is painted by the page (paintStarRow), half stars and
+   all, so there is no CSS lighting here to fight it. */
+/* Half a star: the filled glyph, gold on its left half only. */
+.star.half {
+  background: linear-gradient(90deg, #f5b52b 50%, var(--text-faint) 50%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
 
 /* On a card the rating is something to read, not somewhere to click: only the
    stars it actually has are drawn, and none of the hover behaviour applies. */
