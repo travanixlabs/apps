@@ -96,15 +96,28 @@ function ratingDigit(ev) {
   return m ? Number(m[1]) : null;
 }
 
+/** Shift, Alt or Ctrl held: the digit means that many stars and a half. */
+const halfHeld = (ev) => ev.shiftKey || ev.altKey || ev.ctrlKey;
+
 /**
- * A key as a rating: 1-5 are whole stars, Shift takes off a half (Shift+4 is
- * 3½), and 0 clears. Pressing the rating a video already has also clears it,
- * the way clicking its lit star does.
+ * Whether a key is a rating key at all. 0-5 alone, 0-4 with a modifier --
+ * there is no five and a half.
+ */
+function isRatingKey(ev) {
+  const digit = ratingDigit(ev);
+  if (digit === null || ev.metaKey) return false;
+  return !(halfHeld(ev) && digit === 5);
+}
+
+/**
+ * A key as a rating: the digit is the stars, and Shift, Alt or Ctrl adds a
+ * half -- Shift+3 is 3½, Shift+0 is ½. 0 alone clears. Pressing the rating a
+ * video already has also clears it, the way clicking its lit star does.
  */
 function keyRating(ev, files) {
   const digit = ratingDigit(ev);
-  if (!digit) return 0;
-  const want = digit * 2 - (ev.shiftKey ? 1 : 0);
+  const want = digit * 2 + (halfHeld(ev) ? 1 : 0);
+  if (!want) return 0;
   const all = files.length && files.every((f) => (Number(f.rating) || 0) === want);
   return all ? 0 : want;
 }
@@ -8235,8 +8248,7 @@ function onKeyDown(ev) {
   // Deliberately the open video and not the selection: what is selected behind
   // the player is not what you are looking at, and rating one as you finish
   // watching it is the whole reason the shortcut is wanted here.
-  if (playerHasKeys() && !isTyping() && !ev.ctrlKey && !ev.metaKey && !ev.altKey
-      && ratingDigit(ev) !== null) {
+  if (playerHasKeys() && !isTyping() && isRatingKey(ev)) {
     ev.preventDefault();
     if (state.playing) editRecords([state.playing.path], { rating: keyRating(ev, [state.playing]) });
     return;
@@ -8259,6 +8271,14 @@ function onKeyDown(ev) {
     return;
   }
 
+  // Rating keys come before the modifier bail-out below: a held Shift, Alt or
+  // Ctrl is what makes a half.
+  if (isRatingKey(ev) && selectedPaths().length) {
+    ev.preventDefault();
+    editRecords(selectedPaths(), { rating: keyRating(ev, state.files.filter((f) => state.selected.has(f.path))) });
+    return;
+  }
+
   if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
 
   if (ev.key === '/') {
@@ -8271,10 +8291,7 @@ function onKeyDown(ev) {
   const paths = selectedPaths();
   if (!paths.length) return;
 
-  if (ratingDigit(ev) !== null) {
-    ev.preventDefault();
-    editRecords(paths, { rating: keyRating(ev, state.files.filter((f) => state.selected.has(f.path))) });
-  } else if (ev.key === 't' || ev.key === 'T') {
+  if (ev.key === 't' || ev.key === 'T') {
     ev.preventDefault();
     openTagDialog(state.files.filter((f) => state.selected.has(f.path)));
   } else if (ev.key === 'Delete') {
