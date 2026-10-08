@@ -1553,6 +1553,9 @@ body.dragging .card { cursor: grabbing; }
 }
 .player-nav .qbtn:hover { background: #263040; border-color: #4b5a6b; }
 .player-nav .qbtn[hidden] { display: none; }
+/* Random and Repeat: quiet when off, lit in the accent when on. */
+.player-nav .mode-btn { display: grid; place-items: center; color: var(--text-faint); }
+.player-nav .mode-btn.on { color: var(--accent); border-color: var(--accent); }
 
 /* Duration, dimensions, codec, size, and where you are in the listing — all on
    demand. Reference material you want once, not text competing with the rating

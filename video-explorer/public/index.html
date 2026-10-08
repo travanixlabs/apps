@@ -320,6 +320,25 @@
       <div class="player-nav">
         <button id="playerPrev" class="qbtn" title="Previous video (←)" aria-label="Previous video">‹</button>
         <button id="playerNext" class="qbtn" title="Next video (→)" aria-label="Next video">›</button>
+        <button id="playerRandom" class="qbtn mode-btn" type="button" aria-pressed="false"
+                title="Random — next is any video in this listing not yet played">
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none"
+               stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1.5 4h2.2c1 0 1.6.5 2.2 1.3l4 5.4c.6.8 1.2 1.3 2.2 1.3h2.4"/>
+            <path d="M1.5 12h2.2c1 0 1.6-.5 2.2-1.3l.9-1.2"/>
+            <path d="M9 6.5l1-1.2C10.6 4.5 11.2 4 12.2 4h2.3"/>
+            <path d="M12.7 2.3L14.9 4l-2.2 1.7"/>
+            <path d="M12.7 10.3l2.2 1.7-2.2 1.7"/>
+          </svg>
+        </button>
+        <button id="playerRepeat" class="qbtn mode-btn" type="button" aria-pressed="false"
+                title="Repeat — at the end of the listing, start again">
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none"
+               stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 6.5v-.4A2.6 2.6 0 0 1 5.6 3.5h6.2M11.8 1.7l2 1.8-2 1.8"/>
+            <path d="M13 9.5v.4a2.6 2.6 0 0 1-2.6 2.6H4.2M4.2 14.3l-2-1.8 2-1.8"/>
+          </svg>
+        </button>
       </div>
       <div id="playerRecord" class="player-record"
            title="1–5 for stars; hold Shift, Alt or Ctrl to add a half (Shift+0 is ½); 0 clears"></div>

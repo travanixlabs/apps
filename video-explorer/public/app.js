@@ -4944,7 +4944,82 @@ function playerBack() {
   playSibling(-1);
 }
 
+// Random and Repeat, for this time the player is open. Both start off, and
+// closing the player turns them off again -- they are a way of watching, not a
+// setting. `seen` is what Random has played, in order, so back retraces it.
+const playMode = { random: false, repeat: false, seen: [], at: -1 };
+
+function resetPlayMode() {
+  playMode.random = false;
+  playMode.repeat = false;
+  playMode.seen = [];
+  playMode.at = -1;
+  syncPlayMode();
+}
+
+function syncPlayMode() {
+  for (const [id, on] of [['#playerRandom', playMode.random], ['#playerRepeat', playMode.repeat]]) {
+    const btn = $(id);
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-pressed', String(on));
+  }
+  syncPlayerNav();
+}
+
+function toggleRandom() {
+  playMode.random = !playMode.random;
+  // Starts from here: what is playing now is the first thing back would reach.
+  playMode.seen = playMode.random && state.playing ? [state.playing] : [];
+  playMode.at = playMode.seen.length - 1;
+  syncPlayMode();
+  toast(playMode.random ? 'Random on' : 'Random off', 'ok');
+}
+
+function toggleRepeat() {
+  playMode.repeat = !playMode.repeat;
+  syncPlayMode();
+  toast(playMode.repeat ? 'Repeat on' : 'Repeat off', 'ok');
+}
+
+/**
+ * Random's next: forward through what it already played if you went back,
+ * otherwise a video from the listing it has not played yet. When every one has
+ * played it stops -- or, with Repeat on, starts a fresh round.
+ */
+function randomStep(step) {
+  if (step < 0) {
+    if (playMode.at <= 0) return;
+    playMode.at -= 1;
+    playFile(playMode.seen[playMode.at]);
+    return;
+  }
+  if (playMode.at + 1 < playMode.seen.length) {
+    playMode.at += 1;
+    playFile(playMode.seen[playMode.at]);
+    return;
+  }
+  const files = [...new Map(visibleCards().map((c) => {
+    const f = state.grouped ? c.file : c;
+    return [f.path, f];
+  })).values()];
+  const current = state.playing && state.playing.path;
+  const played = new Set(playMode.seen.map((f) => f.path));
+  let pool = files.filter((f) => !played.has(f.path) && f.path !== current);
+  if (!pool.length) {
+    if (!playMode.repeat) { toast('Every video in this listing has played', 'ok'); return; }
+    playMode.seen = state.playing ? [state.playing] : [];
+    playMode.at = playMode.seen.length - 1;
+    pool = files.filter((f) => f.path !== current);
+    if (!pool.length) return;
+  }
+  const pick = pool[Math.floor(Math.random() * pool.length)];
+  playMode.seen.push(pick);
+  playMode.at = playMode.seen.length - 1;
+  playFile(pick);
+}
+
 function playSibling(step) {
+  if (playMode.random) { randomStep(step); return; }
   const list = visibleCards();
   if (!state.playing || !list.length) return;
   const at = playingAt();
@@ -4956,6 +5031,8 @@ function playSibling(step) {
     ? at + step
     : (state.playingAnchor === null ? null : state.playingAnchor + (step > 0 ? 0 : -1));
   if (target === null) return;
+  // Past either end of the listing: start again only with Repeat on.
+  if (!playMode.repeat && (target < 0 || target >= list.length)) return;
 
   const seq = ((target % list.length) + list.length) % list.length;
   const next = list[seq];
@@ -4968,8 +5045,14 @@ function syncPlayerNav() {
   const at = playingAt();
   const adrift = Boolean(at < 0 && state.playing && state.playingAnchor !== null && list.length);
   const usable = (at >= 0 && list.length > 1) || adrift;
-  $('#playerPrev').hidden = !usable;
-  $('#playerNext').hidden = !usable;
+  if (playMode.random) {
+    $('#playerPrev').hidden = playMode.at <= 0;
+    $('#playerNext').hidden = list.length < 2;
+  } else {
+    // Without Repeat the listing has ends, and an arrow off the end is gone.
+    $('#playerPrev').hidden = !usable || (!playMode.repeat && at === 0);
+    $('#playerNext').hidden = !usable || (!playMode.repeat && at === list.length - 1);
+  }
 
   // Reads as a sentence rather than "3 / 2112", since it now sits in the
   // details popup instead of beside the arrows.
@@ -6104,6 +6187,7 @@ function closePlayer() {
   state.playingAnchor = null;
   $('#playerModal').hidden = true;
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  resetPlayMode();
 }
 
 // ---------------------------------------------------------------- rendering
@@ -7568,6 +7652,8 @@ function wireEvents() {
   });
   $('#playerPrev').addEventListener('click', playerBack);
   $('#playerNext').addEventListener('click', () => playSibling(1));
+  $('#playerRandom').addEventListener('click', toggleRandom);
+  $('#playerRepeat').addEventListener('click', toggleRepeat);
 
   // ---- the control bar ----------------------------------------------------
 
