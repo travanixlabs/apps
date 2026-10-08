@@ -5082,7 +5082,7 @@ function syncPlayerNav() {
   }
 }
 
-/** Where you are in the listing, left of the title. Full window only (CSS). */
+/** Where you are in the listing, left of the title. */
 function setPlayerCount(text) {
   const el = $('#playerCount');
   el.textContent = text;
