@@ -7981,6 +7981,14 @@ function onKeyDown(ev) {
     if (watching()) { ev.preventDefault(); seekBy(step * 5); wakeBar(); return; }
   }
 
+  // Space on the frames is the click on the picture: play it from the top.
+  if (ev.key === ' ' && previewing() && playerHasKeys() && !isTyping()
+      && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+    ev.preventDefault();
+    beginPlayback();
+    return;
+  }
+
   // What the native bar answered for, now that it is ours to answer: space or K
   // to hold it, M for sound, F for the whole screen. Skipped when the focus is
   // on one of the bar's own buttons, where space is already that button.
