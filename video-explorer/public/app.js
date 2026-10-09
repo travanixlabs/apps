@@ -4916,9 +4916,9 @@ function playFile(file, seq = null) {
   player.volume = masterVolume();
   $('#playerModal').hidden = false;
   syncPlayerNav();
-  // Once you have asked for sound, opening a video means watching it.
-  if (soundOn) beginPlayback();
-  else startPlayerPreview();
+  // Every video opens on its frames, the next one included -- even straight
+  // after one that was playing. Clicking the picture is what starts it.
+  startPlayerPreview();
 }
 
 /**
@@ -5104,7 +5104,28 @@ function setPlayerCount(text) {
  * Nothing may play while it is 'strip' -- that is a playing video behind a
  * photograph, which is neither of the two things the stage is meant to show.
  */
-const preview = { timer: null, index: 0, count: 10, onMeta: null, onPlay: null, mode: null };
+const preview = { timer: null, index: 0, count: 10, onMeta: null, onPlay: null, mode: null, show: null };
+
+/** The slideshow's tick: the next frame every dwell. */
+function runPreviewTimer() {
+  preview.timer = setInterval(
+    () => preview.show && preview.show((preview.index + 1) % preview.count),
+    Number(state.config.dwellMs) || 2000,
+  );
+}
+
+/**
+ * Up/Down on the frames: one frame along, then held there five seconds before
+ * the slideshow carries on from it. The hold keeps `preview.timer` set, so the
+ * stage still counts as previewing throughout.
+ */
+function stepPreviewFrame(step) {
+  if (!previewing() || !preview.show) return;
+  clearInterval(preview.timer);
+  clearTimeout(preview.timer);
+  preview.show(((preview.index + step) % preview.count + preview.count) % preview.count);
+  preview.timer = setTimeout(runPreviewTimer, 5000);
+}
 
 /**
  * Whether the ten segments are still cycling.
@@ -5248,11 +5269,9 @@ async function startStripPreview(file) {
     $('#playerBadge').textContent = `${index + 1}/${entry.frames}`
       + (at > 0 ? ` · ${fmtDuration(at)}` : '');
   };
+  preview.show = show;
   show(0);
-  preview.timer = setInterval(
-    () => show((preview.index + 1) % entry.frames),
-    Number(state.config.dwellMs) || 2000,
-  );
+  runPreviewTimer();
   return true;
 }
 
@@ -5308,10 +5327,8 @@ function startPlayerPreview() {
 
   // The timer goes on first so that `previewing()` is already true by the time
   // either path below calls show() -- both are guarded on it.
-  preview.timer = setInterval(
-    () => show((preview.index + 1) % preview.count),
-    Number(state.config.dwellMs) || 2000,
-  );
+  preview.show = show;
+  runPreviewTimer();
 
   // A cloud file can take several seconds to report its duration, which is
   // easily long enough to click the picture first. Held so it can be taken off
@@ -5324,7 +5341,9 @@ function startPlayerPreview() {
 
 function stopPlayerPreview() {
   clearInterval(preview.timer);
+  clearTimeout(preview.timer);
   preview.timer = null;
+  preview.show = null;
   preview.mode = null;
   const player = $('#player');
   if (preview.onMeta) {
@@ -7941,23 +7960,25 @@ function onKeyDown(ev) {
     return;
   }
 
-  // Arrows step through the listing while the player is open. Once playback has
-  // started the bare arrows seek the video instead, as they always did when the
-  // browser owned the controls, so from then on stepping needs Shift.
+  // Arrows step through the listing while the player is open -- previewing or
+  // playing alike. Seeking is the timeline's, while it has the focus.
   // Not while typing, and not with a dialog open over the player: left and
   // right were moving the caret in the label box AND changing the video behind.
   if (!ev.ctrlKey && !ev.metaKey && playerHasKeys() && !isTyping()
       && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) {
-    if (previewing() || ev.shiftKey) {
-      ev.preventDefault();
-      playSibling(ev.key === 'ArrowLeft' ? -1 : 1);
-      return;
-    }
-    if (watching() && !isTyping()) {
-      ev.preventDefault();
-      seekBy(ev.key === 'ArrowLeft' ? -5 : 5);
-      return;
-    }
+    if (ev.target.closest && ev.target.closest('#pbSeek')) return;
+    ev.preventDefault();
+    playSibling(ev.key === 'ArrowLeft' ? -1 : 1);
+    return;
+  }
+  // Up and down move within the video: five seconds either way while it plays,
+  // a frame either way on the frames (held five seconds, then the slideshow
+  // carries on).
+  if (!ev.ctrlKey && !ev.metaKey && !ev.altKey && playerHasKeys() && !isTyping()
+      && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown')) {
+    const step = ev.key === 'ArrowUp' ? 1 : -1;
+    if (previewing()) { ev.preventDefault(); stepPreviewFrame(step); return; }
+    if (watching()) { ev.preventDefault(); seekBy(step * 5); wakeBar(); return; }
   }
 
   // What the native bar answered for, now that it is ours to answer: space or K
