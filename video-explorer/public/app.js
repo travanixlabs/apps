@@ -4815,6 +4815,40 @@ function releasePlayer() {
   player.load();
 }
 
+/**
+ * The video to show once `file` has gone from the listing: the next one along,
+ * or -- at the end, without Repeat -- the one before. Another copy of the same
+ * video (grouped views list one under each name) does not count.
+ */
+function afterRemoval(file) {
+  const list = visibleCards().map((c) => (state.grouped ? c.file : c));
+  const at = playingAt();
+  if (at < 0) return null;
+  const other = (f) => f && f.path !== file.path;
+  for (let i = at + 1; i < list.length; i += 1) if (other(list[i])) return list[i];
+  if (playMode.repeat) {
+    for (let i = 0; i < at; i += 1) if (other(list[i])) return list[i];
+  }
+  for (let i = at - 1; i >= 0; i -= 1) if (other(list[i])) return list[i];
+  return null;
+}
+
+/** After a delete in the player: on to the next video, or closed if none is left. */
+function moveOnFrom(file, after) {
+  if (playMode.random) {
+    // Random's history must not lead back to a file that is not there any more.
+    playMode.seen = playMode.seen.filter((f) => f.path !== file.path);
+    playMode.at = playMode.seen.length - 1;
+    const before = state.playing;
+    randomStep(1);
+    if (state.playing === before) closePlayer(); // every video in the round has played
+    return;
+  }
+  const still = after && state.files.find((f) => f.path === after.path);
+  if (still) playFile(still);
+  else closePlayer();
+}
+
 /** Re-attaches the stream after a cancelled or failed destructive action. */
 function reopenPlayer(file) {
   const player = $('#player');
@@ -6957,9 +6991,12 @@ function actionsFor(file, { card = null, inPlayer = false } = {}) {
       title: 'Delete (Recycle Bin)',
       danger: true,
       run: async () => {
+        // Chosen before the delete, while the listing still has this video in
+        // it to say where "next" is.
+        const after = inPlayer ? afterRemoval(file) : null;
         if (inPlayer) releasePlayer();
         const deleted = await confirmDelete([file.path]);
-        if (inPlayer && deleted) closePlayer();
+        if (inPlayer && deleted) moveOnFrom(file, after);
         else if (inPlayer) reopenPlayer(file);
       },
     },
