@@ -307,7 +307,31 @@ function pick(refusals, bands) {
       person: V.person[r],
       videos: C.countOf[topIdx[at + first]],
       runnerUp: C.names[topIdx[at + second]],
+      rank: 0,
     });
+    // And everyone else this face is like at the floor or above, so turning
+    // the winner down is not the only way to see who came next. `rank` says
+    // they did not win: only a winner is ever credited on its own.
+    const floor = Math.min(...bands.map((b) => b.score));
+    for (let i = first + 1; i < TOP_K; i += 1) {
+      const c = topIdx[at + i];
+      if (c < 0) break;
+      const also = C.names[c];
+      if (refused && refused.includes(also.toLowerCase())) continue;
+      const s = topScore[at + i];
+      if (s < floor) break;
+      if (list.some((x) => x.name === also)) continue;
+      list.push({
+        name: also,
+        score: Math.round(s * 1000) / 1000,
+        margin: Math.round((s - score) * 1000) / 1000,
+        band: 'faint',
+        person: V.person[r],
+        videos: C.countOf[c],
+        runnerUp: name,
+        rank: i,
+      });
+    }
   }
   for (const [owner, list] of perVideo) {
     // Strongest first, not biggest-group first.

@@ -643,7 +643,7 @@ function autoCredit(next, suggested) {
   const record = state.library.all()[next.key] || {};
   const have = new Set((record.models || []).map((n) => n.toLowerCase()));
   const refused = new Set(state.library.notModelsByKey(next.key));
-  const picks = suggested.filter((s) => s.score >= AUTO_CREDIT
+  const picks = suggested.filter((s) => s.score >= AUTO_CREDIT && !s.rank
     && !have.has(s.name.toLowerCase()) && !refused.has(s.name.toLowerCase()));
   if (!picks.length) return;
   try {
@@ -860,7 +860,24 @@ function scoreVideo(key, entry, into = state.suggestions) {
       person: personIndex,
       videos: ranked[0].videos,
       runnerUp: ranked[1].name,
+      rank: 0,
     });
+    // Everyone else at the floor or above, as the scorer thread does: shown,
+    // never credited on their own.
+    const floor = Math.min(...BANDS.map((b) => b.score));
+    for (let i = 1; i < ranked.length && ranked[i].score >= floor; i += 1) {
+      if (out.some((s) => s.name === ranked[i].name)) continue;
+      out.push({
+        name: ranked[i].name,
+        score: Math.round(ranked[i].score * 1000) / 1000,
+        margin: Math.round((ranked[i].score - ranked[0].score) * 1000) / 1000,
+        band: 'faint',
+        person: personIndex,
+        videos: ranked[i].videos,
+        runnerUp: ranked[0].name,
+        rank: i,
+      });
+    }
   }
   // Strongest first, not biggest-group first. On a correctly credited video the
   // name already on it should be the one at the top -- that is the shape of a
@@ -1120,7 +1137,7 @@ async function rescore(cast) {
  * The fingerprint covers exactly the three things a suggestion depends on: who
  * has an average, which videos built it, and which names have been turned down.
  */
-const SCORES_FORMAT = 3; // 3: the faint band
+const SCORES_FORMAT = 4; // 3: the faint band; 4: every name above it
 let scoredFor = '';
 let scoresTimer = null;
 
