@@ -2687,3 +2687,6 @@ body.dragging .card { cursor: grabbing; }
   background: var(--bg-elev);
 }
 .group-traits { gap: 4px 6px; }
+/* The picker's name above its choices, centred. */
+.group-head .group-race { flex-wrap: wrap; justify-content: center; padding: 3px 6px 4px; }
+.group-head .group-race-lead { flex-basis: 100%; text-align: center; margin: 0 0 2px; }
