@@ -1073,7 +1073,31 @@ function status() {
   };
 }
 
+/** Every fingerprinted key, with the name it was taken under, once loaded. */
+function knownKeys() {
+  return state.ready ? [...state.light].map(([key, row]) => [key, row.name || '']) : null;
+}
+
+/**
+ * Moves a fingerprint onto a new key -- the same video under a new modified
+ * time. Matching runs again so any set it belonged to is found under the new key.
+ */
+async function rekey(from, to) {
+  const row = state.light.get(from);
+  if (!row || state.light.has(to)) return false;
+  state.light.set(to, row);
+  state.light.delete(from);
+  forget(from);
+  const dir = path.join(state.dir, ENTRIES);
+  await fsp.rename(path.join(dir, fileNameFor(from)), path.join(dir, fileNameFor(to))).catch(() => {});
+  writeSnapshotSoon();
+  state.needsMatch = true;
+  return true;
+}
+
 module.exports = {
+  knownKeys,
+  rekey,
   init,
   members,
   prune,

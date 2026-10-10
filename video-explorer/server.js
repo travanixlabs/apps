@@ -1750,6 +1750,97 @@ async function embedTags(file) {
   return { rating: record.rating || 0, tags, size: after.size };
 }
 
+// ------------------------------------------------------------ carry-over
+
+/**
+ * The same video, back under a new modified time.
+ *
+ * Everything known about a video -- labels, face profile, fingerprint, preview
+ * frames -- is keyed by its size and modified time. A move between OneDrive
+ * accounts is a copy and a delete, and the copy can come back with a new
+ * modified time: to every store that is a brand-new video, and what was known
+ * about the old one is stranded.
+ *
+ * So, every so often: every key some store knows that no file on disk has any
+ * more ("gone"), against every file no store knows ("fresh"). Same size, to the
+ * byte, is the test -- and then the same file name, or failing that the only
+ * gone and the only fresh file of that size. Anything less certain is left
+ * alone. Every carry is written to .video-explorer/carried-over.jsonl.
+ */
+let carrying = false;
+
+async function carryOver({ dry = false } = {}) {
+  if (carrying) return { skipped: true };
+  const faceKeys = faces.knownKeys();
+  const printKeys = dupes.knownKeys();
+  // Not until both stores have loaded: a key they have not read yet looks fresh.
+  if (!faceKeys || !printKeys) return { skipped: true };
+  carrying = true;
+  try {
+    const present = new Map();
+    for (const root of collapseRoots([...config.roots, config.homeDir].filter(Boolean))) {
+      let videos = [];
+      try { videos = await collectVideos(root); } catch { continue; }
+      for (const v of videos) present.set(`${v.size}:${Math.round(v.mtimeMs)}`, v);
+    }
+    if (!present.size) return { moved: 0 };
+
+    const known = new Map(); // key -> the name it was last seen under, if any
+    for (const [key, record] of Object.entries(library.all())) known.set(key, record.name || '');
+    for (const [key, name] of printKeys) if (!known.get(key)) known.set(key, name);
+    for (const key of faceKeys) if (!known.has(key)) known.set(key, '');
+
+    const sizeOf = (key) => Number(key.split(':')[0]);
+    const gone = new Map();  // size -> [{ key, name }]
+    for (const [key, name] of known) {
+      if (present.has(key)) continue;
+      const size = sizeOf(key);
+      if (!gone.has(size)) gone.set(size, []);
+      gone.get(size).push({ key, name: String(name).toLowerCase() });
+    }
+    const fresh = new Map(); // size -> [video]
+    for (const [key, v] of present) {
+      if (known.has(key) || !gone.has(v.size)) continue;
+      if (!fresh.has(v.size)) fresh.set(v.size, []);
+      fresh.get(v.size).push(v);
+    }
+
+    const pairs = [];
+    for (const [size, newcomers] of fresh) {
+      const olds = gone.get(size).slice();
+      const left = [];
+      for (const v of newcomers) {
+        const at = olds.findIndex((o) => o.name && o.name === path.basename(v.path).toLowerCase());
+        if (at >= 0) pairs.push([olds.splice(at, 1)[0].key, v]);
+        else left.push(v);
+      }
+      if (left.length === 1 && olds.length === 1) pairs.push([olds[0].key, left[0]]);
+    }
+
+    if (dry) return { dry: true, pairs: pairs.map(([from, v]) => ({ from, file: v.path })) };
+    const lines = [];
+    for (const [from, v] of pairs) {
+      const oldStat = { size: v.size, mtimeMs: Number(from.split(':')[1]) };
+      const newStat = { size: v.size, mtimeMs: v.mtimeMs };
+      const to = `${v.size}:${Math.round(v.mtimeMs)}`;
+      const had = { labels: Boolean(library.all()[from]) };
+      library.rekey(oldStat, newStat, path.basename(v.path));
+      had.profile = await faces.rekey(from, to);
+      had.fingerprint = await dupes.rekey(from, to);
+      await migrateCache(v.path, oldStat, newStat);
+      lines.push(JSON.stringify({ when: new Date().toISOString(), from, to, file: v.path, ...had }));
+      log(`carried over ${path.basename(v.path)} (${from} -> ${to})`);
+    }
+    if (lines.length) {
+      await fsp.appendFile(path.join(ONEDRIVE_ROOT, '.video-explorer', 'carried-over.jsonl'),
+        lines.join('\n') + '\n').catch(() => {});
+    }
+    return { moved: pairs.length };
+  } finally {
+    carrying = false;
+  }
+}
+
 // ------------------------------------------------------------ file actions
 
 /** Windows Recycle Bin, so a misclick is always recoverable. */
@@ -2429,6 +2520,12 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { favourites, favouriteTiers: library.favouriteTiers() });
     }
 
+    // Run the carry-over now rather than waiting for its timer.
+    if (req.method === 'POST' && route === '/api/carry-over') {
+      const body = await readBody(req).catch(() => ({}));
+      return sendJson(res, 200, await carryOver({ dry: Boolean(body && body.dry) }));
+    }
+
     if (req.method === 'POST' && route === '/api/traits') {
       const body = await readBody(req);
       const { name, ...patch } = body;
@@ -2949,6 +3046,12 @@ async function loadCore(mark) {
   });
   framing.setEnabled(true);
   log('framing: sweeping (the pill pauses it)');
+
+  // A video that came back under a new modified time keeps what was known
+  // about it: shortly after launch, then every ten minutes.
+  const carry = () => carryOver().catch((err) => log(`carry-over: ${err.message}`));
+  setTimeout(carry, 90000).unref?.();
+  setInterval(carry, 10 * 60000).unref?.();
 
   try {
     metaIndex = JSON.parse((await fsp.readFile(META_FILE, 'utf8')).replace(/^﻿/, ''));

@@ -2130,7 +2130,43 @@ function status() {
   };
 }
 
+/** Every video key the face index knows, once it has finished loading. */
+function knownKeys() {
+  return state.loading ? null : Object.keys(state.index.videos);
+}
+
+/**
+ * Moves a profile onto a new key: the same video under a new modified time,
+ * which is what a move between OneDrive accounts produces. Its entry file and
+ * face thumbnails are renamed, and the averages are rebuilt since a credited
+ * video's key is part of one.
+ */
+async function rekey(from, to) {
+  const entry = state.index.videos[from];
+  if (!entry || state.index.videos[to]) return false;
+  state.index.videos[to] = entry;
+  delete state.index.videos[from];
+  const held = state.suggestions.get(from);
+  if (held) { state.suggestions.set(to, held); state.suggestions.delete(from); }
+  state.failures.delete(from);
+  state.snapshotDirty = true;
+  vectorsDirty = true;
+  const dir = path.join(state.dir, ENTRIES);
+  await fsp.rename(path.join(dir, `${fileNameFor(from)}.json`), path.join(dir, `${fileNameFor(to)}.json`))
+    .catch(() => writeEntry(to, entry));
+  for (let i = 0; i < (entry.people || []).length + 1; i += 1) {
+    await fsp.rename(
+      path.join(state.dir, 'thumbs', `${fileNameFor(from)}-${i}.png`),
+      path.join(state.dir, 'thumbs', `${fileNameFor(to)}-${i}.png`),
+    ).catch(() => {});
+  }
+  digestSoon();
+  rebuildLater();
+  return true;
+}
+
 module.exports = {
+  knownKeys, rekey,
   init, start, setEnabled, status, rootsChanged, count, decorate, writeDigest,
   rescoreOne,
   suggestionsFor, rankFor,
