@@ -1144,7 +1144,7 @@ function applyFilterSort() {
  * the sections by who is best *in that tag*.
  */
 // Points per rating, unrated to ten stars.
-const STAR_POINTS = [0, 5, 10, 25, 50, 75, 100, 250, 500, 750, 1000];
+const STAR_POINTS = [0, 50, 75, 100, 250, 500, 1000, 2500, 5000, 7500, 10000];
 
 /**
  * The current listing, split into one section per performer.
@@ -6603,8 +6603,8 @@ function buildGroupHead(group) {
     const score = document.createElement('span');
     score.className = 'group-score';
     score.textContent = group.points.toLocaleString();
-    score.title = 'Points per video: 5★ 1000 · 4.5★ 750 · 4★ 500 · 3.5★ 250 · 3★ 100'
-      + ' · 2.5★ 75 · 2★ 50 · 1.5★ 25 · 1★ 10 · 0.5★ 5 — counting only what is in this listing.';
+    score.title = 'Points per video: 5★ 10,000 · 4.5★ 7,500 · 4★ 5,000 · 3.5★ 2,500 · 3★ 1,000'
+      + ' · 2.5★ 500 · 2★ 250 · 1.5★ 100 · 1★ 75 · 0.5★ 50 — counting only what is in this listing.';
     head.appendChild(score);
   }
 
