@@ -1182,15 +1182,24 @@ const STAR_POINTS = [0, 50, 75, 100, 250, 500, 1000, 2500, 5000, 7500, 10000];
  * Favourites lead, then alphabetical. Ordering by how many videos each has would
  * move a section every time the filter changed.
  */
-function buildModelGroups(list) {
+/**
+ * Who the faces in a video look like: every suggestion at FACE_FLOOR or above,
+ * less the names turned down on that video.
+ */
+function suggestedNames(file) {
+  const refused = new Set((file.notModels || []).map((n) => String(n).toLowerCase()));
+  return (file.suggested || [])
+    .filter((s) => s.score >= FACE_FLOOR && !refused.has(String(s.name).toLowerCase()))
+    .map((s) => s.name);
+}
+
+function buildModelGroups(list, namesOf = (file) => file.models || [], emptyLabel = 'Nobody named') {
   const groups = new Map();
   const unnamed = [];
 
   for (const file of list) {
-    // Who is credited on it. This used to answer a second question as well --
-    // who the faces look like -- and that view is gone: with every suggestion
-    // at the floor now credited, it was showing the same sections as this one.
-    const names = (file.models || []).map((n) => String(n).trim()).filter(Boolean);
+    // Who is credited on it -- or, grouped by suggestion, who it looks like.
+    const names = namesOf(file).map((n) => String(n).trim()).filter(Boolean);
     if (!names.length) { unnamed.push(file); continue; }
     const rating = Math.max(0, Math.min(RATING_MAX, Math.round(Number(file.rating) || 0)));
     for (const name of names) {
@@ -1225,10 +1234,36 @@ function buildModelGroups(list) {
       name: '',
       files: unnamed,
       unnamed: true,
-      label: 'Nobody named',
+      label: emptyLabel,
     });
   }
   return out;
+}
+
+/**
+ * Every credited performer's standing in this listing: favourite tier first,
+ * then points -- the order the performer grouping puts its sections in. Used to
+ * order the names on a card in any grouped view.
+ */
+function rankModels(list) {
+  const points = new Map();
+  for (const file of list) {
+    const rating = Math.max(0, Math.min(RATING_MAX, Math.round(Number(file.rating) || 0)));
+    for (const name of file.models || []) {
+      const key = String(name).trim().toLowerCase();
+      points.set(key, (points.get(key) || 0) + STAR_POINTS[rating]);
+    }
+  }
+  state.modelPoints = points;
+}
+
+/** Names in tier-then-points order, the way the performer sections run. */
+function orderedModels(names) {
+  if (!state.grouped || !state.modelPoints) return names;
+  const at = (n) => String(n).trim().toLowerCase();
+  return [...names].sort((a, b) => (favouriteTier(a) || 4) - (favouriteTier(b) || 4)
+    || (state.modelPoints.get(at(b)) || 0) - (state.modelPoints.get(at(a)) || 0)
+    || String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
 }
 
 
@@ -1349,9 +1384,11 @@ function buildSlots() {
   const was = state.grouped && state.playing && state.playingCard !== null
     ? state.cards[state.playingCard] || null : null;
 
+  if (state.grouped) rankModels(state.view);
   state.groups = !state.grouped ? []
     : state.grouped === 'dupes' ? buildDupeGroups(withOtherCopies(state.view))
-      : buildModelGroups(state.view);
+      : state.grouped === 'suggested' ? buildModelGroups(state.view, suggestedNames, 'Nobody suggested')
+        : buildModelGroups(state.view);
   state.slots = [];
   state.cards = [];
   if (!state.grouped) { state.playingCard = null; return; }
@@ -3757,7 +3794,8 @@ function buildLabelChips(file, field, { add: withAdd = true, edit = true } = {})
   const chips = document.createElement('span');
   chips.className = 'chips';
 
-  for (const value of spec.values(file)) {
+  const values = field === 'models' ? orderedModels(spec.values(file)) : spec.values(file);
+  for (const value of values) {
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = spec.chip + (edit ? ' has-x' : '');
@@ -7411,7 +7449,7 @@ async function dropOnto(paths, destPath, copy, label) {
  * search and the sort all still apply, and every video in it is still there —
  * just once per person named in it.
  */
-const GROUP_MODES = ['', 'models', 'dupes'];
+const GROUP_MODES = ['', 'models', 'dupes', 'suggested'];
 
 // Sections folded away, by key. Every grouping starts with all of them open:
 // cleared when the grouping changes, and never saved.
@@ -7466,6 +7504,12 @@ async function toggleGrouped() {
       : 'No copies found in this listing', sets ? 'ok' : 'info');
     return;
   }
+  if (state.grouped === 'suggested') {
+    toast(named
+      ? `${named} suggested performer${named === 1 ? '' : 's'}, by favourite tier then points`
+      : 'Nobody suggested in this listing', named ? 'ok' : 'info');
+    return;
+  }
   toast(named
     ? `${named} performer${named === 1 ? '' : 's'}, best rated first`
       + (marked ? ` — ${marked} marked` : '')
@@ -7479,12 +7523,15 @@ function syncGroupButton() {
   // Two different groupings behind one button, so the state has to be
   // legible without pressing it: the heart changes colour as well as filling.
   btn.classList.toggle('by-dupes', state.grouped === 'dupes');
+  btn.classList.toggle('by-suggested', state.grouped === 'suggested');
   btn.title = {
     '': 'Ungrouped — click to group this listing by credited performer',
     models: 'Grouped by credited performer — click to group copies of the same '
       + 'video together',
     dupes: 'Grouped by duplicate — each section is one video and every copy of '
-      + 'it, side by side — click for the plain listing',
+      + 'it, side by side — click to group by suggested performer',
+    suggested: 'Grouped by suggested performer — who the faces look like, 20% and '
+      + 'up, less names turned down — click for the plain listing',
   }[state.grouped];
 }
 
