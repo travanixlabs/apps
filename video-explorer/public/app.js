@@ -70,7 +70,19 @@ const state = {
 const CHOICE_ROWS = [];
 
 /** Which radio group drives which facet's all/any. */
-const MODE_INPUTS = [['race', 'raceMode'], ['tags', 'tagMode'], ['models', 'modelMode']];
+const MODE_INPUTS = [
+  ['height', 'heightMode'], ['bust', 'bustMode'], ['body', 'bodyMode'], ['race', 'raceMode'],
+  ['favourites', 'favouritesMode'], ['tags', 'tagMode'], ['models', 'modelMode'],
+];
+
+/** The performer rows of the dialog: facet, host, and what its "none" chip says. */
+const PERSON_ROWS = [
+  ['height', '#advHeight', 'no height'],
+  ['bust', '#advBust', 'no bust'],
+  ['body', '#advBody', 'no body'],
+  ['race', '#advRace', 'no race'],
+  ['favourites', '#advFavourites', 'no favourite'],
+];
 
 /**
  * How the listing is set up, as opposed to how the app is configured. A refresh
@@ -225,7 +237,13 @@ function advActive(adv = state.adv) {
  * library when it counts a folder, so both sides answer "a favourite is in it"
  * the same way.
  */
-const filterCtx = () => ({ favSet: state.favSet, raceOf: state.raceOf });
+const filterCtx = () => ({
+  favSet: state.favSet, raceOf: state.raceOf,
+  traitsOf: state.traits || new Map(), favTiers: state.favTiers || new Map(),
+});
+
+/** Whether the filter in force asks about anything that belongs to a performer. */
+const personFiltered = () => PERSON_FIELDS.some((f) => state.adv[f] && state.adv[f].size);
 
 // ----------------------------------------------------------------- utilities
 
@@ -526,7 +544,9 @@ const folderCounts = { key: '', counts: null };
 /** The folder and filter a count would be for, or '' when nothing is filtered. */
 function folderCountKey() {
   if (!advActive()) return '';
-  const raced = state.adv.race && state.adv.race.size ? '\u0000r' + (state.raceVersion || 0) : '';
+  // A performer facet's answer changes when somebody is labelled, without the
+  // filter itself changing, so the labelling's version is part of the key.
+  const raced = personFiltered() ? '\u0000r' + (state.raceVersion || 0) : '';
   return state.dir + '\u0000' + JSON.stringify(packFilter(state.adv)) + raced;
 }
 
@@ -852,6 +872,7 @@ function setFavourites(list, tiers) {
   state.favourites = Array.isArray(list) ? list : [];
   state.favSet = new Set(state.favourites.map((n) => String(n).toLowerCase()));
   if (tiers && typeof tiers === 'object') state.favTiers = new Map(Object.entries(tiers));
+  state.raceVersion = (state.raceVersion || 0) + 1;
 }
 
 /** A favourite's tier, 1 (the most) to 3; 0 for somebody who is not one. */
@@ -870,6 +891,7 @@ const TRAITS = {
 
 function setTraits(map) {
   state.traits = new Map(Object.entries(map && typeof map === 'object' ? map : {}));
+  state.raceVersion = (state.raceVersion || 0) + 1;
 }
 
 const traitsOfName = (name) => (state.traits && state.traits.get(String(name || '').trim().toLowerCase())) || {};
@@ -887,6 +909,8 @@ async function setPerformerTraits(group, patch) {
     toast(err.message, 'err');
     return;
   }
+  // With a performer filter on, the listing itself may have changed.
+  if (personFiltered()) { render(); return; }
   for (const head of document.querySelectorAll('.group-head')) {
     if (head.dataset.group === group.key) head.replaceWith(buildGroupHead(group));
   }
@@ -919,7 +943,7 @@ async function setPerformerRace(group, race) {
     toast(err.message, 'err');
     return;
   }
-  if (state.adv.race && state.adv.race.size) { render(); return; }
+  if (personFiltered()) { render(); return; }
   for (const head of document.querySelectorAll('.group-head')) {
     if (head.dataset.group === group.key) head.replaceWith(buildGroupHead(group));
   }
@@ -1642,24 +1666,24 @@ function openAdvanced() {
 }
 
 /**
- * A race row: its four answers and "no race", the picked ones first as in the
- * long lists, each cycling include -> exclude -> off.
+ * A performer row -- height, bust, body, race, favourite tier: its answers and
+ * a "none" chip, in their own order, each cycling include -> exclude -> off.
  */
-function renderRaceRow(box, facet, redraw) {
+function renderPersonRow(box, values, facet, none, redraw) {
   if (!box) return;
   box.innerHTML = '';
-  const rank = (r) => (facet.get(r) === 'in' ? 0 : facet.get(r) === 'out' ? 1 : 2);
-  const order = RACES.map((r, i) => [r, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]);
-  for (const [race] of order) {
-    box.appendChild(chipCycle(race, facet.get(race), () => { cycleIn(facet, race); redraw(); }));
+  for (const value of values) {
+    box.appendChild(chipCycle(value, facet.get(value), () => { cycleIn(facet, value); redraw(); }));
   }
-  const gap = chipCycle('no race', facet.get(NOTHING), () => { cycleIn(facet, NOTHING); redraw(); });
+  const gap = chipCycle(none, facet.get(NOTHING), () => { cycleIn(facet, NOTHING); redraw(); });
   gap.classList.add('chip-none');
   box.appendChild(gap);
 }
 
 function renderAdvanced() {
-  renderRaceRow($('#advRace'), advDraft.race, () => renderAdvanced());
+  for (const [field, host, none] of PERSON_ROWS) {
+    renderPersonRow($(host), PERSON_FACETS[field], advDraft[field], none, () => renderAdvanced());
+  }
   // Rating, 0 standing for unrated — a facet in its own right, since "never
   // been looked at" is a thing you want to list.
   const ratings = $('#advRating');
@@ -1756,7 +1780,11 @@ function updateAdvMatch() {
     if (nothing === 'in') bits.push(`no ${many} at all`);
     if (nothing === 'out') bits.push(`some ${many}`);
   };
+  say('height', 'height', 'heights', ` (${advDraft.mode.height || 'all'})`);
+  say('bust', 'bust', 'busts', ` (${advDraft.mode.bust || 'all'})`);
+  say('body', 'body type', 'body types', ` (${advDraft.mode.body || 'all'})`);
   say('race', 'race', 'races', ` (${advDraft.mode.race || 'all'})`);
+  say('favourites', 'favourite tier', 'favourite tiers', ` (${advDraft.mode.favourites || 'all'})`);
   say('models', 'model', 'models', ` (${advDraft.mode.models})`);
   say('tags', 'tag', 'tags', ` (${advDraft.mode.tags})`);
   say('ratings', 'rating');

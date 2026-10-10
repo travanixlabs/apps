@@ -1528,6 +1528,8 @@ function describeVideo(video, dir) {
 function countUnderFolders(dir, videos, subs, adv) {
   const favSet = new Set(library.favouriteModels().map((n) => String(n).toLowerCase()));
   const raceOf = new Map(Object.entries(library.performerRaces()));
+  const traitsOf = new Map(Object.entries(library.performerTraits()));
+  const favTiers = new Map(Object.entries(library.favouriteTiers()));
   const counts = {};
   for (const sub of subs) counts[sub.path] = 0;
   for (const video of videos) {
@@ -1539,7 +1541,7 @@ function countUnderFolders(dir, videos, subs, adv) {
       if (lower.startsWith(sub.prefix)) { hit = sub; break; }
     }
     if (!hit) continue;
-    if (!filter.matchesAdvanced(filterView(video), adv, { favSet, raceOf })) continue;
+    if (!filter.matchesAdvanced(filterView(video), adv, { favSet, raceOf, traitsOf, favTiers })) continue;
     counts[hit.path] += 1;
   }
   return counts;
