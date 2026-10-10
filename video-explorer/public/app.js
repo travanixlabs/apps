@@ -2494,7 +2494,8 @@ function setCardWidth(px, { save = false } = {}) {
 /** The demo chip and its picker, from whatever is saved. */
 function syncFacetColours() {
   const held = (state.config || {}).facetColours || {};
-  for (const [facet, demo] of [['race', '#raceDemo'], ['models', '#modelsDemo']]) {
+  for (const [facet, demo] of [['race', '#raceDemo'], ['height', '#heightDemo'],
+    ['bust', '#bustDemo'], ['body', '#bodyDemo'], ['models', '#modelsDemo']]) {
     const id = '#colour' + facet[0].toUpperCase() + facet.slice(1);
     const input = $(id);
     const chip = $(demo);
@@ -3864,22 +3865,6 @@ function buildLabelChips(file, field, { add: withAdd = true, edit = true } = {})
   return chips;
 }
 
-function buildRaceChips(races) {
-  const chips = document.createElement('span');
-  chips.className = 'chips';
-  for (const race of races) {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'chip chip-race';
-    paintChip(chip, 'race', race);
-    chip.textContent = race;
-    chip.title = `Filter by ${race}`;
-    chip.addEventListener('click', (ev) => { ev.stopPropagation(); filterByLabel('race', race); });
-    chips.appendChild(chip);
-  }
-  return chips;
-}
-
 function buildRecordRow(file, { edit = true } = {}) {
   const row = document.createElement('div');
   row.className = 'record-row' + (edit ? '' : ' record-read');
@@ -3895,11 +3880,8 @@ function buildRecordRow(file, { edit = true } = {}) {
     ));
   }
 
-  // Race first: the performers' races, as you labelled them. Not editable
-  // here -- it belongs to a person, and is set on her section's heading.
-  // In the player only: on a tile it was one pill too many.
-  const races = edit ? racesOf(file, filterCtx()) : [];
-  if (races.length) row.appendChild(buildRaceChips(races));
+  // Race, height, bust and body are not shown here: they belong to a person and
+  // are set, seen and filtered from her section's heading and the filters.
   // Names show when there are names; nothing sits there inviting you to add one.
   if ((file.models || []).length) row.appendChild(buildLabelChips(file, 'models', { add: false, edit }));
   // With no add button and no tags there is nothing to draw, and an empty
@@ -6737,6 +6719,7 @@ function buildGroupHead(group) {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'group-race-opt' + (lit ? ' on' : '');
+        if (lit) paintChip(btn, field, value);
         btn.textContent = value;
         btn.title = lit ? `Take ${value} off ${group.name}` : `${group.name}: ${label.toLowerCase()} ${value}`;
         btn.addEventListener('click', (ev) => {
@@ -7843,7 +7826,7 @@ function wireEvents() {
     renderLabelList();
     $('#settingsModal').hidden = false;
   });
-  for (const facet of ['race', 'models']) {
+  for (const facet of ['race', 'height', 'bust', 'body', 'models']) {
     const id = '#colour' + facet[0].toUpperCase() + facet.slice(1);
     $(id).addEventListener('input', (ev) => setFacetColour(facet, ev.target.value));
   }

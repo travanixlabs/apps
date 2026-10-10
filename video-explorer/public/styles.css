@@ -1508,6 +1508,14 @@ body.dragging .card { cursor: grabbing; }
 .group-traits + .group-race { margin-left: 0; }
 .group-trait { margin-left: 0; }
 .group-trait .group-race-opt.on { border-color: #4f6f8c; background: #1c2630; color: #b4d2f0; }
+/* Height, bust and body as a settings swatch: the same blue as a lit choice. */
+.chip.chip-trait { border-color: #4f6f8c; background: #1c2630; color: #b4d2f0; }
+/* A lit heading choice wears the colour Settings gives its kind, as chips do. */
+.group-race-opt.on[style*="--chip-colour"] {
+  border-color: var(--chip-colour);
+  background: color-mix(in srgb, var(--chip-colour) 20%, transparent);
+  color: color-mix(in srgb, var(--chip-colour) 72%, white);
+}
 
 /* The favourite heart's tier, as a small figure beside it. */
 .group-fav.on { width: auto; min-width: 26px; padding: 0 5px; }
