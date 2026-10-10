@@ -77,7 +77,18 @@ const BANDS = [
   { band: 'strong', score: 0.55, margin: 0.15 },
   { band: 'likely', score: 0.45, margin: 0.10 },
   { band: 'maybe', score: 0.38, margin: 0.06 },
+  // Anything from a fifth up, whatever the margin: shown as a faint suggestion
+  // so a near miss is something you can click rather than nothing at all.
+  { band: 'faint', score: 0.20, margin: 0 },
 ];
+
+/**
+ * How alike a face must be for a freshly profiled video to be credited without
+ * asking. Only the winner of each ranking is considered, never a name turned
+ * down on that video, and only at the moment the video is first profiled --
+ * nothing already in the library is re-credited behind your back.
+ */
+const AUTO_CREDIT = 0.50;
 
 const state = {
   dir: '',
@@ -621,6 +632,37 @@ function rebuildSoon() {
 const SWEEP_REBUILD_MS = 5 * 60 * 1000;
 let sweepRebuildTimer = null;
 
+/**
+ * A newly profiled video: every name it suggests at AUTO_CREDIT or above goes
+ * onto it, unless it is already there or was turned down on this video. Each
+ * one is written to auto-credits.jsonl beside the face store, so what the
+ * recogniser named on its own can always be found and checked.
+ */
+function autoCredit(next, suggested) {
+  if (!state.library || !suggested || !suggested.length) return;
+  const record = state.library.all()[next.key] || {};
+  const have = new Set((record.models || []).map((n) => n.toLowerCase()));
+  const refused = new Set(state.library.notModelsByKey(next.key));
+  const picks = suggested.filter((s) => s.score >= AUTO_CREDIT
+    && !have.has(s.name.toLowerCase()) && !refused.has(s.name.toLowerCase()));
+  if (!picks.length) return;
+  try {
+    state.library.apply(next.stat, path.basename(next.file), {
+      addModels: picks.map((s) => s.name),
+    });
+  } catch (err) {
+    log(`could not credit ${path.basename(next.file)}: ${err.message}`);
+    return;
+  }
+  const when = new Date().toISOString();
+  const lines = picks.map((s) => JSON.stringify({
+    when, file: next.file, key: next.key, name: s.name, score: s.score, margin: s.margin,
+  })).join('\n') + '\n';
+  fsp.appendFile(path.join(state.dir, 'auto-credits.jsonl'), lines).catch(() => {});
+  log(`credited ${picks.map((s) => `${s.name} (${Math.round(s.score * 100)}%)`).join(', ')}`
+    + ` on ${path.basename(next.file)}`);
+}
+
 function rebuildLater() {
   if (sweepRebuildTimer) return;
   sweepRebuildTimer = setTimeout(() => { sweepRebuildTimer = null; rebuildInBackground(); }, SWEEP_REBUILD_MS);
@@ -1078,7 +1120,7 @@ async function rescore(cast) {
  * The fingerprint covers exactly the three things a suggestion depends on: who
  * has an average, which videos built it, and which names have been turned down.
  */
-const SCORES_FORMAT = 2;
+const SCORES_FORMAT = 3; // 3: the faint band
 let scoredFor = '';
 let scoresTimer = null;
 
@@ -1944,8 +1986,9 @@ async function worker() {
           // unnamed video moves nothing but its own, so it is scored alone --
           // the difference between a few microseconds and a full sweep of the
           // library, several thousand times over.
+          const out = scoreVideo(next.key, entry);
+          autoCredit(next, out);
           const record = (state.library ? state.library.all() : {})[next.key];
-          scoreVideo(next.key, entry);
           if (record && (record.models || []).length === 1) rebuildLater();
         }
       } catch {

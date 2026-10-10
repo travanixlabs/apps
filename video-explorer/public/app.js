@@ -1986,6 +1986,7 @@ const BAND_LABEL = {
   strong: 'strong match',
   likely: 'likely',
   maybe: 'possible',
+  faint: 'faint',
   near: 'below the bar',
 };
 
@@ -2902,10 +2903,8 @@ async function explainNothing(host, file) {
   host.replaceChildren();
   if (!info.profiled || !info.people) return;
 
-  // Nothing under half is offered. The bands themselves go down to 0.38, which
-  // was defensible when the answer was a name in a line of text; a picture
-  // invites a click, and a 40% face is not worth inviting one on. The row
-  // below draws its line in the same place.
+  // Nothing under a fifth is offered -- FACE_FLOOR, the same line the
+  // suggestion row draws.
   const near = uncredited(file, (info.near || []).filter((n) => n.score >= FACE_FLOOR));
   if (!near.length) return;
 

@@ -2194,6 +2194,7 @@ body.dragging .card { cursor: grabbing; }
 .face-chip.band-strong { border-color: #3f7d5c; background: #16281f; color: #b6e8ca; }
 .face-chip.band-strong:hover { border-color: #57a97b; }
 .face-chip.band-maybe { border-style: dashed; opacity: 0.85; }
+.face-chip.band-faint { border-style: dotted; opacity: 0.7; }
 
 /* Already credited: the face agrees with the name, so there is nothing to do
    and the chip stops offering. */
