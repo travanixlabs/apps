@@ -714,7 +714,7 @@ function setPerformerRace(name, race) {
 const TRAITS = {
   height: ['Tall', 'Average', 'Small'],
   bust: ['Massive', 'Big', 'Average', 'Small'],
-  body: ['Curvy', 'Muscular', 'Athletic', 'Average', 'Petite', 'Toned'],
+  body: ['Muscular', 'Athletic', 'Toned', 'Curvy', 'Average', 'Petite'],
 };
 
 function performerTraits() {
