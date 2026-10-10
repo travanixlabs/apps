@@ -7446,7 +7446,7 @@ async function dropOnto(paths, destPath, copy, label) {
  * search and the sort all still apply, and every video in it is still there —
  * just once per person named in it.
  */
-const GROUP_MODES = ['', 'models', 'dupes', 'suggested'];
+const GROUP_MODES = ['', 'models', 'suggested', 'dupes'];
 
 // Sections folded away, by key. Every grouping starts with all of them open:
 // cleared when the grouping changes, and never saved.
@@ -7490,7 +7490,7 @@ function syncGroupsFold() {
 }
 
 async function toggleGrouped() {
-  // Off, credited, duplicates, off. The plain listing is never more than one
+  // Off, credited, suggested, duplicates, off. The plain listing is never more than one
   // more press away, whichever grouping you are in.
   state.grouped = GROUP_MODES[(GROUP_MODES.indexOf(state.grouped) + 1) % GROUP_MODES.length];
   foldedGroups.clear();
@@ -7534,12 +7534,11 @@ function syncGroupButton() {
   btn.classList.toggle('by-suggested', state.grouped === 'suggested');
   btn.title = {
     '': 'Ungrouped — click to group this listing by credited performer',
-    models: 'Grouped by credited performer — click to group copies of the same '
-      + 'video together',
-    dupes: 'Grouped by duplicate — each section is one video and every copy of '
-      + 'it, side by side — click to group by suggested performer',
+    models: 'Grouped by credited performer — click to group by suggested performer',
     suggested: 'Grouped by suggested performer — who the faces look like, 20% and '
-      + 'up, less names turned down — click for the plain listing',
+      + 'up, less names turned down — click to group copies of the same video together',
+    dupes: 'Grouped by duplicate — each section is one video and every copy of '
+      + 'it, side by side — click for the plain listing',
   }[state.grouped];
 }
 
