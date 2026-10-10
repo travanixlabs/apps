@@ -2854,6 +2854,27 @@ async function buildPlayerSuggestions(file) {
   if (!state.playing || state.playing.path !== file.path) return;
   host.replaceChildren();
 
+  // Every name shown here turned down in one go -- for a video whose performer
+  // is already credited, where the rest are only lookalikes. Credits stay.
+  const dismiss = document.createElement('button');
+  dismiss.type = 'button';
+  dismiss.className = 'suggest-none';
+  dismiss.textContent = 'None of these are the performer';
+  dismiss.title = `Turn down all ${suggested.length} suggested here; anyone credited stays credited`;
+  dismiss.addEventListener('click', async (ev) => {
+    ev.stopPropagation();
+    dismiss.disabled = true;
+    await editRecords([current.path], { addNotModels: suggested.map((s) => s.name) });
+    toast(`${suggested.length} suggestion${suggested.length === 1 ? '' : 's'} turned down`, 'ok');
+    if (state.playing) buildPlayerSuggestions(state.playing);
+    else host.replaceChildren();
+  });
+  // Its own line, above the tiles.
+  const top = document.createElement('div');
+  top.className = 'suggest-none-row';
+  top.appendChild(dismiss);
+  host.appendChild(top);
+
   const row = document.createElement('div');
   row.className = 'similar-row';
   host.appendChild(row);

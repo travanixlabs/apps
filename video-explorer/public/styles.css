@@ -1040,6 +1040,19 @@ a.qbtn:hover { color: #dbe6f0; }
   color: var(--text-dim); cursor: pointer;
 }
 .groups-only[hidden] { display: none; }
+
+/* Above the player's suggestion tiles: turn every one of them down. */
+/* The strip wraps so this sits on a line of its own above the tiles. */
+.player-suggest:has(.suggest-none-row) { flex-wrap: wrap; }
+.suggest-none-row { flex: 0 0 100%; }
+.suggest-none {
+  display: block; margin: 0;
+  font: inherit; font-size: 12px; cursor: pointer;
+  padding: 3px 10px; border-radius: 999px;
+  border: 1px solid #6a2d2d; background: transparent; color: #f08a8a;
+}
+.suggest-none:hover { background: rgba(240, 138, 138, .1); }
+.suggest-none:disabled { opacity: .5; cursor: default; }
 .group-name { font-size: 15px; font-weight: 600; }
 .group-count { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
 /* How much of this performer the face index has read. Quieter than the video
