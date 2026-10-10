@@ -848,9 +848,48 @@ function parseQuery(query) {
 const isFavouriteModel = (name) => state.favSet.has(String(name || '').trim().toLowerCase());
 
 /** Keeps the lower-cased lookup set in step with the list the server sent. */
-function setFavourites(list) {
+function setFavourites(list, tiers) {
   state.favourites = Array.isArray(list) ? list : [];
   state.favSet = new Set(state.favourites.map((n) => String(n).toLowerCase()));
+  if (tiers && typeof tiers === 'object') state.favTiers = new Map(Object.entries(tiers));
+}
+
+/** A favourite's tier, 1 (the most) to 3; 0 for somebody who is not one. */
+function favouriteTier(name) {
+  const key = String(name || '').trim().toLowerCase();
+  if (!state.favSet.has(key)) return 0;
+  return (state.favTiers && state.favTiers.get(key)) || 3;
+}
+
+/** Height, bust and body, per performer, as the server holds them. */
+const TRAITS = {
+  height: ['Tall', 'Average', 'Small'],
+  bust: ['Massive', 'Big', 'Average', 'Small'],
+  body: ['Curvy', 'Muscular', 'Athletic', 'Average', 'Petite', 'Toned'],
+};
+
+function setTraits(map) {
+  state.traits = new Map(Object.entries(map && typeof map === 'object' ? map : {}));
+}
+
+const traitsOfName = (name) => (state.traits && state.traits.get(String(name || '').trim().toLowerCase())) || {};
+
+/** Sets some of a performer's traits and repaints her heading. */
+async function setPerformerTraits(group, patch) {
+  try {
+    const out = await api('/api/traits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: group.name, ...patch }),
+    });
+    setTraits(out.traits);
+  } catch (err) {
+    toast(err.message, 'err');
+    return;
+  }
+  for (const head of document.querySelectorAll('.group-head')) {
+    if (head.dataset.group === group.key) head.replaceWith(buildGroupHead(group));
+  }
 }
 
 /** The performers' races as the server holds them. */
@@ -888,23 +927,107 @@ async function setPerformerRace(group, race) {
 }
 
 /**
- * Marks or unmarks one performer. The server owns the list, so its answer is
- * what the app then believes — two windows can be open on one library.
+ * Places one performer in a favourite tier, or (tier 0) takes her off the
+ * list. The server owns the list, so its answer is what the app then believes
+ * -- two windows can be open on one library.
  */
-async function toggleFavouriteModel(name) {
-  const on = !isFavouriteModel(name);
+async function setFavouriteTier(name, tier) {
   try {
     const data = await api('/api/favourites', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, on }),
+      body: JSON.stringify({ name, on: tier > 0, tier }),
     });
-    setFavourites(data.favourites);
+    setFavourites(data.favourites, data.favouriteTiers);
   } catch (err) {
     toast(err.message, 'err');
-    return isFavouriteModel(name);
+    return false;
   }
-  return on;
+  return true;
+}
+
+/**
+ * The heart's popup: Tier 1, 2 or 3, and -- for a favourite already -- Remove.
+ * Clicking outside it, or Escape, discards it with nothing changed.
+ */
+function openFavouritePopup(anchor, name) {
+  closeFavouritePopup();
+  const now = favouriteTier(name);
+  const pop = document.createElement('div');
+  pop.className = 'fav-pop';
+  pop.setAttribute('role', 'dialog');
+  const title = document.createElement('div');
+  title.className = 'fav-pop-title';
+  title.textContent = now ? `${name} — tier ${now}` : `Favourite ${name}`;
+  pop.appendChild(title);
+  const choose = async (tier) => {
+    closeFavouritePopup();
+    if (tier === now) return;
+    if (!(await setFavouriteTier(name, tier))) return;
+    toast(tier ? `${name}: favourite, tier ${tier}` : `${name} is no longer a favourite`, 'ok');
+    // Favourites lead the sections, by tier, so the page is rebuilt to put this
+    // one where it now belongs rather than just recolouring the heart.
+    render();
+  };
+  const row = document.createElement('div');
+  row.className = 'fav-pop-tiers';
+  for (const tier of [1, 2, 3]) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'fav-pop-tier' + (tier === now ? ' on' : '');
+    btn.textContent = `Tier ${tier}`;
+    btn.addEventListener('click', (ev) => { ev.stopPropagation(); choose(tier); });
+    row.appendChild(btn);
+  }
+  pop.appendChild(row);
+  const foot = document.createElement('div');
+  foot.className = 'fav-pop-foot';
+  if (now) {
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'fav-pop-remove';
+    remove.textContent = 'Remove favourite';
+    remove.addEventListener('click', (ev) => { ev.stopPropagation(); choose(0); });
+    foot.appendChild(remove);
+  }
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'fav-pop-cancel';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', (ev) => { ev.stopPropagation(); closeFavouritePopup(); });
+  foot.appendChild(cancel);
+  pop.appendChild(foot);
+  pop.addEventListener('click', (ev) => ev.stopPropagation());
+  document.body.appendChild(pop);
+
+  const box = anchor.getBoundingClientRect();
+  const width = pop.offsetWidth;
+  pop.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, box.left))}px`;
+  pop.style.top = `${box.bottom + 6}px`;
+
+  favPop.el = pop;
+  favPop.away = (ev) => { if (!pop.contains(ev.target)) closeFavouritePopup(); };
+  favPop.key = (ev) => {
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeFavouritePopup(); }
+  };
+  // Next tick, or the click that opened it would close it on the way up.
+  setTimeout(() => {
+    if (favPop.el !== pop) return;
+    document.addEventListener('mousedown', favPop.away, true);
+    document.addEventListener('keydown', favPop.key, true);
+    window.addEventListener('scroll', closeFavouritePopup, { capture: true, once: true });
+  }, 0);
+}
+
+const favPop = { el: null, away: null, key: null };
+
+function closeFavouritePopup() {
+  if (!favPop.el) return;
+  favPop.el.remove();
+  favPop.el = null;
+  document.removeEventListener('mousedown', favPop.away, true);
+  document.removeEventListener('keydown', favPop.key, true);
+  window.removeEventListener('scroll', closeFavouritePopup, { capture: true });
 }
 
 function matchesQuery(file, terms) {
@@ -1060,10 +1183,11 @@ function buildModelGroups(list) {
   }
 
   const out = [...groups.values()].sort((a, b) => {
-    const fa = isFavouriteModel(a.name) ? 0 : 1;
-    const fb = isFavouriteModel(b.name) ? 0 : 1;
-    // Marked first — that is what makes this a favourites view rather than a
-    // leaderboard — then Top performers order among the rest. Ties go to whoever
+    const fa = favouriteTier(a.name) || 4;
+    const fb = favouriteTier(b.name) || 4;
+    // Marked first, tier 1 ahead of 2 ahead of 3 — that is what makes this a
+    // favourites view rather than a leaderboard — then Top performers order
+    // within each tier and among the rest. Ties go to whoever
     // has more well-rated videos, since ten fours and one five score alike, and
     // a name settles the rest so the order never wobbles between renders.
     return fa - fb
@@ -6448,22 +6572,24 @@ function buildGroupHead(group) {
   head.appendChild(fold);
 
   if (!group.unnamed && !group.dupe) {
-    const marked = isFavouriteModel(group.name);
+    const tier = favouriteTier(group.name);
     const heart = document.createElement('button');
     heart.type = 'button';
-    heart.className = 'group-fav' + (marked ? ' on' : '');
-    heart.textContent = marked ? '\u2665' : '\u2661';
-    heart.title = marked
-      ? `${group.name} is a favourite — click to unmark`
+    heart.className = 'group-fav' + (tier ? ` on tier-${tier}` : '');
+    heart.textContent = tier ? '\u2665' : '\u2661';
+    if (tier) {
+      const badge = document.createElement('span');
+      badge.className = 'group-fav-tier';
+      badge.textContent = String(tier);
+      heart.appendChild(badge);
+    }
+    heart.title = tier
+      ? `${group.name} is a tier ${tier} favourite — click to change or remove`
       : `Mark ${group.name} a favourite`;
     heart.setAttribute('aria-label', heart.title);
-    heart.addEventListener('click', async (ev) => {
+    heart.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      const on = await toggleFavouriteModel(group.name);
-      toast(on ? `${group.name} marked a favourite` : `${group.name} unmarked`, 'ok');
-      // Favourites lead the sections, so the page is rebuilt to put this one
-      // where it now belongs rather than just recolouring the heart.
-      render();
+      openFavouritePopup(heart, group.name);
     });
     head.appendChild(heart);
   }
@@ -6526,6 +6652,44 @@ function buildGroupHead(group) {
     head.appendChild(not);
   }
 
+  // Height, bust, body and race, as you label them: small choices, the current
+  // ones lit. Clicking a lit one takes it off again. Body can hold several.
+  if (!group.unnamed && !group.dupe) {
+    const traits = document.createElement('span');
+    traits.className = 'group-traits';
+    const held = traitsOfName(group.name);
+    const picker = (label, field, multi) => {
+      const box = document.createElement('span');
+      box.className = 'group-race group-trait';
+      const lead = document.createElement('span');
+      lead.className = 'group-race-lead';
+      lead.textContent = label;
+      box.appendChild(lead);
+      const current = multi ? (held[field] || []) : (held[field] ? [held[field]] : []);
+      for (const value of TRAITS[field]) {
+        const lit = current.includes(value);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'group-race-opt' + (lit ? ' on' : '');
+        btn.textContent = value;
+        btn.title = lit ? `Take ${value} off ${group.name}` : `${group.name}: ${label.toLowerCase()} ${value}`;
+        btn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          const next = multi
+            ? (lit ? current.filter((v) => v !== value) : [...current, value])
+            : (lit ? '' : value);
+          setPerformerTraits(group, { [field]: next });
+        });
+        box.appendChild(btn);
+      }
+      traits.appendChild(box);
+    };
+    picker('Height', 'height', false);
+    picker('Bust', 'bust', false);
+    picker('Body', 'body', true);
+    head.appendChild(traits);
+  }
+
   // Her race, as you label it: four small choices, the current one lit.
   // Clicking the lit one takes it off again.
   if (!group.unnamed && !group.dupe) {
@@ -6572,8 +6736,9 @@ async function notAPerformer(name) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     state.modelVocab = data.models || state.modelVocab;
-    setFavourites(data.favourites);
+    setFavourites(data.favourites, data.favouriteTiers);
     setRaces(data.races);
+    setTraits(data.traits);
     syncTagVocab();
     // The listing in hand still credits the name on every one of them.
     await relistQuietly();
@@ -8234,8 +8399,9 @@ async function init() {
     // Both vocabularies, or the dialog's Models section sits empty until an edit
     // happens to bring the second one back with its response.
     state.modelVocab = data.models || [];
-    setFavourites(data.favourites);
+    setFavourites(data.favourites, data.favouriteTiers);
     setRaces(data.races);
+    setTraits(data.traits);
     // The cards already drawn were drawn before anyone's race was known.
     if (state.raceOf.size) render();
     syncTagVocab();

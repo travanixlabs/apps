@@ -640,8 +640,28 @@ function isFavouriteModel(name) {
   return !!key && (data.favourites || []).some((m) => String(m).toLowerCase() === key);
 }
 
-/** Marks or unmarks one performer, and returns the whole list as it now stands. */
-function setFavouriteModel(name, on) {
+/**
+ * How much of a favourite each one is: lower-cased name -> 1, 2 or 3, tier 1
+ * the most. Only for names on the list, and a favourite with no tier recorded
+ * -- every one marked before tiers existed, or marked on the phone -- is a 3.
+ */
+const TIERS = [1, 2, 3];
+
+function favouriteTiers() {
+  const held = data.favouriteTiers || {};
+  const out = {};
+  for (const name of data.favourites || []) {
+    const key = String(name).toLowerCase();
+    out[key] = TIERS.includes(held[key]) ? held[key] : 3;
+  }
+  return out;
+}
+
+/**
+ * Marks or unmarks one performer, and returns the whole list as it now stands.
+ * `tier` places a favourite; left out, a favourite keeps the tier it had.
+ */
+function setFavouriteModel(name, on, tier) {
   refuseIfReadOnly();
   const clean = String(name || '').trim().replace(/\s+/g, ' ').slice(0, 120);
   if (!clean) return favouriteModels();
@@ -652,6 +672,10 @@ function setFavouriteModel(name, on) {
   if (on) list.push(clean);
   list.sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: 'base' }));
   data.favourites = list;
+  const tiers = { ...(data.favouriteTiers || {}) };
+  if (on && TIERS.includes(Number(tier))) tiers[key] = Number(tier);
+  else if (!on) delete tiers[key];
+  data.favouriteTiers = tiers;
   save();
   return list.slice();
 }
@@ -682,6 +706,46 @@ function setPerformerRace(name, race) {
   return performerRaces();
 }
 
+/**
+ * Height, bust and body, per performer: lower-cased name -> { height, bust,
+ * body: [] }. Beside the races and for the same reason -- a person, not a file.
+ * Height and bust are one answer each; body can be several.
+ */
+const TRAITS = {
+  height: ['Tall', 'Average', 'Small'],
+  bust: ['Massive', 'Big', 'Average', 'Small'],
+  body: ['Curvy', 'Muscular', 'Athletic', 'Average', 'Petite', 'Toned'],
+};
+
+function performerTraits() {
+  return JSON.parse(JSON.stringify(data.traits || {}));
+}
+
+/** Sets the fields named in `patch` (blank or empty clears one); returns the whole map. */
+function setPerformerTraits(name, patch) {
+  refuseIfReadOnly();
+  const key = String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  if (!key || !patch) return performerTraits();
+  const traits = { ...(data.traits || {}) };
+  const now = { ...(traits[key] || {}) };
+  for (const field of ['height', 'bust']) {
+    if (patch[field] === undefined) continue;
+    if (TRAITS[field].includes(patch[field])) now[field] = patch[field];
+    else delete now[field];
+  }
+  if (patch.body !== undefined) {
+    const want = new Set(Array.isArray(patch.body) ? patch.body : []);
+    const body = TRAITS.body.filter((b) => want.has(b));
+    if (body.length) now.body = body;
+    else delete now.body;
+  }
+  if (Object.keys(now).length) traits[key] = now;
+  else delete traits[key];
+  data.traits = traits;
+  save();
+  return performerTraits();
+}
+
 function stats() {
   const records = Object.values(data.records);
   return {
@@ -703,6 +767,6 @@ module.exports = {
   notModelsByKey,
   counts, tagCounts, modelCounts, studioCounts, productionCounts, stats, normaliseTags,
   renameTag, removeTagEverywhere,
-  favouriteModels, isFavouriteModel, setFavouriteModel,
-  performerRaces, setPerformerRace,
+  favouriteModels, isFavouriteModel, setFavouriteModel, favouriteTiers,
+  performerRaces, setPerformerRace, performerTraits, setPerformerTraits,
 };

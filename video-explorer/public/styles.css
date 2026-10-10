@@ -1501,6 +1501,35 @@ body.dragging .card { cursor: grabbing; }
 }
 .group-race-opt:hover { color: var(--text); border-color: var(--border-strong); }
 .group-race-opt.on { border-color: #6a4f8c; background: #241c30; color: #cfb4f0; }
+/* Height, bust and body sit at the right end, race after them; the heading
+   wraps onto a second line rather than squeezing the name. */
+.group-head { flex-wrap: wrap; row-gap: 4px; }
+.group-traits { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-left: auto; }
+.group-traits + .group-race { margin-left: 0; }
+.group-trait { margin-left: 0; }
+.group-trait .group-race-opt.on { border-color: #4f6f8c; background: #1c2630; color: #b4d2f0; }
+
+/* The favourite heart's tier, as a small figure beside it. */
+.group-fav.on { width: auto; min-width: 26px; padding: 0 5px; }
+.group-fav-tier { font-size: 10px; font-weight: 700; margin-left: 1px; vertical-align: super; }
+
+/* The favourite popup: three tiers, then remove / cancel. */
+.fav-pop {
+  position: fixed; z-index: 1000; min-width: 200px;
+  padding: 10px; border-radius: 8px;
+  border: 1px solid var(--border-strong); background: var(--bg-elev);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.fav-pop-title { font-size: 12px; color: var(--text-faint); margin-bottom: 8px; }
+.fav-pop-tiers { display: flex; gap: 6px; }
+.fav-pop-tier, .fav-pop-remove, .fav-pop-cancel {
+  font: inherit; font-size: 12px; cursor: pointer; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: transparent; color: var(--text);
+}
+.fav-pop-tier:hover, .fav-pop-cancel:hover { border-color: var(--border-strong); }
+.fav-pop-tier.on { border-color: #b0465f; background: #3a1820; color: #f3b6c4; }
+.fav-pop-foot { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
+.fav-pop-remove { color: #f08a8a; border-color: #6a2d2d; margin-right: auto; }
 .label-picked[hidden] { display: none; }
 .label-picked .chip.has-x { font-size: 12px; padding: 2px 8px; max-width: none; }
 .label-picked .chip-x { background: none; border: none; color: inherit; cursor: pointer;

@@ -2278,7 +2278,9 @@ const server = http.createServer(async (req, res) => {
           studios: library.studioCounts(),
           productions: library.productionCounts(),
           favourites: library.favouriteModels(),
+          favouriteTiers: library.favouriteTiers(),
           races: library.performerRaces(),
+          traits: library.performerTraits(),
           stats: library.stats(),
         });
       }
@@ -2394,6 +2396,7 @@ const server = http.createServer(async (req, res) => {
       const { changed } = library.removeTagEverywhere(name, 'models');
       if (library.isFavouriteModel(name)) library.setFavouriteModel(name, false);
       const races = library.setPerformerRace(name, '');
+      const traits = library.setPerformerTraits(name, { height: '', bust: '', body: [] });
       try {
         const file = path.join(ONEDRIVE_ROOT, '.video-explorer', 'not-model-names.json');
         const held = loadJsonSync(file, null) || { names: [] };
@@ -2406,7 +2409,10 @@ const server = http.createServer(async (req, res) => {
       } catch (err) {
         log(`not-a-performer: could not note "${name}" for the suggester: ${err.message}`);
       }
-      return sendJson(res, 200, { changed, races, models: library.modelCounts(), favourites: library.favouriteModels() });
+      return sendJson(res, 200, {
+        changed, races, traits, models: library.modelCounts(),
+        favourites: library.favouriteModels(), favouriteTiers: library.favouriteTiers(),
+      });
     }
 
     if (req.method === 'POST' && route === '/api/races') {
@@ -2417,8 +2423,15 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'POST' && route === '/api/favourites') {
       const body = await readBody(req);
-      const favourites = library.setFavouriteModel(body.name, body.on !== false);
-      return sendJson(res, 200, { favourites });
+      const favourites = library.setFavouriteModel(body.name, body.on !== false, body.tier);
+      return sendJson(res, 200, { favourites, favouriteTiers: library.favouriteTiers() });
+    }
+
+    if (req.method === 'POST' && route === '/api/traits') {
+      const body = await readBody(req);
+      const { name, ...patch } = body;
+      const traits = library.setPerformerTraits(name, patch);
+      return sendJson(res, 200, { traits });
     }
 
     if (req.method === 'POST' && route === '/api/library/embed') {
