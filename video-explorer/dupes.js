@@ -62,11 +62,9 @@ const state = {
   dismissed: new Set(),    // signatures of sets you have said are not sets
   scanned: 0,
   matched: 0,
-  // The in-app sweep: two videos at a time, only while nothing else is
-  // happening. See the worker at the bottom of this file.
-  // Paused on load, every load. Opening the app should not start fingerprinting;
-  // the pill does. Not remembered between launches on purpose -- see the
-  // commit that introduced this.
+  // The in-app sweep: one video at a time. See the worker at the bottom of
+  // this file. Off until the server switches it on, which it does at every
+  // launch; the pill pauses it, and a pause is not remembered.
   enabled: false,
   running: false,
   // How many of the sweep's workers are still going round the loop.
@@ -789,12 +787,13 @@ const WALK_EVERY_MS = 15 * 60 * 1000;
 /**
  * How many videos are fingerprinted at once while the pill is on.
  *
- * Two. One worker manages about 900 an hour and two about 1,500; a third was
- * measured at 1,526 -- within noise of two, for another core's worth of CPU.
+ * One. One worker manages about 900 an hour and two about 1,500; a third was
+ * measured at 1,526 -- within noise of two. Now that it runs from launch it is
+ * kept to one, so it leaves the machine alone while it is being used.
  * Matching is left alone: it is one pass over the whole index and gains
  * nothing from being started twice.
  */
-const WORKERS = 2;
+const WORKERS = 1;
 /** How many new fingerprints are worth a re-match. */
 const MATCH_AFTER = 25;
 /** And how long a match must have rested first.

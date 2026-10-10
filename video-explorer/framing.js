@@ -37,20 +37,19 @@ const WALK_EVERY_MS = 10 * 60 * 1000;
 /**
  * How many strips are built at once while the pill is on.
  *
- * Two, to match the other two sweeps. Framing is the cheapest of the three and
- * usually the first to run dry, at which point both workers exit and hand the
- * machine back -- so a second one costs nothing on a short queue and halves a
- * long one.
+ * One, to match the other two sweeps: all three run from launch, so each is
+ * kept to a single worker. Framing is the cheapest of the three and usually the
+ * first to run dry, at which point the worker exits and hands the machine back.
  */
-const WORKERS = 2;
+const WORKERS = 1;
 // Long enough that a failure is not retried in a tight loop, short enough that
 // a file which failed because the disk was busy gets another chance in a
 // session. Three strikes and it is left alone until a restart.
 const MAX_TRIES = 3;
 
 const state = {
-  // Paused on load, every load -- the same promise the other two sweeps make.
-  // The pill starts it.
+  // Off until the server switches it on at launch, like the other two. The
+  // pill pauses it; a pause is not remembered.
   enabled: false,
   running: false,
   // How many of the sweep's workers are still going round the loop.
@@ -183,8 +182,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 /**
  * One worker: a strip at a time, for as long as the sweep is switched on.
  *
- * Two of these run together -- see WORKERS -- sharing one queue, with only one
- * of them walking the library at a time.
+ * WORKERS of these run together -- one, by default -- sharing one queue, with
+ * only one of them walking the library at a time.
  *
  * The argument for keeping it to one used to be that a strip is ten ffmpeg
  * seeks against a limiter sized for the grid, so a second worker would spend

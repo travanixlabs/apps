@@ -2887,8 +2887,10 @@ async function loadCore(mark) {
     log(`familiar faces: ${face.model}, store at `
       + `${path.join(path.dirname(CACHE_DIR), 'faces')}`);
     log(`familiar faces: models at ${face.modelDir}`);
-    // Not started. The sweep waits for its pill -- see the state in faces.js.
-    log('familiar faces: paused until you start it');
+    // Started at every launch; the pill pauses it. The worker itself waits
+    // for the store to finish loading before it queues anything.
+    faces.setEnabled(true);
+    log('familiar faces: sweeping (the pill pauses it)');
   } else {
     log(`familiar faces: off (${face.reason})`);
   }
@@ -2903,12 +2905,14 @@ async function loadCore(mark) {
   });
   // The digest first and on its own: it is one small file and it is all a
   // listing needs, where reading every fingerprint is thousands of files.
-  // Loaded but not started: the filters need the digest and the index either
-  // way, and reading them costs nothing anybody notices. Fingerprinting itself
-  // waits for its pill.
+  // Fingerprinting starts at every launch, once the index is read; the pill
+  // pauses it.
   dupes.loadDigest()
     .then(() => dupes.loadIndex())
-    .then(() => log('duplicates: paused until you start it'))
+    .then(() => {
+      dupes.setEnabled(true);
+      log('duplicates: sweeping (the pill pauses it)');
+    })
     .catch(() => { });
 
   // The third sweep. It owns no store of its own -- a strip lives in the
@@ -2928,7 +2932,8 @@ async function loadCore(mark) {
     roots: () => [...config.roots, config.homeDir].filter(Boolean),
     home: () => config.homeDir || ONEDRIVE_ROOT || '',
   });
-  log('framing: paused until you start it');
+  framing.setEnabled(true);
+  log('framing: sweeping (the pill pauses it)');
 
   try {
     metaIndex = JSON.parse((await fsp.readFile(META_FILE, 'utf8')).replace(/^﻿/, ''));

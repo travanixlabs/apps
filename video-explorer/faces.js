@@ -95,9 +95,8 @@ const state = {
   running: false,
   // How many of the sweep's workers are still going round the loop.
   workers: 0,
-  // Paused on load, every load. Opening the app should not start profiling;
-  // the pill does. Not remembered between launches on purpose -- see the
-  // commit that introduced this.
+  // Off until the server switches it on, which it does at every launch. The
+  // pill pauses it; a pause is not remembered, so the next launch runs again.
   enabled: false,
   current: '',
   // The last file read, kept after it finishes. `current` empties between
@@ -1826,7 +1825,7 @@ const WALK_EVERY_MS = 15 * 60 * 1000;
  * Only one of them walks the library at a time; the rest wait for the queue
  * that walk produces.
  */
-const WORKERS = 2;
+const WORKERS = 1;
 
 /**
  * A folder was opened that had not been before.
@@ -1872,8 +1871,9 @@ async function count() {
 /**
  * One worker: a video at a time, for as long as the sweep is switched on.
  *
- * Two of these run together -- see WORKERS. They share one queue, and only one
- * of them walks the library at a time.
+ * WORKERS of these run together, one by default since the sweep runs from
+ * launch. They share one queue, and only one of them walks the library at a
+ * time.
  *
  * It used to stand aside whenever the app was used, on an activity clock any
  * request refreshed. A browse is requests with gaps in between; playback is a
