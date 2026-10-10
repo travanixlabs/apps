@@ -4074,10 +4074,10 @@ function openTagDialog(files) {
   renderDialogSuggestions(files);
   $('#tagModal').hidden = false;
 
-  // The dialog opens at the top. Focusing the tag box scrolls it into view, so
-  // the caret goes there without the scroll, and the body is put back to the
-  // top explicitly in case anything else moved it.
-  $('#tagInput').focus({ preventScroll: true });
+  // The dialog opens at the top, with the caret in the models box -- naming
+  // who is in it is usually the first thing to do. Focused without the scroll,
+  // and the body put back to the top in case anything else moved it.
+  $('#modelInput').focus({ preventScroll: true });
   $('#tagModal .tag-body').scrollTop = 0;
 }
 
