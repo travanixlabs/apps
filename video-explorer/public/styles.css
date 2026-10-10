@@ -2677,3 +2677,13 @@ body.dragging .card { cursor: grabbing; }
 /* The editor's rating row: the player's stars, with room to breathe. */
 .tag-rating { display: flex; align-items: center; gap: 10px; }
 .tag-rating .stars .star { font-size: 18px; }
+
+/* Each picker in its own box, so Height, Bust, Body and Race read as four
+   groups rather than one long run of pills. */
+.group-head .group-race {
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+}
+.group-traits { gap: 4px 6px; }
