@@ -1188,10 +1188,21 @@ const STAR_POINTS = [0, 50, 75, 100, 250, 500, 1000, 2500, 5000, 7500, 10000];
  */
 function suggestedNames(file) {
   const refused = new Set((file.notModels || []).map((n) => String(n).toLowerCase()));
+  // Pending only: a name already credited has been dealt with, so it goes too.
+  const credited = groupOnly.suggested
+    ? new Set((file.models || []).map((n) => String(n).toLowerCase())) : new Set();
   return (file.suggested || [])
-    .filter((s) => s.score >= FACE_FLOOR && !refused.has(String(s.name).toLowerCase()))
+    .filter((s) => s.score >= FACE_FLOOR && !refused.has(String(s.name).toLowerCase())
+      && !credited.has(String(s.name).toLowerCase()))
     .map((s) => s.name);
 }
+
+/**
+ * The checkbox beside Collapse all, per grouping, for this app session.
+ *   suggested  only suggestions still to add or turn down
+ *   dupes      only videos with a copy found
+ */
+const groupOnly = { suggested: false, dupes: false };
 
 function buildModelGroups(list, namesOf = (file) => file.models || [], emptyLabel = 'Nobody named') {
   const groups = new Map();
@@ -1389,6 +1400,9 @@ function buildSlots() {
     : state.grouped === 'dupes' ? buildDupeGroups(withOtherCopies(state.view))
       : state.grouped === 'suggested' ? buildModelGroups(state.view, suggestedNames, 'Nobody suggested')
         : buildModelGroups(state.view);
+  // Narrowed to what still needs doing: the catch-all section at the end --
+  // "Nobody suggested", "No copy found" -- is exactly what that leaves out.
+  if (groupOnly[state.grouped]) state.groups = state.groups.filter((g) => !g.unnamed);
   state.slots = [];
   state.cards = [];
   if (!state.grouped) { state.playingCard = null; return; }
@@ -7457,6 +7471,17 @@ function relayoutGroups(key) {
 }
 
 function syncGroupsFold() {
+  const only = $('#groupsOnly');
+  if (only) {
+    const mode = state.grouped;
+    only.hidden = !(mode in groupOnly);
+    if (!only.hidden) {
+      $('#groupsOnlyBox').checked = groupOnly[mode];
+      $('#groupsOnlyText').textContent = mode === 'suggested'
+        ? 'Only pending — not yet added or turned down'
+        : 'Only videos with duplicates';
+    }
+  }
   const btn = $('#groupsFold');
   if (!btn) return;
   btn.hidden = !state.grouped || !state.groups.length;
@@ -7590,6 +7615,11 @@ function wireEvents() {
     if (!all) for (const g of state.groups) foldedGroups.add(g.key);
     relayoutGroups(null);
     window.scrollTo(0, Math.min(window.scrollY, $('#filesSection').offsetTop));
+  });
+  $('#groupsOnlyBox').addEventListener('change', (ev) => {
+    if (!(state.grouped in groupOnly)) return;
+    groupOnly[state.grouped] = ev.target.checked;
+    render();
   });
 
   $('#foldersCollapse').addEventListener('click', (ev) => {

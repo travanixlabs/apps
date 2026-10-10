@@ -1033,6 +1033,13 @@ a.qbtn:hover { color: #dbe6f0; }
 /* Folded sections stack close, so a collapsed page reads as a list. */
 .group-head.folded + .group-head { margin-top: 2px; }
 .groups-fold { font-size: 12px; font-weight: 500; margin-left: 10px; }
+/* Beside Collapse all: narrow the grouping to what still needs doing. */
+.groups-only {
+  display: inline-flex; align-items: center; gap: 5px; margin-left: 12px;
+  font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none;
+  color: var(--text-dim); cursor: pointer;
+}
+.groups-only[hidden] { display: none; }
 .group-name { font-size: 15px; font-weight: 600; }
 .group-count { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
 /* How much of this performer the face index has read. Quieter than the video
