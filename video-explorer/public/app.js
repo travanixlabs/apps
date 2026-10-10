@@ -2423,6 +2423,29 @@ async function refuseSuggestion(file, name) {
   if (state.playing) buildPlayerSuggestions(state.playing);
 }
 
+/**
+ * Turns one suggested name down on every video in its section that does not
+ * already credit her -- the bulk form of the strip's "not her". Credited videos
+ * are left alone: there the face agrees with a name you gave.
+ */
+async function refuseSuggestedGroup(group) {
+  const name = group.name;
+  const key = name.toLowerCase();
+  const paths = [...new Set(group.files
+    .filter((f) => !(f.models || []).some((m) => m.toLowerCase() === key))
+    .map((f) => f.path))];
+  if (!paths.length) { toast(`Every video here already credits ${name}`, 'info'); return; }
+  const skipped = new Set(group.files.map((f) => f.path)).size - paths.length;
+  if (!window.confirm(`None of these ${paths.length} video${paths.length === 1 ? ' is' : 's are'} ${name}?\n\n`
+    + `${name} will not be suggested for them again.`
+    + (skipped ? `\n${skipped} that already credit ${name} are left as they are.` : ''))) return;
+  for (let i = 0; i < paths.length; i += 200) {
+    await editRecords(paths.slice(i, i + 200), { addNotModels: [name] });
+  }
+  toast(`${name} turned down on ${paths.length} video${paths.length === 1 ? '' : 's'}`, 'ok');
+  render();
+}
+
 async function unrefuseSuggestion(file, name) {
   await editRecords([file.path], { removeNotModels: [name] });
   toast(`${name} can be suggested again`, 'ok');
@@ -6712,6 +6735,21 @@ function buildGroupHead(group) {
       notAPerformer(group.name);
     });
     head.appendChild(not);
+
+    // Grouped by suggestion: every video here only looks like her. Turn the
+    // name down on all of them at once.
+    if (state.grouped === 'suggested') {
+      const none = document.createElement('button');
+      none.type = 'button';
+      none.className = 'group-notperf';
+      none.textContent = 'none are the performer';
+      none.title = `None of these videos is ${group.name}: turn the suggestion down on every one`;
+      none.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        refuseSuggestedGroup(group);
+      });
+      head.appendChild(none);
+    }
   }
 
   // Height, bust, body and race, as you label them: small choices, the current
