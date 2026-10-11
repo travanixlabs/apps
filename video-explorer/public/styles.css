@@ -2758,3 +2758,6 @@ body.dragging .card { cursor: grabbing; }
   background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
+
+/* Hidden when there is nothing to offer, e.g. the models list until you type. */
+.tag-suggest[hidden] { display: none; }

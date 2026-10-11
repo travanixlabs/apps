@@ -1859,7 +1859,9 @@ function renderAdvanced() {
     // only record of your choice is the count at the foot of the dialog.
     const picked = advDraft[field];
     const rank = (entry) => (picked.get(entry.tag) === 'in' ? 0 : picked.get(entry.tag) === 'out' ? 1 : 2);
-    const ordered = vocab.map((entry, i) => [entry, i])
+    // Models: only the picked ones until something is typed to find another.
+    const shown = field === 'models' && !searching ? vocab.filter((entry) => picked.has(entry.tag)) : vocab;
+    const ordered = shown.map((entry, i) => [entry, i])
       .sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1])
       .map(([entry]) => entry);
     for (const entry of ordered) {
@@ -3255,6 +3257,9 @@ function renderDialogSuggestions(files) {
   const host = $('#modelFaces');
   if (!host) return;
   host.replaceChildren();
+  // Not in the editor: the player's strip is where a face is put to a name.
+  host.hidden = true;
+  return;
   const single = files.length === 1;
   const pooled = new Map();
   for (const file of files) {
@@ -4196,8 +4201,12 @@ function renderTagSuggestions() {
     // scrolls, so the length costs nothing but the height it is clamped to.
     // What the video already has comes first, as in the filter dialog: with
     // five thousand performers its own names are otherwise somewhere far down.
-    const found = vocabByName(field).filter((entry) => !used.has(entry.tag.toLowerCase())
-      && (!want || entry.tag.toLowerCase().includes(want)));
+    // Performers are found by typing: five thousand names as a wall of pills
+    // was more to scroll past than to pick from.
+    const found = field === 'models' && !want ? [] : vocabByName(field)
+      .filter((entry) => !used.has(entry.tag.toLowerCase())
+        && (!want || entry.tag.toLowerCase().includes(want)));
+    box.hidden = field === 'models' && !want;
     for (const entry of found) {
       const chip = document.createElement('button');
       chip.type = 'button';
