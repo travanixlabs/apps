@@ -170,6 +170,25 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 /* Only while something is selected: display:flex above outranks the hidden
    attribute, so it has to be said. */
 .selection-bar[hidden] { display: none; }
+.selection-bar .btn[hidden] { display: none; }
+
+/* Where a file lives, top right of every tile. The hover toolbar takes the
+   corner while the pointer is over the card. */
+.avail-mark {
+  position: absolute; top: 6px; right: 6px; z-index: 3;
+  width: 24px; height: 24px; display: grid; place-content: center;
+  border-radius: 6px; background: rgba(0, 0, 0, .55); color: #9fe0b0;
+  pointer-events: none; transition: opacity .14s;
+}
+.avail-mark.is-cloud { color: #9fd0ff; }
+.card:hover .avail-mark { opacity: 0; }
+.avail-btn { color: #9fe0b0; }
+.avail-btn.is-cloud { color: #9fd0ff; }
+
+/* Sync, at the top of the advanced filters: one line per sweep. */
+.adv-sync .sync-row { display: flex; align-items: center; gap: 10px; margin: 4px 0; }
+.adv-sync .sync-name { width: 140px; flex: none; font-size: 12px; color: var(--text-dim); }
+.adv-sync .chip-row { flex: 1 1 auto; }
 .sel-count { font-weight: 620; margin-right: 4px; }
 
 .shortcut-hints {

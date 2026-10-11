@@ -67,7 +67,81 @@ const state = {
  * their host element and their labels, and every difference between them was a
  * chance for one to drift. Empty while no one-question facet is on the dialog.
  */
-const CHOICE_ROWS = [];
+const CHOICE_ROWS = [
+  ['#advFraming', 'framing', [['done', 'completed'], ['todo', 'not completed']]],
+  ['#advFingerprint', 'fingerprint', [['done', 'completed'], ['todo', 'not completed']]],
+  ['#advProfiling', 'profiling', [['done', 'completed'], ['todo', 'not completed']]],
+];
+
+/** Downloaded / cloud: one of three, "both" being no constraint at all. */
+function renderStorageRow() {
+  const box = $('#advStorage');
+  if (!box) return;
+  box.innerHTML = '';
+  const now = picked(advDraft.storage, 'in');
+  const which = now.length === 1 ? now[0] : 'both';
+  for (const [value, label] of [['both', 'both'], ['downloaded', 'downloaded'], ['cloud', 'cloud']]) {
+    const chip = chipCycle(label, value === which ? 'in' : undefined, () => {
+      advDraft.storage.clear();
+      if (value !== 'both') advDraft.storage.set(value, 'in');
+      renderAdvanced();
+    });
+    box.appendChild(chip);
+  }
+}
+
+// The two availability icons: a cloud for cloud-only, a tray arrow for on this PC.
+const ICON_CLOUD = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4.5 12.5h7.2a2.8 2.8 0 0 0 .3-5.6 4 4 0 0 0-7.6-.9A3.3 3.3 0 0 0 4.5 12.5z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+const ICON_LOCAL = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 2.5v7M5 6.8 8 9.8l3-3M3 11.5v2h10v-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+/**
+ * Download the cloud-only ones, or free up the downloaded ones -- through
+ * OneDrive's own pin / unpin, which it carries out in its own time. Only the
+ * files that need it are sent. The listing is told straight away and checked
+ * again a little later, once OneDrive has had a chance to act.
+ */
+async function setAvailability(files, want) {
+  const todo = files.filter((f) => (want === 'download' ? f.cloudOnly : !f.cloudOnly));
+  if (!todo.length) return;
+  try {
+    const out = await api('/api/availability', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: todo.map((f) => f.path), want }),
+    });
+    let ok = 0;
+    for (const f of todo) {
+      if (!(out.results[f.path] || {}).ok) continue;
+      ok += 1;
+      f.cloudOnly = want === 'cloud';
+      const live = state.files.find((x) => x.path === f.path);
+      if (live && live !== f) live.cloudOnly = f.cloudOnly;
+    }
+    toast(want === 'download'
+      ? `Downloading ${ok} video${ok === 1 ? '' : 's'} — OneDrive fetches them in the background`
+      : `${ok} video${ok === 1 ? '' : 's'} set to cloud only — OneDrive frees the space shortly`,
+    ok === todo.length ? 'ok' : 'err');
+  } catch (err) {
+    toast(err.message, 'err');
+    return;
+  }
+  render();
+  updateSelectionBar();
+  if (state.playing) syncPlayerAvail(state.playing);
+  setTimeout(() => relistQuietly().then(() => render()).catch(() => {}), 20000);
+}
+
+/** The player's availability button: what this video is, and a click switches it. */
+function syncPlayerAvail(file) {
+  const btn = $('#playerAvail');
+  if (!btn) return;
+  const cloud = Boolean(file.cloudOnly);
+  btn.innerHTML = cloud ? ICON_CLOUD : ICON_LOCAL;
+  btn.classList.toggle('is-cloud', cloud);
+  btn.title = cloud ? 'Cloud only — click to download to this PC'
+    : 'Downloaded — click to free up space (cloud only)';
+  btn.setAttribute('aria-label', btn.title);
+}
 
 /** Which radio group drives which facet's all/any. */
 const MODE_INPUTS = [
@@ -1732,6 +1806,7 @@ function renderPersonRow(box, values, facet, none, redraw) {
 }
 
 function renderAdvanced() {
+  renderStorageRow();
   for (const [field, host, none] of PERSON_ROWS) {
     renderPersonRow($(host), PERSON_FACETS[field], advDraft[field], none, () => renderAdvanced());
   }
@@ -5123,6 +5198,7 @@ function playFile(file, seq = null) {
   state.playingAnchor = null; // this one is in the listing until told otherwise
   state.playingCard = seq !== null ? seq : nearestCard(file, from);
   buildPlayerActions(file);
+  syncPlayerAvail(file);
   buildPlayerSuggestions(file);
   buildPlayerSimilar(file);
   $('#playerTitle').textContent = file.name;
@@ -7030,6 +7106,13 @@ function buildCard(file, index, group = null, seq = null) {
   if (file.rating) corner.appendChild(buildCornerRating(file.rating));
   preview.appendChild(corner);
 
+  // Where the file lives, top right, on every tile.
+  const avail = document.createElement('span');
+  avail.className = 'avail-mark' + (file.cloudOnly ? ' is-cloud' : '');
+  avail.innerHTML = file.cloudOnly ? ICON_CLOUD : ICON_LOCAL;
+  avail.title = file.cloudOnly ? 'Cloud only' : 'Downloaded to this PC';
+  preview.appendChild(avail);
+
   if (file.cloudOnly) {
     const cloudMark = document.createElement('div');
     cloudMark.className = 'cloud-mark';
@@ -7652,6 +7735,9 @@ function updateSelectionBar() {
   const holder = $('#batchStars');
   holder.replaceChildren(buildStars(uniform ? first : 0,
     (rating) => editRecords(selectedPaths(), { rating })));
+  // Download for any cloud-only among them, Cloud for any downloaded.
+  $('#batchDownload').hidden = !picked.some((f) => f.cloudOnly);
+  $('#batchCloud').hidden = !picked.some((f) => !f.cloudOnly);
 }
 
 /** All selected files, including any hidden by the current filter — so the
@@ -7773,15 +7859,20 @@ function wireEvents() {
       if (!paths.length) return;
       const op = btn.dataset.batch;
       if (op === 'tags') return openTagDialog(state.files.filter((f) => state.selected.has(f.path)));
-      if (op === 'embed') return embedSelection();
+      if (op === 'download' || op === 'cloud') {
+        return setAvailability(state.files.filter((f) => state.selected.has(f.path)), op);
+      }
       if (op === 'delete') return confirmDelete(paths);
       if (op === 'move') return pickFolder('Move to folder', (dest) => doAction('move', paths, { dest }));
       return doAction(op, paths);
     });
   }
-  $('#clearSelection').addEventListener('click', () => {
-    state.selected.clear();
-    syncSelectionUI();
+  $('#playerAvail').addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const file = state.playing;
+    if (!file) return;
+    const live = state.files.find((f) => f.path === file.path) || file;
+    setAvailability([live], live.cloudOnly ? 'download' : 'cloud');
   });
 
   // tag editor

@@ -121,9 +121,11 @@
     <button class="btn" data-batch="tags">Tags…</button>
     <span id="batchStars" class="stars stars-batch" title="Rate everything selected"></span>
     <button class="btn" data-batch="move">Move to…</button>
-    <button class="btn" data-batch="embed" title="Write ratings and tags into the video files so they travel to other devices">Write into files</button>
+    <button id="batchDownload" class="btn" data-batch="download" hidden
+            title="Download the cloud-only ones among the selected to this PC">Download</button>
+    <button id="batchCloud" class="btn" data-batch="cloud" hidden
+            title="Free up space: keep the downloaded ones among the selected in the cloud only">Cloud</button>
     <button class="btn btn-danger" data-batch="delete">Delete</button>
-    <button id="clearSelection" class="btn btn-ghost">Clear</button>
     <span class="shortcut-hints">
       <kbd>Esc</kbd> clear
       <kbd>Del</kbd> delete
@@ -349,6 +351,7 @@
            index answering the other half of the question. -->
       <div id="playerSimilar" class="player-similar" hidden></div>
       <div id="playerActions" class="quickbar quickbar-footer"></div>
+      <button id="playerAvail" class="qbtn avail-btn" type="button"></button>
       <span class="info-host">
         <button id="playerInfo" class="qbtn" aria-label="File details" aria-describedby="playerInfoPop">
           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
@@ -435,6 +438,22 @@
            not have to be opened first. -->
       <!-- Height, bust, body, race and favourite tier belong to performers: a
            video carries what its credited performers have. -->
+      <!-- Sync: what the sweeps have done, and where the file lives. -->
+      <div class="adv-block adv-sync">
+        <div class="adv-label">Sync</div>
+        <div class="sync-row"><span class="sync-name">Framing</span>
+          <div id="advFraming" class="chip-row"></div>
+          <button class="linkish" data-clear="framing">clear</button></div>
+        <div class="sync-row"><span class="sync-name">Fingerprints</span>
+          <div id="advFingerprint" class="chip-row"></div>
+          <button class="linkish" data-clear="fingerprint">clear</button></div>
+        <div class="sync-row"><span class="sync-name">Profiling</span>
+          <div id="advProfiling" class="chip-row"></div>
+          <button class="linkish" data-clear="profiling">clear</button></div>
+        <div class="sync-row"><span class="sync-name">Downloaded / cloud</span>
+          <div id="advStorage" class="chip-row"></div></div>
+      </div>
+
       <div class="adv-block">
         <div class="adv-label">
           Height

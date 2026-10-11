@@ -1427,12 +1427,18 @@ async function tidyCache() {
  * count is not a listing, and telling the face index that 28,000 videos were
  * just "seen" because a checkbox changed would be a lie it then acts on.
  */
-function filterView(video) {
+function filterView(video, strips = null) {
   return {
     path: video.path,
     size: video.size,
     mtimeMs: video.mtimeMs,
     cloudOnly: video.cloudOnly,
+    // Framed and fingerprinted, for the Sync filter -- when the caller has the
+    // cache directory's names in hand, which a listing always does.
+    ...(strips ? {
+      framed: strips.has(cacheName(video, spriteSalt())),
+      printed: dupes.status().ready === true && dupes.has(dupes.keyFor(video)),
+    } : {}),
     // Free: the scan already holds the stat these are keyed by, so ratings and
     // tags arrive with the listing rather than costing a second round trip.
     ...library.decorate(video),
@@ -1501,7 +1507,7 @@ function knownMeta(video) {
   return Object.keys(out).length ? out : null;
 }
 
-function describeVideo(video, dir) {
+function describeVideo(video, dir, strips = null) {
   // Every listing teaches the face index where its profiled videos are, which
   // is what lets "more of her" offer a thumbnail you can click. Free: the scan
   // is already holding this stat.
@@ -1512,7 +1518,7 @@ function describeVideo(video, dir) {
     folder: path.dirname(video.path),
     relFolder: dir ? (path.relative(dir, path.dirname(video.path)) || '.') : '',
     ext: path.extname(video.path).toLowerCase(),
-    ...filterView(video),
+    ...filterView(video, strips),
     ...(meta ? { meta } : {}),
   });
 }
@@ -1525,7 +1531,7 @@ function describeVideo(video, dir) {
  * filter comes here and runs against the same matcher the page uses, over the
  * walk the scan already did.
  */
-function countUnderFolders(dir, videos, subs, adv) {
+function countUnderFolders(dir, videos, subs, adv, strips = null) {
   const favSet = new Set(library.favouriteModels().map((n) => String(n).toLowerCase()));
   const raceOf = new Map(Object.entries(library.performerRaces()));
   const traitsOf = new Map(Object.entries(library.performerTraits()));
@@ -1541,7 +1547,7 @@ function countUnderFolders(dir, videos, subs, adv) {
       if (lower.startsWith(sub.prefix)) { hit = sub; break; }
     }
     if (!hit) continue;
-    if (!filter.matchesAdvanced(filterView(video), adv, { favSet, raceOf, traitsOf, favTiers })) continue;
+    if (!filter.matchesAdvanced(filterView(video, strips), adv, { favSet, raceOf, traitsOf, favTiers })) continue;
     counts[hit.path] += 1;
   }
   return counts;
@@ -1648,7 +1654,8 @@ async function scanDirectory(dir, recursive, includeCloud, fresh = false) {
   const walk = await walkOf(dir, fresh);
   const videos = walk.videos;
   lastWalk = { key: walkKey(dir), videos };
-  const folders = await listSubfolders(dir, videos, await cachedStripNames());
+  const strips = await cachedStripNames();
+  const folders = await listSubfolders(dir, videos, strips);
 
   const target = path.resolve(dir).toLowerCase();
   const atThisLevel = recursive
@@ -1661,7 +1668,7 @@ async function scanDirectory(dir, recursive, includeCloud, fresh = false) {
 
   // Deliberately NO ffprobe here. Probing 47 cloud-backed files took 91s and
   // silently downloaded gigabytes. Metadata is fetched per page via /api/meta.
-  const files = shown.map((video) => describeVideo(video, dir));
+  const files = shown.map((video) => describeVideo(video, dir, strips));
 
   const cloudBelow = videos.reduce((n, v) => n + (v.cloudOnly ? 1 : 0), 0);
   return {
@@ -2305,7 +2312,7 @@ const server = http.createServer(async (req, res) => {
       if (lastWalk.key !== key) videos = (await walkOf(dir, false)).videos;
       const subs = await subfolderEntries(dir);
       const started = Date.now();
-      const counts = countUnderFolders(dir, videos, subs, adv);
+      const counts = countUnderFolders(dir, videos, subs, adv, await cachedStripNames());
       log(`counted ${subs.length} folders under ${dir} in ${Date.now() - started}ms`);
       return sendJson(res, 200, { dir, counts });
     }
@@ -2518,6 +2525,28 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const favourites = library.setFavouriteModel(body.name, body.on !== false, body.tier);
       return sendJson(res, 200, { favourites, favouriteTiers: library.favouriteTiers() });
+    }
+
+    // Download or free up, the way File Explorer's "Always keep on this
+    // device" and "Free up space" do it: the pinned and unpinned attributes,
+    // which OneDrive acts on in its own time. Only ever on request.
+    if (req.method === 'POST' && route === '/api/availability') {
+      const body = await readBody(req);
+      const want = body.want === 'download' ? 'download' : body.want === 'cloud' ? 'cloud' : '';
+      if (!want) return sendJson(res, 400, { error: 'want must be download or cloud' });
+      const flags = want === 'download' ? ['+P', '-U'] : ['-P', '+U'];
+      const results = {};
+      for (const raw of Array.isArray(body.paths) ? body.paths : []) {
+        try {
+          const target = authoriseOrThrow(raw);
+          await run('attrib', [...flags, target]);
+          results[raw] = { ok: true };
+        } catch (err) {
+          results[raw] = { error: err.message || String(err) };
+        }
+      }
+      forgetWalks();
+      return sendJson(res, 200, { want, results });
     }
 
     // Run the carry-over now rather than waiting for its timer.
