@@ -439,8 +439,8 @@
       <!-- Height, bust, body, race and favourite tier belong to performers: a
            video carries what its credited performers have. -->
       <!-- Sync: what the sweeps have done, and where the file lives. -->
-      <div class="adv-block adv-sync">
-        <div class="adv-label">Sync</div>
+      <details id="advMore" class="adv-block adv-sync">
+        <summary class="adv-label">Additional options</summary>
         <div class="sync-row"><span class="sync-name">Framing</span>
           <div id="advFraming" class="chip-row"></div>
           <button class="linkish" data-clear="framing">clear</button></div>
@@ -451,8 +451,9 @@
           <div id="advProfiling" class="chip-row"></div>
           <button class="linkish" data-clear="profiling">clear</button></div>
         <div class="sync-row"><span class="sync-name">Downloaded / cloud</span>
-          <div id="advStorage" class="chip-row"></div></div>
-      </div>
+          <div id="advStorage" class="chip-row"></div>
+          <button class="linkish" data-clear="storage">clear</button></div>
+      </details>
 
       <div class="adv-block">
         <div class="adv-label">

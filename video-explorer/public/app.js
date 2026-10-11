@@ -71,24 +71,9 @@ const CHOICE_ROWS = [
   ['#advFraming', 'framing', [['done', 'completed'], ['todo', 'not completed']]],
   ['#advFingerprint', 'fingerprint', [['done', 'completed'], ['todo', 'not completed']]],
   ['#advProfiling', 'profiling', [['done', 'completed'], ['todo', 'not completed']]],
+  ['#advStorage', 'storage', [['downloaded', 'downloaded'], ['cloud', 'cloud']]],
 ];
 
-/** Downloaded / cloud: one of three, "both" being no constraint at all. */
-function renderStorageRow() {
-  const box = $('#advStorage');
-  if (!box) return;
-  box.innerHTML = '';
-  const now = picked(advDraft.storage, 'in');
-  const which = now.length === 1 ? now[0] : 'both';
-  for (const [value, label] of [['both', 'both'], ['downloaded', 'downloaded'], ['cloud', 'cloud']]) {
-    const chip = chipCycle(label, value === which ? 'in' : undefined, () => {
-      advDraft.storage.clear();
-      if (value !== 'both') advDraft.storage.set(value, 'in');
-      renderAdvanced();
-    });
-    box.appendChild(chip);
-  }
-}
 
 // The two availability icons: a cloud for cloud-only, a tray arrow for on this PC.
 const ICON_CLOUD = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4.5 12.5h7.2a2.8 2.8 0 0 0 .3-5.6 4 4 0 0 0-7.6-.9A3.3 3.3 0 0 0 4.5 12.5z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>';
@@ -1786,6 +1771,9 @@ function openAdvanced() {
       radio.checked = radio.value === advDraft.mode[field];
     }
   }
+  // Additional options start folded, and open only when one of them is in use.
+  $('#advMore').open = ['framing', 'fingerprint', 'profiling', 'storage']
+    .some((f) => advDraft[f] && advDraft[f].size);
   $('#advModal').hidden = false;
   renderAdvanced();
 }
@@ -1806,7 +1794,6 @@ function renderPersonRow(box, values, facet, none, redraw) {
 }
 
 function renderAdvanced() {
-  renderStorageRow();
   for (const [field, host, none] of PERSON_ROWS) {
     renderPersonRow($(host), PERSON_FACETS[field], advDraft[field], none, () => renderAdvanced());
   }
