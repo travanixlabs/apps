@@ -167,6 +167,9 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
   border: 1px solid rgba(76, 154, 255, .35);
   border-radius: 8px;
 }
+/* Only while something is selected: display:flex above outranks the hidden
+   attribute, so it has to be said. */
+.selection-bar[hidden] { display: none; }
 .sel-count { font-weight: 620; margin-right: 4px; }
 
 .shortcut-hints {
