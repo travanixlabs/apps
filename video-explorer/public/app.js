@@ -425,6 +425,7 @@ async function saveConfig(patch) {
 async function scan(dir, { record = true } = {}) {
   const target = (dir || $('#dirInput').value).trim();
   if (!target) { toast('Enter a folder path first', 'err'); return; }
+  heldGroups = null;
 
   setStatus('Scanning…');
   $('#empty').hidden = true;
@@ -1447,6 +1448,38 @@ function buildDupeGroups(list) {
  * this, paging would have to understand sections, and a section of six hundred
  * videos would render in one go.
  */
+/**
+ * What the listing is a view of: folder, search, sort, grouping and filters.
+ * Labelling a video changes none of these, so while this stays the same the
+ * sections keep their order and the page keeps its place.
+ */
+function viewSignature() {
+  return [state.dir, $('#recursiveToggle').checked, $('#searchInput').value.trim().toLowerCase(),
+    $('#sortSelect').value, state.config.sortDir, state.grouped, groupOnly[state.grouped] || false,
+    advActive() ? JSON.stringify(packFilter(state.adv)) : ''].join('\u0000');
+}
+
+/**
+ * The order the sections were last drawn in. A favourite tier, a height or a
+ * rating would move a section up or down the page; until the view changes,
+ * or is refreshed, it stays where it was so the page does not shift under
+ * whoever is working down it.
+ */
+let heldGroups = null;
+
+function holdGroupOrder() {
+  if (!state.grouped) { heldGroups = null; return; }
+  const sig = viewSignature();
+  if (heldGroups && heldGroups.sig === sig) {
+    const at = heldGroups.order;
+    const place = (g) => (at.has(g.key) ? at.get(g.key) : Infinity);
+    // Stable: a section new since then keeps its own place among the others
+    // new, below the ones already there; the catch-all stays last.
+    state.groups.sort((a, b) => (a.unnamed ? 1 : 0) - (b.unnamed ? 1 : 0) || place(a) - place(b));
+  }
+  heldGroups = { sig, order: new Map(state.groups.map((g, i) => [g.key, i])) };
+}
+
 function buildSlots() {
   // Which copy of the open video the arrows were walking from, before every
   // card is renumbered. Rating a video from the player re-sorts the sections,
@@ -1462,6 +1495,7 @@ function buildSlots() {
   // Narrowed to what still needs doing: the catch-all section at the end --
   // "Nobody suggested", "No copy found" -- is exactly what that leaves out.
   if (groupOnly[state.grouped]) state.groups = state.groups.filter((g) => !g.unnamed);
+  holdGroupOrder();
   state.slots = [];
   state.cards = [];
   if (!state.grouped) { state.playingCard = null; return; }
@@ -6546,7 +6580,84 @@ function closePlayer() {
 
 // ---------------------------------------------------------------- rendering
 
+/**
+ * The first heading or card showing at the top of the page, and how far down
+ * the window it sits -- so after a redraw the page can be put back on it.
+ */
+function pageAnchor() {
+  if (!scrollRoot) return null;
+  const top = scrollRoot.getBoundingClientRect().top;
+  for (const el of $('#grid').children) {
+    const box = el.getBoundingClientRect();
+    if (box.bottom <= top) continue;
+    const id = el.classList.contains('group-head') ? 'h' + el.dataset.group
+      : el.dataset.path ? 'c' + el.dataset.path + '\u0000' + (el.dataset.group || '') : null;
+    if (id) return { id, offset: box.top - top };
+  }
+  return null;
+}
+
+function findAnchor(id) {
+  for (const el of $('#grid').children) {
+    const mine = el.classList.contains('group-head') ? 'h' + el.dataset.group
+      : el.dataset.path ? 'c' + el.dataset.path + '\u0000' + (el.dataset.group || '') : null;
+    if (mine === id) return el;
+  }
+  return null;
+}
+
 function render() {
+  // The same view drawn again -- a label, a tier, a rating changed -- stays
+  // where it was. Only a different view starts again from the top.
+  const same = heldView === viewSignature() && scrollRoot && scrollRoot.scrollTop > 0;
+  const anchor = same ? pageAnchor() : null;
+  const was = same ? { top: scrollRoot.scrollTop, drawn: state.rendered } : null;
+  renderListing();
+  heldView = viewSignature();
+  if (!was) return;
+  const source = pageSource().length;
+  let el = anchor ? findAnchor(anchor.id) : null;
+  while (anchor && !el && state.rendered < source && state.rendered < was.drawn + CHUNK) {
+    appendPage();
+    el = findAnchor(anchor.id);
+  }
+  while (state.rendered < was.drawn && state.rendered < source) appendPage();
+  if (el) pinAnchor(el, anchor.offset);
+  else scrollRoot.scrollTop = was.top;
+}
+
+let heldView = null;
+let pinned = null;
+
+/**
+ * Puts the card back where it sat and keeps it there for a moment: posters,
+ * durations and chips above it fill in after the redraw and would otherwise
+ * push it down the page. Let go as soon as the page is scrolled by hand.
+ */
+function pinAnchor(el, offset) {
+  if (pinned) pinned.stop();
+  const place = () => {
+    if (!el.isConnected) { stop(); return; }
+    const drift = el.getBoundingClientRect().top - scrollRoot.getBoundingClientRect().top - offset;
+    if (Math.abs(drift) >= 1) scrollRoot.scrollTop += drift;
+  };
+  const watcher = new ResizeObserver(place);
+  watcher.observe($('#grid'));
+  const letGo = () => stop();
+  const events = ['wheel', 'touchstart', 'keydown', 'mousedown'];
+  for (const name of events) window.addEventListener(name, letGo, { passive: true, capture: true });
+  const timer = setTimeout(() => stop(), 3000);
+  function stop() {
+    watcher.disconnect();
+    clearTimeout(timer);
+    for (const name of events) window.removeEventListener(name, letGo, { capture: true });
+    if (pinned && pinned.stop === stop) pinned = null;
+  }
+  pinned = { stop };
+  place();
+}
+
+function renderListing() {
   applyFilterSort();
   const grid = $('#grid');
   // Detach the live player and drop observations on nodes we're discarding.
@@ -7062,6 +7173,7 @@ function buildCard(file, index, group = null, seq = null) {
   const card = document.createElement('article');
   card.className = 'card' + (state.selected.has(file.path) ? ' selected' : '');
   card.dataset.path = file.path;
+  if (group && group.key != null) card.dataset.group = group.key;
   indexCard(file.path, card);
 
   // ---- preview -------------------------------------------------------
