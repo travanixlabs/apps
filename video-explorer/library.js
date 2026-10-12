@@ -641,11 +641,11 @@ function isFavouriteModel(name) {
 }
 
 /**
- * How much of a favourite each one is: lower-cased name -> 1, 2 or 3, tier 1
+ * How much of a favourite each one is: lower-cased name -> 1 to 5, tier 1
  * the most. Only for names on the list, and a favourite with no tier recorded
  * -- every one marked before tiers existed, or marked on the phone -- is a 3.
  */
-const TIERS = [1, 2, 3];
+const TIERS = [1, 2, 3, 4, 5];
 
 function favouriteTiers() {
   const held = data.favouriteTiers || {};

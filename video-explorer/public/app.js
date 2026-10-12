@@ -1030,7 +1030,7 @@ async function setFavouriteTier(name, tier) {
 }
 
 /**
- * The heart's popup: Tier 1, 2 or 3, and -- for a favourite already -- Remove.
+ * The heart's popup: Tier 1 to 5, and -- for a favourite already -- Remove.
  * Clicking outside it, or Escape, discards it with nothing changed.
  */
 function openFavouritePopup(anchor, name) {
@@ -1054,7 +1054,7 @@ function openFavouritePopup(anchor, name) {
   };
   const row = document.createElement('div');
   row.className = 'fav-pop-tiers';
-  for (const tier of [1, 2, 3]) {
+  for (const tier of [1, 2, 3, 4, 5]) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'fav-pop-tier' + (tier === now ? ' on' : '');
@@ -1286,9 +1286,9 @@ function buildModelGroups(list, namesOf = (file) => file.models || [], emptyLabe
   }
 
   const out = [...groups.values()].sort((a, b) => {
-    const fa = favouriteTier(a.name) || 4;
-    const fb = favouriteTier(b.name) || 4;
-    // Marked first, tier 1 ahead of 2 ahead of 3 — that is what makes this a
+    const fa = favouriteTier(a.name) || 6;
+    const fb = favouriteTier(b.name) || 6;
+    // Marked first, tier 1 ahead of 2, on down to 5 — that is what makes this a
     // favourites view rather than a leaderboard — then Top performers order
     // within each tier and among the rest. Ties go to whoever
     // has more well-rated videos, since ten fours and one five score alike, and
@@ -1331,7 +1331,7 @@ function rankModels(list) {
 function orderedModels(names) {
   if (!state.grouped || !state.modelPoints) return names;
   const at = (n) => String(n).trim().toLowerCase();
-  return [...names].sort((a, b) => (favouriteTier(a) || 4) - (favouriteTier(b) || 4)
+  return [...names].sort((a, b) => (favouriteTier(a) || 6) - (favouriteTier(b) || 6)
     || (state.modelPoints.get(at(b)) || 0) - (state.modelPoints.get(at(a)) || 0)
     || String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
 }

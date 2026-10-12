@@ -1567,7 +1567,7 @@ body.dragging .card { cursor: grabbing; }
 .group-fav.on { width: auto; min-width: 26px; padding: 0 5px; }
 .group-fav-tier { font-size: 10px; font-weight: 700; margin-left: 1px; vertical-align: super; }
 
-/* The favourite popup: three tiers, then remove / cancel. */
+/* The favourite popup: five tiers, then remove / cancel. */
 .fav-pop {
   position: fixed; z-index: 1000; min-width: 200px;
   padding: 10px; border-radius: 8px;
