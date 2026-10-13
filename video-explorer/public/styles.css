@@ -2745,6 +2745,8 @@ body.dragging .card { cursor: grabbing; }
 /* The picker's name above its choices, centred. */
 .group-head .group-race { flex-wrap: wrap; justify-content: center; padding: 3px 6px 4px; }
 .group-head .group-race-lead { flex-basis: 100%; text-align: center; margin: 0 0 2px; }
+/* A picker with nothing chosen yet: light red rather than grey. */
+.group-head .group-race.empty { background: rgba(224, 108, 108, 0.16); border-color: rgba(224, 108, 108, 0.45); }
 
 /* The Videos heading stays in view while the grid scrolls under it, the way
    the folders pane does -- so the count and Collapse all are always to hand.

@@ -6970,6 +6970,8 @@ function buildGroupHead(group) {
       lead.textContent = label;
       box.appendChild(lead);
       const current = multi ? (held[field] || []) : (held[field] ? [held[field]] : []);
+      // Nothing picked yet: the box is tinted, so what is left to do stands out.
+      if (!current.length) box.classList.add('empty');
       for (const value of TRAITS[field]) {
         const lit = current.includes(value);
         const btn = document.createElement('button');
@@ -7000,7 +7002,7 @@ function buildGroupHead(group) {
   if (!group.unnamed && !group.dupe) {
     const now = raceOfName(group.name);
     const pick = document.createElement('span');
-    pick.className = 'group-race';
+    pick.className = 'group-race' + (now ? '' : ' empty');
     const lead = document.createElement('span');
     lead.className = 'group-race-lead';
     lead.textContent = 'Race';
