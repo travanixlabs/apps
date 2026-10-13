@@ -2491,6 +2491,32 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && route === '/api/models') {
       const body = await readBody(req);
       const name = String(body.name || '').trim().replace(/\s+/g, ' ');
+      // A performer renamed: her credits, the videos she was turned down on,
+      // race, height/bust/body and favourite tier all move to the new name,
+      // and the face lineups are rebuilt under it.
+      if (body.action === 'rename') {
+        const to = String(body.to || '').trim().replace(/\s+/g, ' ');
+        if (!name || !to) return sendJson(res, 400, { error: 'Both names are needed' });
+        const credited = library.renameTag(name, to, 'models').changed;
+        const refused = library.renameTag(name, to, 'notModels').changed;
+        const race = library.performerRaces()[name.toLowerCase()];
+        if (race && !library.performerRaces()[to.toLowerCase()]) library.setPerformerRace(to, race);
+        library.setPerformerRace(name, '');
+        const traits = library.performerTraits()[name.toLowerCase()];
+        if (traits && !library.performerTraits()[to.toLowerCase()]) library.setPerformerTraits(to, traits);
+        library.setPerformerTraits(name, { height: '', bust: '', body: [] });
+        if (library.isFavouriteModel(name)) {
+          const tier = library.favouriteTiers()[name.toLowerCase()];
+          library.setFavouriteModel(name, false);
+          if (!library.isFavouriteModel(to)) library.setFavouriteModel(to, true, tier);
+        }
+        faces.rebuildSoon();
+        return sendJson(res, 200, {
+          credited, refused,
+          favourites: library.favouriteModels(), favouriteTiers: library.favouriteTiers(),
+          races: library.performerRaces(), traits: library.performerTraits(),
+        });
+      }
       if (body.action !== 'not-a-performer') return sendJson(res, 400, { error: `Unknown action "${body.action}"` });
       if (!name) return sendJson(res, 400, { error: 'Which name?' });
       const { changed } = library.removeTagEverywhere(name, 'models');
