@@ -7,6 +7,8 @@
  *   node tools/sweep.js --only dupes      one sweep only
  *   node tools/sweep.js --only dupes,frames   or two of them
  *   node tools/sweep.js --dry             say what is outstanding, read nothing
+ *   node tools/sweep.js --watch           keep watching for new files
+ *   node tools/sweep.js --watch --every 5 how many minutes between looks
  *
  * The app does this too, but politely: one video at a time on each sweep,
  * because it is a background job competing with somebody browsing. With the app
@@ -52,6 +54,9 @@ const STRIP_WORKERS = Math.max(1, Number(flag('strips', 1)));
 const ONLY = new Set(String(flag('only', '')).split(',').map((w) => w.trim()).filter(Boolean));
 const wanted = (name) => ONLY.size === 0 || ONLY.has(name);
 const DRY = argv.includes('--dry');
+// Keep looking rather than finishing. For watching downloads land.
+const WATCH = argv.includes('--watch');
+const EVERY_MS = Math.max(1, Number(flag('every', 10))) * 60 * 1000;
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const now = () => new Date().toTimeString().slice(0, 8);
@@ -168,20 +173,40 @@ async function main() {
     });
   }
 
+  // Ctrl-C has to reach whichever pass is running, but only one handler may
+   // ever be registered: a watching run makes a pass every few minutes, and a
+   // listener added per pass leaks until Node complains.
+  let stopWatching = false;
+  let currentQuit = null;
+  process.on('SIGINT', () => {
+    stopWatching = true;
+    if (currentQuit) currentQuit('stopping -- finishing what is in flight');
+  });
+
+  /**
+   * One look at the library, and everything it turns up.
+   *
+   * Returns how much was done, so a watching run can tell a quiet pass from a
+   * busy one and say so once rather than every time.
+   */
+  async function onePass(quiet = false) {
   const faceQueue = doFaces ? await faces.__queueForTest() : [];
   const printQueue = doPrints
     ? (await dupes.walkForWork()).filter((w) => !dupes.has(w.key))
     : [];
   const stripQueue = doStrips ? await framing.walkForWork() : [];
 
-  say(`to profile    : ${faceQueue.length}`);
-  say(`to fingerprint: ${printQueue.length}`);
-  say(`to frame      : ${stripQueue.length}`);
+  const outstanding = faceQueue.length + printQueue.length + stripQueue.length;
+  if (!quiet || outstanding) {
+    say(`to profile    : ${faceQueue.length}`);
+    say(`to fingerprint: ${printQueue.length}`);
+    say(`to frame      : ${stripQueue.length}`);
+  }
 
-  if (DRY) { say('dry run, nothing read'); return; }
-  if (!faceQueue.length && !printQueue.length && !stripQueue.length) {
-    say('nothing outstanding');
-    return;
+  if (DRY) { say('dry run, nothing read'); return { outstanding: 0, done: 0 }; }
+  if (!outstanding) {
+    if (!quiet) say('nothing outstanding');
+    return { outstanding: 0, done: 0 };
   }
 
   const began = Date.now();
@@ -198,7 +223,7 @@ async function main() {
     say(why);
     for (const s of stoppers) s();
   };
-  process.on('SIGINT', () => quit('stopping -- finishing what is in flight'));
+  currentQuit = quit;
 
   // If the app opens while this runs, stand down rather than race it.
   const watch = setInterval(async () => {
@@ -276,6 +301,40 @@ async function main() {
   say(`  framed       ${count.strips}${count.stripFail ? `  (${count.stripFail} failed)` : ''}`);
   say(`  left to do   ${faceLeft} profiles, ${printLeft} fingerprints, ${stripLeft} strips`
     + (halt ? '  (stood down early -- run again to finish)' : ''));
+
+    return {
+      outstanding,
+      done: count.faces + count.prints + count.strips,
+      stoodDown: halt,
+    };
+  }
+
+  if (!WATCH) { await onePass(); return; }
+
+  // Watching. The first look reports in full; after that only a pass that finds
+  // something says anything, so hours of quiet do not fill the log.
+  say(`watching, looking again every ${Math.round(EVERY_MS / 60000)} minute(s)`);
+  let first = true;
+  let quietSince = null;
+
+  while (!stopWatching) {
+    const pass = await onePass(!first);
+    first = false;
+    // The app opened mid-pass: it has the stores now, and this must not take
+    // them back on the next look.
+    if (pass.stoodDown) { say('the app has it from here -- stopping'); return; }
+    if (pass.done) {
+      quietSince = null;
+    } else if (!quietSince) {
+      quietSince = Date.now();
+      say('nothing to do -- watching');
+    }
+    // Broken into short sleeps so Ctrl-C is not waited out.
+    for (let slept = 0; slept < EVERY_MS && !stopWatching; slept += 1000) await wait(1000);
+    // Between looks is exactly when the app is likely to be opened.
+    if (!stopWatching && await appIsUp()) { say('the app has opened -- standing down'); return; }
+  }
+  say('stopped watching');
 }
 
 main().then(() => process.exit(0)).catch((err) => {
