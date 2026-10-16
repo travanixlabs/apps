@@ -90,6 +90,28 @@ const CHOICE_ROWS = [
 ];
 
 
+/**
+ * The interface's pictures, in the toolbar's style: a 16-unit box, a 1.4
+ * stroke in the text colour, no fill. Colour emoji came out of a different
+ * font per machine and shouted over everything beside them.
+ */
+const svgIcon = (body, size = 14) => `<svg viewBox="0 0 16 16" width="${size}" height="${size}" `
+  + 'aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" '
+  + `stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+const ICON_PATHS = {
+  home: '<path d="M2.5 7.4 8 2.8l5.5 4.6M4 6.3v6.9h3V9.8h2v3.4h3V6.3"/>',
+  folder: '<path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.4 1.6h5.6c.7 0 1.2.5 1.2 1.2v6.4c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2z"/>',
+  drive: '<rect x="1.8" y="4.5" width="12.4" height="7" rx="1.4"/><path d="M4.5 9h.01M7 9h4.5"/>',
+  link: '<path d="M6.8 9.2a2.6 2.6 0 0 0 3.7 0l2.2-2.2a2.6 2.6 0 0 0-3.7-3.7l-.9.9M9.2 6.8a2.6 2.6 0 0 0-3.7 0L3.3 9a2.6 2.6 0 0 0 3.7 3.7l.9-.9"/>',
+  cloud: '<path d="M4.5 12.5h7.2a2.8 2.8 0 0 0 .3-5.6 4 4 0 0 0-7.6-.9A3.3 3.3 0 0 0 4.5 12.5z"/>',
+  tag: '<path d="M2.5 2.5h5l6 6-5 5-6-6z"/><circle cx="5.3" cy="5.3" r=".9"/>',
+  rename: '<path d="M10.8 2.7l2.5 2.5-7.6 7.6-3.2.7.7-3.2z"/><path d="M9.4 4.1l2.5 2.5"/>',
+  move: '<path d="M2.5 8h10M9 4.5 12.5 8 9 11.5"/>',
+  trash: '<path d="M2.8 4.3h10.4M6.3 4.3V2.8h3.4v1.5M4.2 4.3l.6 8.9h6.4l.6-8.9M6.7 6.8v4M9.3 6.8v4"/>',
+  warn: '<path d="M8 2.3 14.2 13H1.8z"/><path d="M8 6.5v3M8 11.2h.01"/>',
+};
+const ICONS = Object.fromEntries(Object.entries(ICON_PATHS).map(([k, body]) => [k, svgIcon(body)]));
+
 // The two availability icons: a cloud for cloud-only, a tray arrow for on this PC.
 const ICON_CLOUD = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4.5 12.5h7.2a2.8 2.8 0 0 0 .3-5.6 4 4 0 0 0-7.6-.9A3.3 3.3 0 0 0 4.5 12.5z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>';
 const ICON_LOCAL = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 2.5v7M5 6.8 8 9.8l3-3M3 11.5v2h10v-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -348,10 +370,17 @@ function fmtDate(ms) {
   });
 }
 
+// More than this at once is a wall over the grid; the oldest goes first.
+const TOAST_CAP = 3;
+
 function toast(message, kind = '', action = null) {
+  const host = $('#toasts');
   const el = document.createElement('div');
   el.className = 'toast' + (kind ? ' ' + kind : '');
-  el.textContent = message;
+  const text = document.createElement('span');
+  text.className = 'toast-text';
+  text.textContent = message;
+  el.appendChild(text);
   // A toast with a button is an offer, and an offer needs time to be taken.
   if (action) {
     const btn = document.createElement('button');
@@ -361,13 +390,29 @@ function toast(message, kind = '', action = null) {
     btn.addEventListener('click', () => { el.remove(); action.run(); });
     el.appendChild(btn);
   }
-  $('#toasts').appendChild(el);
+  // An error stays until it is read: it fading while you looked elsewhere was
+  // how a failed move went unnoticed. So it carries its own way out.
+  const sticky = kind === 'err';
+  if (sticky) {
+    el.setAttribute('role', 'alert');
+    const x = document.createElement('button');
+    x.className = 'toast-x';
+    x.type = 'button';
+    x.textContent = '\u00d7';
+    x.title = 'Dismiss';
+    x.setAttribute('aria-label', 'Dismiss');
+    x.addEventListener('click', () => el.remove());
+    el.appendChild(x);
+  }
+  host.appendChild(el);
+  while (host.children.length > TOAST_CAP) host.firstElementChild.remove();
+  if (sticky) return;
   setTimeout(() => {
     el.style.transition = 'opacity .25s';
     el.style.opacity = '0';
     setTimeout(() => el.remove(), 260);
     // A message that asks you to do something has to outlast a glance.
-  }, action ? 9000 : (kind === 'err' || kind === 'warn' ? 6000 : 3200));
+  }, action ? 9000 : (kind === 'warn' ? 6000 : 3200));
 }
 
 function setStatus(text) {
@@ -583,7 +628,8 @@ function renderBreadcrumb() {
   if (home) {
     const homeBtn = document.createElement('button');
     homeBtn.className = 'crumb-nav btn btn-icon';
-    homeBtn.textContent = '🏠';
+    homeBtn.innerHTML = ICONS.home;
+    homeBtn.setAttribute('aria-label', 'Default folder');
     const atHome = samePath(home, state.dir);
     homeBtn.title = atHome ? 'Already in the default folder' : 'Default folder: ' + home;
     homeBtn.disabled = atHome;
@@ -762,7 +808,7 @@ function renderFolders() {
       cover.dataset.path = folder.cover;
       loadFolderCover(cover);
     } else {
-      cover.textContent = '📁';
+      cover.innerHTML = svgIcon(ICON_PATHS.folder, 22);
     }
     tile.appendChild(cover);
 
@@ -1739,7 +1785,7 @@ function syncSortButton() {
 function toggleSortMenu(open) {
   const menu = $('#sortMenu');
   const show = open === undefined ? menu.hidden : open;
-  if (show) { toggleVolumeMenu(false); renderSortMenu(); }
+  if (show) { toggleVolumeMenu(false); toggleGroupMenu(false); renderSortMenu(); }
   menu.hidden = !show;
   $('#sortBtn').classList.toggle('on', show);
 }
@@ -1834,7 +1880,7 @@ function syncVolumeUI() {
 function toggleVolumeMenu(open) {
   const menu = $('#volMenu');
   const show = open === undefined ? menu.hidden : open;
-  if (show) toggleSortMenu(false);
+  if (show) { toggleSortMenu(false); toggleGroupMenu(false); }
   menu.hidden = !show;
   syncVolumeUI();
 }
@@ -1913,6 +1959,11 @@ function renderAdvanced() {
       row.appendChild(chip);
     }
   }
+  // How many there are to find, since only the picked ones are listed until
+  // something is typed.
+  const performers = (state.modelVocab || []).length;
+  $('#advModelsFind').placeholder = performers
+    ? `Type to find one of ${performers.toLocaleString()} performers` : 'Type to find a performer';
   for (const [field, el, empty, none] of [
     ['models', '#advModels', 'No models yet — name someone from a card first.', 'no models'],
     ['tags', '#advTags', 'No tags yet — add some from a card first.', 'no tags'],
@@ -2121,8 +2172,13 @@ async function resetAdvanced() {
 }
 
 function syncAdvBadge() {
-  $('#advDot').hidden = !advActive();
-  $('#advBtn').classList.toggle('on', advActive());
+  const facets = renderActiveFilters();
+  const badge = $('#advDot');
+  badge.hidden = !facets;
+  badge.textContent = facets ? String(facets) : '';
+  $('#advBtn').classList.toggle('on', Boolean(facets));
+  $('#advBtn').setAttribute('aria-label', facets
+    ? `Advanced filters, ${facets} in force` : 'Advanced filters');
 }
 
 // --------------------------------------------------------- ratings and tags
@@ -2496,17 +2552,20 @@ async function openFaceHover(anchor, file, sug) {
 
   const own = (person) => `/api/faces/face?path=${encodeURIComponent(file.path)}&person=${person || 0}`;
   $('#faceHoverThis').src = own(sug.person);
-  $('#faceHoverLabel').textContent = `${sug.name} · loading her faces…`;
+  faceHoverLabel(sug.name, 'loading her faces…');
   $('#faceHoverGrid').replaceChildren();
 
   const pct = Math.round(sug.score * 100);
   const gap = Math.round(sug.margin * 100);
+  // Behind is behind: "-4 clear of" made the reader do the sign themselves.
+  const pts = (x) => `${x} point${x === 1 ? '' : 's'}`;
+  const lead = gap < 0 ? `${pts(-gap)} behind ${sug.runnerUp}` : `${pts(gap)} clear of ${sug.runnerUp}`;
   const verdict = $('#faceHoverVerdict');
   verdict.textContent = sug.score === null
     ? `Credited on this video — not among the names its faces suggest`
     : sug.band === 'near'
       ? `${pct}% alike — below the bar to suggest, so judge it yourself`
-      : `${pct}% alike, ${gap} clear of ${sug.runnerUp} — ${BAND_LABEL[sug.band]}`;
+      : `${pct}% alike, ${sug.runnerUp ? lead : `${pts(Math.abs(gap))} ${gap < 0 ? 'behind' : 'clear'}`} — ${BAND_LABEL[sug.band]}`;
   verdict.className = `face-hover-verdict band-${sug.band || 'near'}`;
   $('#faceHoverMore').textContent = `See all of ${sug.name}'s faces`;
   const no = $('#faceHoverNo');
@@ -2525,13 +2584,18 @@ async function openFaceHover(anchor, file, sug) {
   if (hover.token !== token) return;
   // A credited name names no face: the server picked the one most like her.
   if (sug.person === null && data && Number.isInteger(data.mine)) $('#faceHoverThis').src = own(data.mine);
-  if (!data) { $('#faceHoverLabel').textContent = `Could not read ${sug.name}'s faces`; return; }
+  if (!data) { faceHoverLabel(sug.name, 'could not read her faces'); return; }
 
-  // This video is the question, not part of the answer.
-  const others = (data.faces || []).filter((f) => f.key !== keyOf(file)).slice(0, HOVER_CROPS);
-  $('#faceHoverLabel').textContent = others.length
-    ? `${sug.name} · ${others.length} most alike of her ${data.total}`
-    : `No stored faces for ${sug.name} yet`;
+  // This video is the question, not part of the answer. Nor is a face of hers
+  // that barely resembles it: under the floor the suggestions draw, it is
+  // noise in a grid meant to show a likeness.
+  const others = (data.faces || [])
+    .filter((f) => f.key !== keyOf(file))
+    .filter((f) => typeof f.score !== 'number' || f.score >= FACE_FLOOR)
+    .slice(0, HOVER_CROPS);
+  faceHoverLabel(sug.name, others.length
+    ? `${others.length} most alike of her ${Number(data.total || 0).toLocaleString()}`
+    : (data.faces || []).length ? 'none of her faces is close' : 'no stored faces yet');
 
   const grid = $('#faceHoverGrid');
   grid.replaceChildren();
@@ -2732,6 +2796,8 @@ let cardWidthSave = null;
  */
 function setCardWidth(px, { save = false } = {}) {
   const want = Math.max(CARD_MIN, Math.min(CARD_MAX, Math.round(px / CARD_STEP) * CARD_STEP));
+  const readout = $('#cardWidthLabel');
+  if (readout) readout.textContent = `${want}px`;
   if (want === cardWidth() && !save) return want;
   document.documentElement.style.setProperty('--card-width', want + 'px');
   const slider = $('#cardWidth');
@@ -2920,6 +2986,18 @@ async function deleteLabel(tag, count) {
   }
 }
 
+/** The card's heading: her name as a name, and the count beside it, dimmer. */
+function faceHoverLabel(name, note) {
+  const label = $('#faceHoverLabel');
+  const who = document.createElement('span');
+  who.className = 'face-hover-name';
+  who.textContent = name;
+  const what = document.createElement('span');
+  what.className = 'face-hover-count';
+  what.textContent = note;
+  label.replaceChildren(who, what);
+}
+
 function closeFaceHover() {
   clearTimeout(hover.in);
   hover.token = null;
@@ -3002,7 +3080,8 @@ function buildFaceTile(file, sug, { onPick, best }) {
       : `${Math.round(sug.score * 100)}% like ${sug.name} \u2014 below the bar, `
         + 'so not suggested',
     sug.margin
-      ? `${Math.round(sug.margin * 100)} points clear of the next name`
+      ? `${Math.abs(Math.round(sug.margin * 100))} point${Math.abs(Math.round(sug.margin * 100)) === 1 ? '' : 's'} `
+        + `${sug.margin < 0 ? 'behind' : 'clear of'} the next name`
         + (sug.runnerUp ? ` (${sug.runnerUp})` : '')
         + (sug.band ? ` \u2014 ${BAND_LABEL[sug.band]}` : '')
       : null,
@@ -3084,8 +3163,13 @@ async function buildPlayerSuggestions(file) {
   if (!state.playing || state.playing.path !== file.path) return;
   host.replaceChildren();
 
+  // What the row is, before the row: the tiles look like the similar videos
+  // under them, and the difference is the whole point.
+  host.appendChild(rowLead('Looks like'));
+
   // Every name shown here turned down in one go -- for a video whose performer
-  // is already credited, where the rest are only lookalikes. Credits stay.
+  // is already credited, where the rest are only lookalikes. Credits stay. At
+  // the end of the row, after the evidence, and quiet: an answer, not an alarm.
   const dismiss = document.createElement('button');
   dismiss.type = 'button';
   dismiss.className = 'suggest-none';
@@ -3099,12 +3183,6 @@ async function buildPlayerSuggestions(file) {
     if (state.playing) buildPlayerSuggestions(state.playing);
     else host.replaceChildren();
   });
-  // Its own line, above the tiles.
-  const top = document.createElement('div');
-  top.className = 'suggest-none-row';
-  top.appendChild(dismiss);
-  host.appendChild(top);
-
   const row = document.createElement('div');
   row.className = 'similar-row';
   host.appendChild(row);
@@ -3122,7 +3200,16 @@ async function buildPlayerSuggestions(file) {
       },
     }));
   }
+  host.appendChild(dismiss);
   appendRefused(host, current, refused);
+}
+
+/** The small capitals ahead of a row of tiles, saying what the row is. */
+function rowLead(text) {
+  const el = document.createElement('span');
+  el.className = 'face-lead row-lead';
+  el.textContent = text;
+  return el;
 }
 
 
@@ -3205,10 +3292,27 @@ async function buildPlayerSimilar(file) {
   }
 
   similar.total = found.total;
+  host.appendChild(rowLead('Similar videos'));
+  // The tiles scroll inside this, so the label stays put beside them.
+  const scroller = document.createElement('div');
+  scroller.className = 'similar-scroll';
+  host.appendChild(scroller);
   const row = document.createElement('div');
   row.className = 'similar-row';
-  host.appendChild(row);
+  scroller.appendChild(row);
   addSimilarTiles(row, found.videos);
+  syncEdgeFades(scroller);
+}
+
+/**
+ * Fades at whichever edge has more beyond it, in place of a scrollbar: the
+ * row reads as continuing without a bar's worth of chrome under it.
+ */
+function syncEdgeFades(scroller) {
+  if (!scroller) return;
+  const max = scroller.scrollWidth - scroller.clientWidth;
+  scroller.classList.toggle('more-left', scroller.scrollLeft > 2);
+  scroller.classList.toggle('more-right', scroller.scrollLeft < max - 2);
 }
 
 function addSimilarTiles(row, videos) {
@@ -3225,12 +3329,13 @@ function addSimilarTiles(row, videos) {
  */
 async function extendSimilar() {
   const host = $('#playerSimilar');
-  const row = host && host.querySelector('.similar-row');
+  const scroller = host && host.querySelector('.similar-scroll');
+  const row = scroller && scroller.querySelector('.similar-row');
   if (!row || similar.loading || similar.shown >= similar.total) return;
   if (!state.playing || state.playing.path !== similar.path) return;
   // Within a tile's width of the end, so the next page is arriving as the last
   // one comes into view rather than after you have hit the wall.
-  if (host.scrollLeft + host.clientWidth < host.scrollWidth - 140) return;
+  if (scroller.scrollLeft + scroller.clientWidth < scroller.scrollWidth - 140) return;
 
   const mine = similar.token;
   const from = similar.shown;
@@ -3250,12 +3355,56 @@ async function extendSimilar() {
   if (mine !== similar.token || more.offset !== from) return;
   similar.total = more.total;
   addSimilarTiles(row, more.videos);
+  syncEdgeFades(scroller);
 }
 
+/**
+ * Bound once, to the host that outlives every row. Scroll does not bubble, so
+ * it is caught on the way down instead. With the scrollbar gone, the wheel
+ * and a drag are the ways along: the wheel's up and down become left and
+ * right, and a drag pulls the row -- a drag that moved swallows the click it
+ * ends in, so letting go over a tile does not open it.
+ */
 function watchSimilarScroll() {
   const host = $('#playerSimilar');
   if (!host) return;
-  host.addEventListener('scroll', () => { extendSimilar(); }, { passive: true });
+  const scrollerOf = (ev) => ev.target.closest && ev.target.closest('.similar-scroll');
+  host.addEventListener('scroll', (ev) => {
+    if (ev.target.classList && ev.target.classList.contains('similar-scroll')) syncEdgeFades(ev.target);
+    extendSimilar();
+  }, { passive: true, capture: true });
+  host.addEventListener('wheel', (ev) => {
+    const scroller = scrollerOf(ev);
+    if (!scroller || ev.ctrlKey || Math.abs(ev.deltaX) > Math.abs(ev.deltaY)) return;
+    if (scroller.scrollWidth <= scroller.clientWidth) return;
+    ev.preventDefault();
+    scroller.scrollLeft += ev.deltaY;
+  }, { passive: false });
+  const drag = { scroller: null, x: 0, left: 0, moved: false };
+  host.addEventListener('pointerdown', (ev) => {
+    const scroller = scrollerOf(ev);
+    if (!scroller || ev.button !== 0 || ev.pointerType === 'touch') return;
+    Object.assign(drag, { scroller, x: ev.clientX, left: scroller.scrollLeft, moved: false });
+  });
+  window.addEventListener('pointermove', (ev) => {
+    if (!drag.scroller) return;
+    const dx = ev.clientX - drag.x;
+    if (!drag.moved && Math.abs(dx) < 5) return;
+    drag.moved = true;
+    drag.scroller.classList.add('dragging');
+    drag.scroller.scrollLeft = drag.left - dx;
+  });
+  window.addEventListener('pointerup', () => {
+    if (!drag.scroller) return;
+    drag.scroller.classList.remove('dragging');
+    drag.scroller = null;
+  });
+  host.addEventListener('click', (ev) => {
+    if (!drag.moved) return;
+    drag.moved = false;
+    ev.stopPropagation();
+    ev.preventDefault();
+  }, true);
 }
 
 /**
@@ -3389,6 +3538,7 @@ async function explainNothing(host, file) {
   const pictures = await picturesFor(file, near.map((n) => n.name));
   if (!state.playing || state.playing.path !== file.path) return;
   host.replaceChildren();
+  host.appendChild(rowLead('Closest'));
 
   const row = document.createElement('div');
   row.className = 'similar-row';
@@ -3737,6 +3887,14 @@ async function relistQuietly() {
   } catch { /* a folder that has gone is the next scan's problem, not a toast */ }
 }
 
+/** What a sweep pill counts, ahead of its numbers: three pills of bare figures read alike. */
+function pillNoun(word) {
+  const el = document.createElement('span');
+  el.className = 'faces-noun';
+  el.textContent = word;
+  return el;
+}
+
 function renderFramingPill() {
   const pill = $('#framingPill');
   const text = $('#framingText');
@@ -3767,17 +3925,22 @@ function renderFramingPill() {
     counting: 'counting the library\u2026',
     framing: 'framing\u2026',
     'standing aside': 'standing aside\u2026',
-    waiting: 'waiting',
+    waiting: 'idle',
     paused: 'paused',
     stopped: 'stopped',
   };
+  // Idle before the library has been counted is not "nothing left": it is
+  // the count still to come, and the pill and its card both say so.
+  const uncounted = !counted && (doing === 'waiting' || doing === 'counting');
+  text.appendChild(pillNoun('Frames'));
   const main = document.createElement('span');
   main.textContent = counted && downloaded ? `${n(framed)} / ${n(downloaded)}` : `${n(framed)}`;
   text.appendChild(main);
 
   const stateEl = document.createElement('span');
   stateEl.className = 'faces-doing';
-  stateEl.textContent = ' ' + (finished && !busy ? 'all framed' : (said[doing] || 'framed'));
+  stateEl.textContent = ' ' + (finished && !busy ? 'all framed'
+    : uncounted ? said.counting : (said[doing] || 'framed'));
   text.appendChild(stateEl);
 
   // Strips kept for videos that have since gone back to the cloud: work that
@@ -3792,15 +3955,17 @@ function renderFramingPill() {
 
   setPillPop(pill, [
     doing === 'framing' ? `Building the preview frames for ${current}`
-      : doing === 'counting' ? 'Counting the library\u2026'
+      : uncounted ? 'Counting the library\u2026'
         : doing === 'standing aside' ? 'Waiting for a preview you are looking at'
-          : doing === 'waiting' ? 'Ready \u2014 nothing left to frame'
+          : doing === 'waiting' ? 'Idle \u2014 nothing left to frame'
             : doing === 'paused' ? 'Paused \u2014 click to build the preview frames'
               : 'Not running',
     counted && downloaded
       ? `${n(framed)} of ${n(downloaded)} downloaded videos framed`
         + (remaining ? `, ${n(remaining)} to go` : '')
-      : `${n(framed)} framed, still counting the library`,
+      : counted
+        ? 'No videos on this machine to read' + (cached ? ` — ${n(cached)} were done before going to the cloud` : '')
+        : `${n(framed)} framed, still counting the library`,
     done ? `${n(done)} built this session${rate ? ` \u00b7 about ${n(rate)}/hour` : ''}` : '',
     failed ? `${n(failed)} could not be read` : '',
     { text: 'Ten frames per video, so opening one shows them at once instead of building them.', dim: true },
@@ -3858,10 +4023,12 @@ function renderDupePill() {
     counting: 'counting the library\u2026',
     reading: 'fingerprinting\u2026',
     matching: 'comparing\u2026',
-    waiting: 'waiting for you to pause',
+    waiting: 'idle',
     paused: 'paused',
     stopped: 'stopped',
   };
+  const uncounted = !counted && (doing === 'waiting' || doing === 'counting');
+  text.appendChild(pillNoun('Prints'));
   const main = document.createElement('span');
   main.textContent = counted && downloaded
     ? `${n(fingerprintedOnDisk)} / ${n(downloaded)}`
@@ -3870,8 +4037,8 @@ function renderDupePill() {
 
   const state = document.createElement('span');
   state.className = 'faces-doing';
-  state.textContent = ' ' + (finished && !busy
-    ? 'all fingerprinted' : (said[doing] || 'fingerprinted'));
+  state.textContent = ' ' + (finished && !busy ? 'all fingerprinted'
+    : uncounted ? said.counting : (said[doing] || 'fingerprinted'));
   text.appendChild(state);
 
   // Read exactly as the faces pill reads: work done on videos that have since
@@ -3889,14 +4056,16 @@ function renderDupePill() {
     doing === 'reading' ? `Fingerprinting ${current}`
       : doing === 'matching' ? 'Comparing what has been read so far\u2026'
         : doing === 'loading' ? 'Reading back what has already been fingerprinted\u2026'
-          : doing === 'counting' ? 'Counting the library\u2026'
-            : doing === 'waiting' ? 'Ready \u2014 it reads a video whenever you pause for a moment'
+          : uncounted ? 'Counting the library\u2026'
+            : doing === 'waiting' ? 'Idle \u2014 it reads a video whenever you pause for a moment'
               : doing === 'paused' ? 'Paused'
                 : 'Not running',
     counted && downloaded
       ? `${n(fingerprintedOnDisk)} of ${n(downloaded)} downloaded videos fingerprinted`
         + (remaining ? `, ${n(remaining)} to go` : '')
-      : `${n(fingerprinted)} fingerprinted, still counting the library`,
+      : counted
+        ? 'No videos on this machine to read'
+        : `${n(fingerprinted)} fingerprinted, still counting the library`,
     cached > 0
       ? `${n(cached)} more were fingerprinted before being freed up to the cloud, `
         + 'and still count as copies'
@@ -3977,10 +4146,12 @@ function renderFacePill() {
     loading: 'opening the face index…',
     counting: 'counting the library…',
     reading: 'reading…',
-    waiting: 'waiting for you to pause',
+    waiting: 'idle',
     paused: 'paused',
     stopped: 'stopped',
   };
+  const uncounted = !counted && (doing === 'waiting' || doing === 'counting');
+  text.appendChild(pillNoun('Faces'));
   const main = document.createElement('span');
   main.textContent = counted && downloaded
     ? `${n(profiledOnDisk)} / ${n(downloaded)}`
@@ -3989,7 +4160,8 @@ function renderFacePill() {
 
   const state = document.createElement('span');
   state.className = 'faces-doing';
-  state.textContent = ' ' + (finished && !busy ? 'all profiled' : (said[doing] || 'profiled'));
+  state.textContent = ' ' + (finished && !busy ? 'all profiled'
+    : uncounted ? said.counting : (said[doing] || 'profiled'));
   text.appendChild(state);
 
   if (cached > 0) {
@@ -4002,20 +4174,22 @@ function renderFacePill() {
   setPillPop(pill, [
     doing === 'reading' ? `Reading ${current}`
       : doing === 'loading' ? 'Reading back what has already been profiled…'
-        : doing === 'counting' ? 'Counting the library…'
-        : doing === 'waiting' ? 'Ready — it reads a video whenever you pause for a moment'
+        : uncounted ? 'Counting the library…'
+        : doing === 'waiting' ? 'Idle — it reads a video whenever you pause for a moment'
           : doing === 'paused' ? 'Paused'
             : 'Not running',
     counted && downloaded
       ? `${n(profiledOnDisk)} of ${n(downloaded)} videos on this machine profiled`
         + (remaining ? `, ${n(remaining)} to go` : '')
-      : `${n(profiled)} videos profiled, still counting the library`,
+      : counted
+        ? 'No videos on this machine to read'
+        : `${n(profiled)} videos profiled, still counting the library`,
     cached > 0
       ? `${n(cached)} more were profiled before being freed up to the cloud, and still work`
       : null,
     done ? `${n(done)} read this session${rate ? `, about ${n(rate)} an hour` : ''}` : null,
     lastRead && doing !== 'reading' ? `Last read ${lastRead}` : null,
-    `${performers} performer${performers === 1 ? '' : 's'} recognisable so far`,
+    `${n(performers)} performer${performers === 1 ? '' : 's'} recognisable so far`,
     { text: enabled ? 'Click to pause' : 'Click to resume', dim: true },
   ]);
 }
@@ -4719,7 +4893,9 @@ function markPreviewFailed(filePath, message) {
   const fail = document.createElement('div');
   fail.className = 'preview-fail';
   const head = document.createElement('div');
-  head.textContent = '⚠ No preview';
+  head.className = 'preview-fail-head';
+  head.innerHTML = ICONS.warn;
+  head.append(' No preview');
   const why = document.createElement('div');
   why.textContent = String(message || '').slice(0, 90);
   fail.append(head, why);
@@ -5274,7 +5450,7 @@ function syncHomeFields() {
     $('#homeHint').textContent = 'No OneDrive account detected, so this falls back to '
       + (state.config.homeDir || 'your user folder') + '.';
   } else {
-    $('#homeHint').textContent = 'A fixed folder: the app opens here on launch and the 🏠 button goes here, '
+    $('#homeHint').textContent = 'A fixed folder: the app opens here on launch and the home button goes here, '
       + 'whichever OneDrive account is signed in.';
   }
 }
@@ -5314,8 +5490,8 @@ async function openPickerAt(dir) {
     list.innerHTML = '';
 
     const rows = data.dir
-      ? data.dirs.map((d) => ({ label: d.name, path: d.path, ico: '📁' }))
-      : data.drives.map((d) => ({ label: d, path: d, ico: '💽' }));
+      ? data.dirs.map((d) => ({ label: d.name, path: d.path, ico: ICONS.folder }))
+      : data.drives.map((d) => ({ label: d, path: d, ico: ICONS.drive }));
 
     if (!rows.length) {
       const li = document.createElement('li');
@@ -5457,7 +5633,7 @@ function playFile(file, seq = null) {
     info.fps ? `${info.fps} fps` : null,
     info.codec || null,
     fmtBytes(file.size),
-    file.cloudOnly ? '☁ streaming from OneDrive' : null,
+    file.cloudOnly ? 'streaming from OneDrive' : null,
   ].filter(Boolean).join('  ·  ');
   const player = $('#player');
   // The element knows its own duration; use it if no probe has landed yet.
@@ -5558,14 +5734,13 @@ function toggleRandom() {
   // Starts from here: what is playing now is the first thing back would reach.
   playMode.seen = playMode.random && state.playing ? [state.playing] : [];
   playMode.at = playMode.seen.length - 1;
+  // No toast: the button lights, and says so to a screen reader too.
   syncPlayMode();
-  toast(playMode.random ? 'Random on' : 'Random off', 'ok');
 }
 
 function toggleRepeat() {
   playMode.repeat = !playMode.repeat;
   syncPlayMode();
-  toast(playMode.repeat ? 'Repeat on' : 'Repeat off', 'ok');
 }
 
 /**
@@ -6921,6 +7096,12 @@ function renderListing() {
 
   state.rendered = 0;
   $('#filesSection').hidden = state.files.length === 0;
+  // Where a file lives is only worth a mark on every tile when the listing has
+  // both kinds: all-cloud or all-local, the mark says the same thing each time.
+  const anyCloud = state.files.some((f) => f.cloudOnly);
+  const anyLocal = state.files.some((f) => !f.cloudOnly);
+  grid.classList.toggle('avail-mixed', anyCloud && anyLocal);
+  syncCardDetails();
   appendPage();
 
   updateSelectionBar();
@@ -7040,7 +7221,7 @@ function buildDupeDismiss(group) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'linkish group-dismiss';
-  btn.textContent = 'not duplicates';
+  btn.textContent = 'Not duplicates';
   btn.title = 'Set this aside: these stop being marked as copies of each other';
   btn.addEventListener('click', async (ev) => {
     ev.stopPropagation();
@@ -7080,16 +7261,30 @@ function buildDupeDismiss(group) {
   return btn;
 }
 
+/**
+ * A section's heading, in two deliberate lines.
+ *
+ * The first says who this is: the fold, the heart, the name and the numbers,
+ * with the rare answers -- not a performer, all profiled, none are -- folded
+ * into a menu at its end. The second is the four traits as one strip of equal
+ * cells. Laid out as one long run of pills, it wrapped onto anything from one
+ * to four rows depending on the window, and no two headings lined up.
+ */
 function buildGroupHead(group) {
   const head = document.createElement('div');
   const folded = foldedGroups.has(group.key);
   head.className = 'group-head' + (group.unnamed ? ' group-unnamed' : '') + (folded ? ' folded' : '');
   head.dataset.group = group.key;
+  const person = !group.unnamed && !group.dupe;
+
+  const line = document.createElement('div');
+  line.className = 'group-line';
+  head.appendChild(line);
 
   const fold = document.createElement('button');
   fold.type = 'button';
   fold.className = 'group-fold';
-  fold.textContent = folded ? '\u25B8' : '\u25BE';
+  fold.textContent = folded ? '▸' : '▾';
   fold.title = folded ? 'Expand this section' : 'Collapse this section';
   fold.setAttribute('aria-label', fold.title);
   fold.setAttribute('aria-expanded', String(!folded));
@@ -7099,14 +7294,14 @@ function buildGroupHead(group) {
     else foldedGroups.add(group.key);
     relayoutGroups(group.key);
   });
-  head.appendChild(fold);
+  line.appendChild(fold);
 
-  if (!group.unnamed && !group.dupe) {
+  if (person) {
     const tier = favouriteTier(group.name);
     const heart = document.createElement('button');
     heart.type = 'button';
     heart.className = 'group-fav' + (tier ? ` on tier-${tier}` : '');
-    heart.textContent = tier ? '\u2665' : '\u2661';
+    heart.textContent = tier ? '♥' : '♡';
     if (tier) {
       const badge = document.createElement('span');
       badge.className = 'group-fav-tier';
@@ -7121,37 +7316,39 @@ function buildGroupHead(group) {
       ev.stopPropagation();
       openFavouritePopup(heart, group.name);
     });
-    head.appendChild(heart);
+    line.appendChild(heart);
   }
 
   const name = document.createElement('span');
   name.className = 'group-name';
   name.textContent = group.unnamed ? (group.label || 'Nobody named') : group.name;
-  head.appendChild(name);
+  name.title = name.textContent;
+  line.appendChild(name);
 
-  if (!group.unnamed && !group.dupe) {
+  if (person) {
     const score = document.createElement('span');
     score.className = 'group-score';
     score.textContent = group.points.toLocaleString();
     score.title = 'Points per video: 5★ 10,000 · 4.5★ 7,500 · 4★ 5,000 · 3.5★ 2,500 · 3★ 1,000'
       + ' · 2.5★ 500 · 2★ 250 · 1.5★ 100 · 1★ 75 · 0.5★ 50 — counting only what is in this listing.';
-    head.appendChild(score);
+    line.appendChild(score);
   }
 
   // A duplicate section already says how many copies it holds in its name, so
   // it gets what deleting one would give back instead.
   const count = document.createElement('span');
   count.className = 'group-count';
+  const many = group.files.length;
   count.textContent = group.dupe
     ? (group.recover ? `${fmtBytes(group.recover)} could go` : 'nothing to choose between here')
-    : `${group.files.length} video${group.files.length === 1 ? '' : 's'}`;
+    : `${many.toLocaleString()} video${many === 1 ? '' : 's'}`;
   if (group.dupe) {
     count.title = group.recover
       ? 'Keeping the largest copy and deleting the rest would recover this'
-      : 'The other copies are somewhere else \u2014 flatten the subfolders, or '
+      : 'The other copies are somewhere else — flatten the subfolders, or '
         + 'clear the filters, to bring them together';
   }
-  head.appendChild(count);
+  line.appendChild(count);
 
   // How much of this performer the face index has actually read. Only shown
   // once something has been, so the row stays quiet on a library with the
@@ -7159,127 +7356,162 @@ function buildGroupHead(group) {
   const profiled = group.files.reduce((n, f) => n + (f.profiled ? 1 : 0), 0);
   if (profiled) {
     const read = document.createElement('span');
-    read.className = 'group-profiled' + (profiled === group.files.length ? ' all' : '');
-    read.textContent = `${profiled} profiled`;
-    read.title = profiled === group.files.length
-      ? `All ${group.files.length} have been read for faces`
-      : `${profiled} of ${group.files.length} read for faces so far`;
-    head.appendChild(read);
+    read.className = 'group-profiled' + (profiled === many ? ' all' : '');
+    read.textContent = `${profiled.toLocaleString()} profiled`;
+    read.title = profiled === many
+      ? `All ${many.toLocaleString()} have been read for faces`
+      : `${profiled.toLocaleString()} of ${many.toLocaleString()} read for faces so far`;
+    line.appendChild(read);
   }
 
-  // A credited name that is not a person at all -- a word lifted out of a
-  // filename. Off every video in one go, and never suggested again.
-  if (!group.unnamed && !group.dupe) {
-    const not = document.createElement('button');
-    not.type = 'button';
-    not.className = 'group-notperf';
-    not.textContent = 'not a performer';
-    not.title = `"${group.name}" is not a person: take the name off every video`;
-    not.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      notAPerformer(group.name);
-    });
-    head.appendChild(not);
+  if (!group.unnamed && group.dupe) line.appendChild(buildDupeDismiss(group));
 
-    // Her videos are settled: whoever else the faces point to on them is not
-    // in them. Every pending suggestion on every one is turned down.
-    const settled = document.createElement('button');
-    settled.type = 'button';
-    settled.className = 'group-notperf';
-    settled.textContent = 'all profiled';
-    settled.title = `Turn down every suggested name on ${group.name}'s videos`;
-    settled.addEventListener('click', (ev) => {
+  // The answers given once in a while, out of the way of the ones given on
+  // every heading. Each still asks before it touches anything.
+  if (person) {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'group-more';
+    more.textContent = '…';
+    more.title = `More for ${group.name}`;
+    more.setAttribute('aria-label', more.title);
+    more.setAttribute('aria-haspopup', 'menu');
+    more.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      settleGroupSuggestions(group);
+      openGroupMenu(more, group);
     });
-    head.appendChild(settled);
-
-    // Grouped by suggestion: every video here only looks like her. Turn the
-    // name down on all of them at once.
-    if (state.grouped === 'suggested') {
-      const none = document.createElement('button');
-      none.type = 'button';
-      none.className = 'group-notperf';
-      none.textContent = 'none are the performer';
-      none.title = `None of these videos is ${group.name}: turn the suggestion down on every one`;
-      none.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        refuseSuggestedGroup(group);
-      });
-      head.appendChild(none);
-    }
+    line.appendChild(more);
   }
 
-  // Height, bust, body and race, as you label them: small choices, the current
-  // ones lit. Clicking a lit one takes it off again. Body can hold several.
-  if (!group.unnamed && !group.dupe) {
-    const traits = document.createElement('span');
-    traits.className = 'group-traits';
+  // Height, bust, body and race, as you label them: one cell each, the
+  // current choices lit. Clicking a lit one takes it off again. Body can hold
+  // several. Not drawn for a folded section: the line above is all it shows.
+  if (person && !folded) {
+    const strip = document.createElement('div');
+    strip.className = 'group-strip';
     const held = traitsOfName(group.name);
-    const picker = (label, field, multi) => {
-      const box = document.createElement('span');
-      box.className = 'group-race group-trait';
+    const cell = (label, values, current, pick) => {
+      const box = document.createElement('div');
+      box.className = 'group-cell' + (current.length ? '' : ' empty');
       const lead = document.createElement('span');
-      lead.className = 'group-race-lead';
+      lead.className = 'group-cell-lead';
       lead.textContent = label;
       box.appendChild(lead);
-      const current = multi ? (held[field] || []) : (held[field] ? [held[field]] : []);
-      // Nothing picked yet: the box is tinted, so what is left to do stands out.
-      if (!current.length) box.classList.add('empty');
-      for (const value of TRAITS[field]) {
+      const opts = document.createElement('span');
+      opts.className = 'group-cell-opts';
+      for (const value of values) {
         const lit = current.includes(value);
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'group-race-opt' + (lit ? ' on' : '');
-        if (lit) paintChip(btn, field, value);
+        btn.setAttribute('aria-pressed', String(lit));
         btn.textContent = value;
-        btn.title = lit ? `Take ${value} off ${group.name}` : `${group.name}: ${label.toLowerCase()} ${value}`;
         btn.addEventListener('click', (ev) => {
           ev.stopPropagation();
-          const next = multi
-            ? (lit ? current.filter((v) => v !== value) : [...current, value])
-            : (lit ? '' : value);
-          setPerformerTraits(group, { [field]: next });
+          pick(value, lit);
         });
-        box.appendChild(btn);
+        opts.appendChild(btn);
       }
-      traits.appendChild(box);
+      box.appendChild(opts);
+      strip.appendChild(box);
+      return opts;
     };
-    picker('Height', 'height', false);
-    picker('Bust', 'bust', false);
-    picker('Body', 'body', true);
-    head.appendChild(traits);
-  }
-
-  // Her race, as you label it: four small choices, the current one lit.
-  // Clicking the lit one takes it off again.
-  if (!group.unnamed && !group.dupe) {
-    const now = raceOfName(group.name);
-    const pick = document.createElement('span');
-    pick.className = 'group-race' + (now ? '' : ' empty');
-    const lead = document.createElement('span');
-    lead.className = 'group-race-lead';
-    lead.textContent = 'Race';
-    pick.appendChild(lead);
-    for (const race of RACES) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'group-race-opt' + (race === now ? ' on' : '');
-      if (race === now) paintChip(btn, 'race', race);
-      btn.textContent = race;
-      btn.title = race === now ? `Take ${race} off ${group.name}` : `${group.name} is ${race}`;
-      btn.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        setPerformerRace(group, race === now ? '' : race);
+    for (const [label, field, multi] of [['Height', 'height', false], ['Bust', 'bust', false], ['Body', 'body', true]]) {
+      const current = multi ? (held[field] || []) : (held[field] ? [held[field]] : []);
+      const opts = cell(label, TRAITS[field], current, (value, lit) => {
+        const next = multi
+          ? (lit ? current.filter((v) => v !== value) : [...current, value])
+          : (lit ? '' : value);
+        setPerformerTraits(group, { [field]: next });
       });
-      pick.appendChild(btn);
+      for (const btn of opts.children) {
+        const value = btn.textContent;
+        const lit = current.includes(value);
+        if (lit) paintChip(btn, field, value);
+        btn.title = lit ? `Take ${value} off ${group.name}` : `${group.name}: ${label.toLowerCase()} ${value}`;
+      }
     }
-    head.appendChild(pick);
+    const race = raceOfName(group.name);
+    const raceOpts = cell('Race', RACES, race ? [race] : [], (value, lit) => {
+      setPerformerRace(group, lit ? '' : value);
+    });
+    for (const btn of raceOpts.children) {
+      const value = btn.textContent;
+      if (value === race) paintChip(btn, 'race', value);
+      btn.title = value === race ? `Take ${value} off ${group.name}` : `${group.name} is ${value}`;
+    }
+    head.appendChild(strip);
   }
-
-  if (!group.unnamed && group.dupe) head.appendChild(buildDupeDismiss(group));
 
   return head;
+}
+
+/**
+ * The heading's "…": the three answers that end a performer's section rather
+ * than label it. Drawn in the favourite popup's frame -- one popup at a time
+ * shares its open and close -- so it dismisses the same way.
+ */
+function openGroupMenu(anchor, group) {
+  closeFavouritePopup();
+  const pop = document.createElement('div');
+  pop.className = 'fav-pop group-menu';
+  pop.setAttribute('role', 'menu');
+  const title = document.createElement('div');
+  title.className = 'fav-pop-title';
+  title.textContent = group.name;
+  pop.appendChild(title);
+  const acts = [
+    ['Not a performer', `"${group.name}" is not a person: take the name off every video`, () => notAPerformer(group.name)],
+    // Her videos are settled: whoever else the faces point to on them is not
+    // in them. Every pending suggestion on every one is turned down.
+    ['All profiled', `Turn down every suggested name on ${group.name}'s videos`, () => settleGroupSuggestions(group)],
+  ];
+  // Grouped by suggestion: every video here only looks like her. Turn the
+  // name down on all of them at once.
+  if (state.grouped === 'suggested') {
+    acts.push(['None are the performer',
+      `None of these videos is ${group.name}: turn the suggestion down on every one`,
+      () => refuseSuggestedGroup(group)]);
+  }
+  for (const [label, hint, run] of acts) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'menu-row';
+    btn.setAttribute('role', 'menuitem');
+    btn.textContent = label;
+    btn.title = hint;
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      closeFavouritePopup();
+      run();
+    });
+    pop.appendChild(btn);
+  }
+  pop.addEventListener('click', (ev) => ev.stopPropagation());
+  document.body.appendChild(pop);
+
+  const box = anchor.getBoundingClientRect();
+  const width = pop.offsetWidth;
+  pop.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, box.right - width))}px`;
+  pop.style.top = `${box.bottom + 6}px`;
+  pop.querySelector('.menu-row').focus({ preventScroll: true });
+
+  favPop.el = pop;
+  favPop.away = (ev) => { if (!pop.contains(ev.target)) closeFavouritePopup(); };
+  favPop.key = (ev) => {
+    if (ev.key === 'Escape') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      closeFavouritePopup();
+      anchor.focus({ preventScroll: true });
+    }
+  };
+  setTimeout(() => {
+    if (favPop.el !== pop) return;
+    document.addEventListener('mousedown', favPop.away, true);
+    document.addEventListener('keydown', favPop.key, true);
+    window.addEventListener('scroll', closeFavouritePopup, { capture: true, once: true });
+  }, 0);
 }
 
 /** Takes a credited name off every video in the library, after asking. */
@@ -7302,6 +7534,14 @@ async function notAPerformer(name) {
     setTraits(data.traits);
     // The listing in hand still credits the name on every one of them.
     await relistQuietly();
+    // The fresh listing still carries her as a suggestion until the faces are
+    // rescored, which would leave her section standing under "Only pending".
+    const gone = name.toLowerCase();
+    for (const file of state.files) {
+      if ((file.suggested || []).some((s) => String(s.name).toLowerCase() === gone)) {
+        file.suggested = file.suggested.filter((s) => String(s.name).toLowerCase() !== gone);
+      }
+    }
     render();
     toast(`"${name}" removed from ${data.changed.toLocaleString()} video${data.changed === 1 ? '' : 's'}`, 'ok');
   } catch (err) {
@@ -7316,9 +7556,10 @@ function syncFileCount() {
   // screen once per performer in it, and "12 of 9" would look like a bug.
   const total = slotCards();
   const loaded = state.grouped ? state.rendered - headsBefore(state.rendered) : state.rendered;
+  const n = (x) => x.toLocaleString();
   $('#fileCount').textContent = loaded < total
-    ? `(${loaded} of ${total})`
-    : `(${total}${total === state.files.length ? '' : ' of ' + state.files.length})`;
+    ? `(${n(loaded)} of ${n(total)})`
+    : `(${n(total)}${total === state.files.length ? '' : ' of ' + n(state.files.length)})`;
 }
 
 /**
@@ -7341,10 +7582,11 @@ function headsBefore(n) {
 function updateStatusLine() {
   const bits = [];
   if (state.files.length) {
+    const n = (x) => x.toLocaleString();
     const shown = state.view.length === state.files.length
-      ? `${state.files.length} video${state.files.length === 1 ? '' : 's'} here`
-      : `${state.view.length} of ${state.files.length} shown`;
-    bits.push(state.rendered < state.view.length ? `${shown} · ${state.rendered} loaded` : shown);
+      ? `${n(state.files.length)} video${state.files.length === 1 ? '' : 's'} here`
+      : `${n(state.view.length)} of ${n(state.files.length)} shown`;
+    bits.push(state.rendered < state.view.length ? `${shown} · ${n(state.rendered)} loaded` : shown);
   }
   if (!state.config.recursive && state.totalBelow > state.files.length) {
     bits.push(`${state.totalBelow.toLocaleString()} below`);
@@ -7424,6 +7666,9 @@ function updateCardMeta(filePath, known) {
 
     const preview = card.querySelector('.preview');
     if (preview && info.duration) preview.dataset.duration = String(info.duration);
+    // The resolution arrives with the probe.
+    const meta = card.querySelector('.card-meta');
+    if (meta) meta.textContent = cardMetaText(file);
   }
 }
 
@@ -7438,6 +7683,9 @@ function buildCard(file, index, group = null, seq = null) {
   const card = document.createElement('article');
   card.className = 'card' + (state.selected.has(file.path) ? ' selected' : '');
   card.dataset.path = file.path;
+  // Reachable by Tab: Enter plays it and Space selects it (see onGridKey).
+  card.tabIndex = 0;
+  card.setAttribute('aria-label', file.name);
   if (group && group.key != null) card.dataset.group = group.key;
   indexCard(file.path, card);
   cardArgs.set(card, { file, index, group, seq });
@@ -7456,9 +7704,14 @@ function buildCard(file, index, group = null, seq = null) {
   ticks.className = 'ticks';
   preview.appendChild(ticks);
 
-  const selectMark = document.createElement('div');
+  // A button, so it is announced as one and says whether it is pressed; it
+  // still looks like the ring it always was.
+  const selectMark = document.createElement('button');
+  selectMark.type = 'button';
   selectMark.className = 'select-mark';
   selectMark.textContent = '✓';
+  selectMark.setAttribute('aria-pressed', String(state.selected.has(file.path)));
+  selectMark.setAttribute('aria-label', 'Select');
   preview.appendChild(selectMark);
 
   // Bottom right holds what the video is and what you made of it. The rating
@@ -7490,7 +7743,7 @@ function buildCard(file, index, group = null, seq = null) {
   if (file.cloudOnly) {
     const cloudMark = document.createElement('div');
     cloudMark.className = 'cloud-mark';
-    cloudMark.innerHTML = '<span class="cloud-ico">☁</span>';
+    cloudMark.innerHTML = `<span class="cloud-ico">${svgIcon(ICON_PATHS.cloud, 26)}</span>`;
     const label = document.createElement('span');
     label.className = 'cloud-label';
     label.textContent = 'cloud-only';
@@ -7553,10 +7806,16 @@ function buildCard(file, index, group = null, seq = null) {
   name.title = file.name;
   details.appendChild(name);
 
-  // Below the name: the rating and the labels, and nothing else. The running
-  // time is on the picture, cloud-only has its own mark there, and the size,
-  // codec, folder and dates are all in the player and the hover bar -- on a
-  // card they were four lines of grey text between you and the next tile.
+  // One quiet line of when, how sharp and where -- switchable in Settings, for
+  // anyone who wants the cards back to name and labels only.
+  const meta = document.createElement('span');
+  meta.className = 'card-meta';
+  meta.textContent = cardMetaText(file);
+  details.appendChild(meta);
+
+  // Below that, the rating and the labels. The running time is on the picture,
+  // cloud-only has its own mark there, and the size and codec are in the
+  // player and the hover bar.
   details.appendChild(buildRecordRow(file, { edit: false }));
 
   card.appendChild(details);
@@ -7617,10 +7876,32 @@ function onGridClick(ev) {
   toggleSelect(file.path, index, ev.shiftKey, group);
 }
 
+/**
+ * A focused card answers the two keys a tile needs: Enter plays it, Space
+ * selects it. Only the card itself -- a key pressed in the rename box or on a
+ * quick-bar button inside it is that control's.
+ */
+function onGridKey(ev) {
+  if (!ev.target.classList || !ev.target.classList.contains('card')) return;
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  const at = cardAt(ev.target);
+  if (!at) return;
+  if (ev.key === 'Enter') {
+    ev.preventDefault();
+    ev.stopPropagation();
+    playFile(at.file, at.seq);
+  } else if (ev.key === ' ') {
+    ev.preventDefault();
+    ev.stopPropagation();
+    toggleSelect(at.file.path, at.index, ev.shiftKey, at.group);
+  }
+}
+
 /** Wires the grid once; the cards themselves carry no click or drag listeners. */
 function attachGridHandlers() {
   const grid = $('#grid');
   grid.addEventListener('click', onGridClick);
+  grid.addEventListener('keydown', onGridKey);
   grid.addEventListener('dragstart', (ev) => {
     const at = cardAt(ev.target);
     if (at) cardDragStart(ev, at.file, at.index);
@@ -7654,12 +7935,12 @@ function actionsFor(file, { card = null, inPlayer = false } = {}) {
     // real browser exactly as the one on the card used to -- and first in the
     // row, because it is the only one that does not touch the file.
     ...(file.url ? [{
-      icon: '🔗',
+      icon: ICONS.link,
       title: `Open ${sourceLabel(file.url).replace(/ ↗$/, '')} — ${file.url}`,
       href: file.url,
     }] : []),
     ...(file.cloudOnly ? [{
-      icon: '☁',
+      icon: ICONS.cloud,
       title: `Fetch preview — downloads ${fmtBytes(file.size)} from OneDrive`,
       run: () => optInCloud(file, cardFor()),
     }] : []),
@@ -7667,18 +7948,18 @@ function actionsFor(file, { card = null, inPlayer = false } = {}) {
     // this would be a second way to reach what is already sitting next to it.
     ...(inPlayer ? [] : [
       {
-        icon: '⌗',
+        icon: ICONS.tag,
         title: 'Tags',
         run: () => openTagDialog([fileAt(file.path) || file]),
       },
     ]),
     {
-      icon: '✎',
+      icon: ICONS.rename,
       title: 'Rename',
       run: () => (inPlayer ? renameFromPlayer(file) : startRename(file, cardFor())),
     },
     {
-      icon: '➜',
+      icon: ICONS.move,
       title: 'Move to…',
       run: () => pickFolder('Move to folder', async (dest) => {
         if (inPlayer) releasePlayer();
@@ -7688,7 +7969,7 @@ function actionsFor(file, { card = null, inPlayer = false } = {}) {
       }),
     },
     {
-      icon: '🗑',
+      icon: ICONS.trash,
       title: 'Delete (Recycle Bin)',
       danger: true,
       run: async () => {
@@ -7714,8 +7995,10 @@ function actionsFor(file, { card = null, inPlayer = false } = {}) {
 function buildActionButton(action) {
   const el = document.createElement(action.href ? 'a' : 'button');
   el.className = 'qbtn' + (action.danger ? ' danger' : '');
-  el.textContent = action.icon;
+  // Every action's icon is one of ICONS, drawn markup rather than a glyph.
+  el.innerHTML = action.icon;
   el.title = action.title;
+  el.setAttribute('aria-label', action.title);
   if (action.href) {
     el.href = action.href;
     el.target = '_blank';
@@ -7961,10 +8244,25 @@ function syncGroupsFold() {
   btn.textContent = all ? 'Expand all' : 'Collapse all';
 }
 
-async function toggleGrouped() {
-  // Off, credited, suggested, duplicates, off. The plain listing is never more than one
-  // more press away, whichever grouping you are in.
-  state.grouped = GROUP_MODES[(GROUP_MODES.indexOf(state.grouped) + 1) % GROUP_MODES.length];
+/**
+ * The groupings, as the menu offers them: what each is called in full, and the
+ * word the toolbar button wears while it is in force.
+ */
+const GROUP_LABELS = {
+  '': { long: 'None', short: '' },
+  models: { long: 'Credited performer', short: 'Credited' },
+  suggested: { long: 'Suggested performer', short: 'Suggested' },
+  dupes: { long: 'Duplicates', short: 'Duplicates' },
+};
+
+/**
+ * Groups the listing one way, or (mode '') not at all. No toast: the button and
+ * the Videos heading both say which grouping is in force.
+ */
+async function setGrouped(mode) {
+  if (!GROUP_MODES.includes(mode)) mode = '';
+  if (mode === state.grouped) return;
+  state.grouped = mode;
   foldedGroups.clear();
   syncGroupButton();
   // The whole set, not the part of it in this folder.
@@ -7972,46 +8270,78 @@ async function toggleGrouped() {
   else forgetOtherCopies();
   await saveConfig({ grouped: state.grouped });
   render();
-  if (!state.grouped) return;
-  const named = state.groups.filter((g) => !g.unnamed).length;
-  const marked = state.groups.filter((g) => !g.unnamed && isFavouriteModel(g.name)).length;
-  if (state.grouped === 'dupes') {
-    const sets = state.groups.filter((g) => !g.unnamed).length;
-    const extra = state.groups.filter((g) => !g.unnamed)
-      .reduce((n, g) => n + g.files.length - 1, 0);
-    toast(sets
-      ? `${sets} set${sets === 1 ? '' : 's'} of copies, ${extra} file${extra === 1 ? '' : 's'} could go`
-      : 'No copies found in this listing', sets ? 'ok' : 'info');
-    return;
+}
+
+/** A menu like the sort one: four rows, the grouping in force ticked. */
+function renderGroupMenu() {
+  const menu = $('#groupMenu');
+  menu.replaceChildren();
+  const head = document.createElement('div');
+  head.className = 'menu-head';
+  head.textContent = 'Group by';
+  menu.appendChild(head);
+  for (const mode of GROUP_MODES) {
+    const on = mode === state.grouped;
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'menu-row' + (on ? ' on' : '');
+    row.setAttribute('role', 'menuitemradio');
+    row.setAttribute('aria-checked', String(on));
+    const label = document.createElement('span');
+    label.textContent = GROUP_LABELS[mode].long;
+    row.appendChild(label);
+    const tick = document.createElement('span');
+    tick.className = 'menu-arrow';
+    tick.textContent = on ? '✓' : '';
+    row.appendChild(tick);
+    row.title = {
+      '': 'The plain listing',
+      models: 'A section per credited performer, best rated first',
+      suggested: 'A section per performer the faces point to, 20% and up, less names turned down',
+      dupes: 'A section per video, with every copy of it side by side',
+    }[mode];
+    row.addEventListener('click', () => {
+      toggleGroupMenu(false);
+      setGrouped(mode);
+    });
+    menu.appendChild(row);
   }
-  if (state.grouped === 'suggested') {
-    toast(named
-      ? `${named} suggested performer${named === 1 ? '' : 's'}, by favourite tier then points`
-      : 'Nobody suggested in this listing', named ? 'ok' : 'info');
-    return;
+}
+
+function toggleGroupMenu(open) {
+  const menu = $('#groupMenu');
+  const show = open === undefined ? menu.hidden : open;
+  if (show) { toggleVolumeMenu(false); toggleSortMenu(false); renderGroupMenu(); }
+  menu.hidden = !show;
+  $('#groupBtn').setAttribute('aria-expanded', String(show));
+  if (show) {
+    const current = menu.querySelector('.menu-row.on') || menu.querySelector('.menu-row');
+    if (current) current.focus({ preventScroll: true });
   }
-  toast(named
-    ? `${named} performer${named === 1 ? '' : 's'}, best rated first`
-      + (marked ? ` — ${marked} marked` : '')
-    : 'Nobody named in this listing', 'ok');
 }
 
 function syncGroupButton() {
   const btn = $('#groupBtn');
   if (!btn) return;
-  btn.classList.toggle('on', Boolean(state.grouped));
-  // Two different groupings behind one button, so the state has to be
-  // legible without pressing it: the heart changes colour as well as filling.
-  btn.classList.toggle('by-dupes', state.grouped === 'dupes');
-  btn.classList.toggle('by-suggested', state.grouped === 'suggested');
-  btn.title = {
-    '': 'Ungrouped — click to group this listing by credited performer',
-    models: 'Grouped by credited performer — click to group by suggested performer',
-    suggested: 'Grouped by suggested performer — who the faces look like, 20% and '
-      + 'up, less names turned down — click to group copies of the same video together',
-    dupes: 'Grouped by duplicate — each section is one video and every copy of '
-      + 'it, side by side — click for the plain listing',
-  }[state.grouped];
+  const mode = state.grouped || '';
+  const names = GROUP_LABELS[mode] || GROUP_LABELS[''];
+  btn.classList.toggle('on', Boolean(mode));
+  // Each grouping keeps its own colour, so the state reads without the menu.
+  btn.classList.toggle('by-dupes', mode === 'dupes');
+  btn.classList.toggle('by-suggested', mode === 'suggested');
+  btn.title = mode ? `Grouped by ${names.long.toLowerCase()} — click to change` : 'Group by…';
+  btn.setAttribute('aria-label', mode ? `Group by: ${names.long}` : 'Group by');
+  const label = $('#groupBtnLabel');
+  if (label) {
+    label.textContent = names.short;
+    label.hidden = !mode;
+  }
+  // The heading over the grid says it too, where the sections are.
+  const echo = $('#groupEcho');
+  if (echo) {
+    echo.textContent = mode ? `· grouped by ${names.long.toLowerCase()}` : '';
+    echo.hidden = !mode;
+  }
 }
 
 // ---------------------------------------------------------------- selection
@@ -8045,7 +8375,10 @@ function toggleSelect(filePath, index, shiftKey, group = null) {
 
 function syncSelectionUI() {
   for (const card of document.querySelectorAll('.card')) {
-    card.classList.toggle('selected', state.selected.has(card.dataset.path));
+    const on = state.selected.has(card.dataset.path);
+    card.classList.toggle('selected', on);
+    const ring = card.querySelector('.select-mark');
+    if (ring) ring.setAttribute('aria-pressed', String(on));
   }
   updateSelectionBar();
 }
@@ -8146,13 +8479,17 @@ function wireEvents() {
   // .menu-host would leave the sort menu open behind the volume popover.
   document.addEventListener('click', (ev) => {
     const host = ev.target.closest('.menu-host');
-    for (const [menu, close] of [['#volMenu', toggleVolumeMenu], ['#sortMenu', toggleSortMenu]]) {
+    for (const [menu, close] of [['#volMenu', toggleVolumeMenu], ['#sortMenu', toggleSortMenu],
+      ['#groupMenu', toggleGroupMenu]]) {
       const el = $(menu);
       if (!el.hidden && (!host || !host.contains(el))) close(false);
     }
   });
 
   $('#cardWidth').addEventListener('input', (ev) => setCardWidth(Number(ev.target.value)));
+  // Saved as it changes, like the sliders beside it: the grid behind the
+  // dialog is the preview.
+  $('#setCardDetails').addEventListener('change', (ev) => setCardDetails(ev.target.checked));
   $('#cardWidth').addEventListener('change', (ev) => saveConfig({ cardWidth: Number(ev.target.value) }));
 
   // Ctrl and the wheel resize the tiles, the way every other picture viewer
@@ -8352,7 +8689,10 @@ function wireEvents() {
   });
 
   // settings
-  $('#groupBtn').addEventListener('click', toggleGrouped);
+  $('#groupBtn').addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    toggleGroupMenu();
+  });
 
   $('#settingsBtn').addEventListener('click', () => {
     $('#setPreviewMode').value = state.config.previewMode === 'sprite' ? 'sprite' : 'live';
@@ -8362,6 +8702,7 @@ function wireEvents() {
     $('#setHomeDir').value = state.config.homeDir || '';
     $('#setHomeFolders').value = (state.config.homeFolders || []).join(', ');
     $('#setHomeFollow').checked = state.config.homeFollowsAccount !== false;
+    $('#setCardDetails').checked = cardDetailsOn();
     syncHomeFields();
     syncFacetColours();
     renderLabelList();
@@ -8666,6 +9007,8 @@ function wireEvents() {
   }
 
   document.addEventListener('keydown', onKeyDown);
+  $('#playerKeys').addEventListener('click', (ev) => { ev.stopPropagation(); openKeysSheet(); });
+  watchModalFocus();
 
   // Side buttons on a mouse: 3 = back, 4 = forward.
   window.addEventListener('mouseup', (ev) => {
@@ -8690,7 +9033,7 @@ function isTyping() {
 function modalOpen() {
   return !$('#playerModal').hidden || !$('#pickerModal').hidden
     || !$('#settingsModal').hidden || !$('#tagModal').hidden || !$('#advModal').hidden
-    || !$('#faceModal').hidden;
+    || !$('#faceModal').hidden || !$('#keysModal').hidden;
 }
 
 /**
@@ -8701,7 +9044,14 @@ function modalOpen() {
  */
 function playerHasKeys() {
   return !$('#playerModal').hidden && $('#pickerModal').hidden
-    && $('#settingsModal').hidden && $('#tagModal').hidden && $('#advModal').hidden;
+    && $('#settingsModal').hidden && $('#tagModal').hidden && $('#advModal').hidden
+    && $('#keysModal').hidden;
+}
+
+/** The keyboard shortcuts sheet, over whatever is open. */
+function openKeysSheet() {
+  closeFaceHover();
+  $('#keysModal').hidden = false;
 }
 
 function onKeyDown(ev) {
@@ -8713,6 +9063,9 @@ function onKeyDown(ev) {
     if (!$('#pbMarkMenu').hidden) { closeMarkMenu(); return; }
     if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
     if (!$('#volMenu').hidden) { toggleVolumeMenu(false); return; }
+    if (!$('#sortMenu').hidden) { toggleSortMenu(false); $('#sortBtn').focus(); return; }
+    if (!$('#groupMenu').hidden) { toggleGroupMenu(false); $('#groupBtn').focus(); return; }
+    if (!$('#keysModal').hidden) { $('#keysModal').hidden = true; return; }
     // The lineup opens over the player and over the label dialog, so it is the
     // first layer Escape takes off.
     if (!$('#faceModal').hidden) return closeFaceLineup();
@@ -8726,6 +9079,15 @@ function onKeyDown(ev) {
       state.selected.clear();
       syncSelectionUI();
     }
+    return;
+  }
+
+  // ? is the shortcuts sheet, from anywhere a key is not being typed -- the
+  // player included, which is where most of them live.
+  if (ev.key === '?' && !isTyping() && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+    ev.preventDefault();
+    if ($('#keysModal').hidden) openKeysSheet();
+    else $('#keysModal').hidden = true;
     return;
   }
 
@@ -8905,6 +9267,174 @@ function onKeyDown(ev) {
   }
 }
 
+/**
+ * Focus follows the dialogs: into one as it opens, back to whatever opened it
+ * as it closes.
+ *
+ * Watched rather than wired into every opener: a dialog is opened and closed
+ * from a dozen places, each by flipping its `hidden`, and one observer sees
+ * all of them -- including the ones written after this. If the opener did
+ * not put the focus somewhere inside itself (the label box, say), the card
+ * takes it, so Tab starts from the dialog and not the grid beneath it.
+ */
+function watchModalFocus() {
+  const openers = new Map();
+  const observer = new MutationObserver((records) => {
+    for (const { target: modal } of records) {
+      const card = modal.querySelector('.modal-card');
+      if (!card) continue;
+      if (!modal.hidden && !openers.has(modal)) {
+        const from = document.activeElement;
+        openers.set(modal, from && from !== document.body ? from : null);
+        // After the opener has had its turn to focus something of its own.
+        requestAnimationFrame(() => {
+          if (modal.hidden || card.contains(document.activeElement)) return;
+          if (!card.hasAttribute('tabindex')) card.tabIndex = -1;
+          card.focus({ preventScroll: true });
+        });
+      } else if (modal.hidden && openers.has(modal)) {
+        const back = openers.get(modal);
+        openers.delete(modal);
+        // Only if the focus was still in the dialog: a dialog closed because
+        // something else took the keyboard should not snatch it back.
+        const lost = !document.activeElement || document.activeElement === document.body
+          || card.contains(document.activeElement);
+        if (lost && back && back.isConnected && !back.closest('[hidden]')) {
+          back.focus({ preventScroll: true });
+        }
+      }
+    }
+  });
+  for (const modal of document.querySelectorAll('.modal')) {
+    observer.observe(modal, { attributes: true, attributeFilter: ['hidden'] });
+  }
+}
+
+/**
+ * Whether the cards carry their detail line. Saved through the config like
+ * every other preference -- but the server only keeps the keys it already
+ * knows, and drops this one until it learns it, so the answer is also kept in
+ * this browser and read from there whenever the config comes back without it.
+ */
+const DETAILS_KEY = 've-card-details';
+
+function cardDetailsOn() {
+  if (typeof state.config.cardDetails === 'boolean') return state.config.cardDetails;
+  try { return localStorage.getItem(DETAILS_KEY) !== '0'; } catch { return true; }
+}
+
+async function setCardDetails(on) {
+  try { localStorage.setItem(DETAILS_KEY, on ? '1' : '0'); } catch { /* the config still has it */ }
+  await saveConfig({ cardDetails: on });
+  syncCardDetails();
+}
+
+/** The cards' detail line, on or off, from the setting. */
+function syncCardDetails() {
+  const grid = $('#grid');
+  if (grid) grid.classList.toggle('no-details', !cardDetailsOn());
+}
+
+/**
+ * The line under a card's name: when, how sharp, and where. The date is the
+ * file's; the resolution only once a probe has read it; the subfolder only
+ * where there is one to tell apart -- a flattened or recursive listing.
+ */
+function cardMetaText(file) {
+  const info = state.meta.get(file.path) || {};
+  const bits = [];
+  if (file.mtimeMs) {
+    bits.push(new Date(file.mtimeMs).toLocaleDateString('en-GB', {
+      day: 'numeric', month: 'short', year: 'numeric',
+    }));
+  }
+  if (info.width && info.height) {
+    const lines = Math.min(info.width, info.height);
+    bits.push(lines >= 2100 ? '4K' : `${lines}p`);
+  }
+  if (file.relFolder) bits.push(file.relFolder);
+  return bits.join(' · ');
+}
+
+/**
+ * The filter in force, under the search: a chip a facet, each with a cross
+ * that clears just that facet. The dialog is where a filter is built; this is
+ * where you see it, and take a piece of it back, without opening anything.
+ */
+const FACET_NAMES = {
+  tags: 'Tags', ratings: 'Rating', models: 'Models', height: 'Height', bust: 'Bust',
+  body: 'Body', race: 'Race', favourites: 'Favourites', framing: 'Framing',
+  fingerprint: 'Fingerprints', profiling: 'Profiling', suggestions: 'Suggested',
+  storage: 'Storage',
+};
+const NONE_NAMES = {
+  tags: 'no tags', models: 'no models', height: 'no height', bust: 'no bust',
+  body: 'no body', race: 'no race', favourites: 'no favourite',
+};
+
+function facetValueText(facet, value) {
+  if (value === NOTHING) return NONE_NAMES[facet] || 'none';
+  if (facet === 'ratings') return value === 0 ? 'unrated' : `${starsNumber(value)}★`;
+  const row = CHOICE_ROWS.find(([, f]) => f === facet);
+  if (row) {
+    const found = row[2].find(([v]) => v === value);
+    return found ? found[1] : String(value);
+  }
+  return String(value);
+}
+
+function renderActiveFilters() {
+  const host = $('#activeFilters');
+  if (!host) return;
+  host.replaceChildren();
+  let facets = 0;
+  for (const facet of ALL_FACETS) {
+    const held = state.adv[facet];
+    if (!held || !held.size) continue;
+    facets += 1;
+    const chip = document.createElement('span');
+    chip.className = 'chip has-x active-chip';
+    const label = document.createElement('span');
+    label.className = 'chip-text';
+    const parts = [...held].map(([value, mode]) => (mode === 'out' ? '−' : '') + facetValueText(facet, value));
+    const mode = state.adv.mode && state.adv.mode[facet];
+    const how = held.size > 1 && mode === 'any' ? ' (any)' : '';
+    label.textContent = `${FACET_NAMES[facet] || facet}: ${parts.join(', ')}${how}`;
+    chip.title = label.textContent;
+    chip.appendChild(label);
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'chip-x';
+    x.textContent = '✕';
+    x.title = `Clear ${FACET_NAMES[facet] || facet}`;
+    x.setAttribute('aria-label', x.title);
+    x.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      // A fresh map rather than clearing in place: the dialog's draft may be
+      // holding this one, and Cancel there must still mean cancel.
+      state.adv = { ...state.adv, [facet]: new Map() };
+      syncAdvBadge();
+      render();
+    });
+    chip.appendChild(x);
+    host.appendChild(chip);
+  }
+  if (facets > 1) {
+    const all = document.createElement('button');
+    all.type = 'button';
+    all.className = 'linkish';
+    all.textContent = 'Clear all';
+    all.addEventListener('click', () => {
+      state.adv = newAdvFilter();
+      syncAdvBadge();
+      render();
+    });
+    host.appendChild(all);
+  }
+  host.hidden = facets === 0;
+  return facets;
+}
+
 // -------------------------------------------------------------------- init
 
 async function init() {
@@ -8989,6 +9519,7 @@ async function init() {
   watchSimilarScroll();
   $('#dwellMs').value = state.config.dwellMs || 2000;
   $('#dwellLabel').textContent = ((state.config.dwellMs || 2000) / 1000).toFixed(1) + 's';
+  syncCardDetails();
 
   // The vocabularies are library-wide, so they load once rather than per scan.
   api('/api/library').then((data) => {

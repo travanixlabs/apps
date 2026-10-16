@@ -51,21 +51,28 @@
     </div>
 
 
-    <button id="advBtn" class="btn btn-icon" title="Advanced filters — folders, tags, rating">
+    <button id="advBtn" class="btn btn-icon" aria-label="Advanced filters"
+            title="Advanced filters — tags, rating, models, performer, sweeps">
       <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
         <path d="M1.5 2.5h13L9.5 8.6v4.2l-3 1.7V8.6z" fill="none" stroke="currentColor"
               stroke-width="1.4" stroke-linejoin="round"/>
       </svg>
-      <span id="advDot" class="adv-dot" hidden></span>
+      <!-- How many facets are in force. -->
+      <span id="advDot" class="adv-count" hidden></span>
     </button>
 
-    <button id="groupBtn" class="btn btn-icon" aria-label="Favourite models"
-            title="Favourite models — group this listing by performer">
-      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-        <path d="M8 13.8C8 13.8 2 10.3 2 6.3a3 3 0 0 1 6-1.1 3 3 0 0 1 6 1.1c0 4-6 7.5-6 7.5z"
-              fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
-      </svg>
-    </button>
+    <div class="menu-host">
+      <button id="groupBtn" class="btn btn-icon group-btn" aria-haspopup="menu" aria-expanded="false"
+              aria-label="Group by" title="Group by">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none"
+             stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="2.5" width="12" height="4" rx="1"/>
+          <path d="M3.5 9.5h9M3.5 12.5h9"/>
+        </svg>
+        <span id="groupBtnLabel" class="group-btn-label" hidden></span>
+      </button>
+      <div id="groupMenu" class="menu" role="menu" hidden></div>
+    </div>
 
     <div class="menu-host">
       <button id="volBtn" class="btn btn-icon" title="Volume">
@@ -91,7 +98,14 @@
       </div>
     </div>
 
-    <button id="settingsBtn" class="btn btn-icon" title="Settings">⚙</button>
+    <button id="settingsBtn" class="btn btn-icon" title="Settings" aria-label="Settings">
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none"
+           stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="8" cy="8" r="2.2"/>
+        <path d="M8 1.6v1.8M8 12.6v1.8M1.6 8h1.8M12.6 8h1.8M3.5 3.5l1.3 1.3M11.2 11.2l1.3 1.3M3.5 12.5l1.3-1.3M11.2 4.8l1.3-1.3"/>
+        <circle cx="8" cy="8" r="4.6"/>
+      </svg>
+    </button>
   </div>
 
   <div class="topbar-row secondary">
@@ -114,6 +128,10 @@
     </button>
     <span id="status" class="status"></span>
   </div>
+
+  <!-- The filter in force, a chip a facet, each one clearing its own. Hidden
+       while nothing is filtered. -->
+  <div id="activeFilters" class="active-filters" hidden></div>
 
 
   <div id="selectionBar" class="selection-bar" hidden>
@@ -141,7 +159,7 @@
 
 <section id="foldersSection" class="folders-pane" hidden>
   <h2 class="section-head">
-    <button id="foldersCollapse" class="collapse-btn" title="Collapse or expand">▾</button>
+    <button id="foldersCollapse" class="collapse-btn" title="Collapse or expand" aria-label="Collapse or expand the folders">▾</button>
     Folders <span id="folderCount" class="count"></span>
   </h2>
   <div id="folders" class="folder-grid"></div>
@@ -155,6 +173,7 @@
 
   <section id="filesSection" class="section" hidden>
     <h2 class="section-head">Videos <span id="fileCount" class="count"></span>
+      <span id="groupEcho" class="count group-echo" hidden></span>
       <button id="groupsFold" class="linkish groups-fold" type="button" hidden>Collapse all</button>
       <label id="groupsOnly" class="groups-only" hidden><input id="groupsOnlyBox" type="checkbox">
         <span id="groupsOnlyText"></span></label></h2>
@@ -164,10 +183,10 @@
 
 <!-- Folder picker -->
 <div id="pickerModal" class="modal" hidden>
-  <div class="modal-card">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="pickerTitle">
     <header class="modal-head">
       <h2 id="pickerTitle">Choose a folder</h2>
-      <button class="btn btn-icon modal-close">✕</button>
+      <button class="btn btn-icon modal-close" aria-label="Close">✕</button>
     </header>
     <div class="picker-path">
       <button id="pickerUp" class="btn btn-icon" title="Up one level">↑</button>
@@ -185,7 +204,7 @@
 
 <!-- Inline player -->
 <div id="playerModal" class="modal" hidden>
-  <div class="modal-card modal-wide">
+  <div class="modal-card modal-wide" role="dialog" aria-modal="true" aria-labelledby="playerTitle">
     <header class="modal-head">
       <span id="playerCount" class="player-count mono" hidden></span>
       <h2 id="playerTitle">Playing</h2>
@@ -204,7 +223,7 @@
           <rect x="5" y="5.4" width="6" height="5.2" rx=".8"/>
         </svg>
       </button>
-      <button class="btn btn-icon modal-close">✕</button>
+      <button class="btn btn-icon modal-close" aria-label="Close">✕</button>
     </header>
     <div class="player-stage">
       <video id="player" preload="metadata"></video>
@@ -365,6 +384,8 @@
           <span id="playerMeta" class="mono"></span>
         </span>
       </span>
+      <button id="playerKeys" class="linkish keys-link" type="button"
+              title="Keyboard shortcuts (?)">Keys ?</button>
     </footer>
   </div>
 </div>
@@ -394,10 +415,10 @@
 </div>
 
 <div id="faceModal" class="modal" hidden>
-  <div class="modal-card face-card">
+  <div class="modal-card face-card" role="dialog" aria-modal="true" aria-labelledby="faceTitle">
     <header class="modal-head">
       <h2 id="faceTitle">Is this her?</h2>
-      <button class="btn btn-icon modal-close">✕</button>
+      <button class="btn btn-icon modal-close" aria-label="Close">✕</button>
     </header>
 
     <div class="face-body">
@@ -425,97 +446,40 @@
 
 <!-- Advanced filters -->
 <div id="advModal" class="modal" hidden>
-  <div class="modal-card wide">
+  <div class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="advTitle">
     <header class="modal-head">
-      <h2>Advanced filters</h2>
+      <h2 id="advTitle">Advanced filters</h2>
       <span id="advMatch" class="adv-match"></span>
-      <button class="btn btn-icon modal-close">✕</button>
+      <button class="btn btn-icon modal-close" aria-label="Close">✕</button>
     </header>
+    <p class="adv-legend">Click a chip once to require it, again to exclude it, again to clear.</p>
 
     <div class="adv-body">
       <!-- No name box here. The filter field in the top bar already matches the
            filename, the subfolder and the tags, filters as you type, and does
            not have to be opened first. -->
-      <!-- Height, bust, body, race and favourite tier belong to performers: a
-           video carries what its credited performers have. -->
-      <!-- Sync: what the sweeps have done, and where the file lives. -->
-      <details id="advMore" class="adv-block adv-sync">
-        <summary class="adv-label">Additional options</summary>
-        <div class="sync-row"><span class="sync-name">Framing</span>
-          <div id="advFraming" class="chip-row"></div>
-          <button class="linkish" data-clear="framing">clear</button></div>
-        <div class="sync-row"><span class="sync-name">Fingerprints</span>
-          <div id="advFingerprint" class="chip-row"></div>
-          <button class="linkish" data-clear="fingerprint">clear</button></div>
-        <div class="sync-row"><span class="sync-name">Profiling</span>
-          <div id="advProfiling" class="chip-row"></div>
-          <button class="linkish" data-clear="profiling">clear</button></div>
-        <div class="sync-row"><span class="sync-name">Models suggested</span>
-          <div id="advSuggestions" class="chip-row"></div>
-          <button class="linkish" data-clear="suggestions">clear</button></div>
-        <div class="sync-row"><span class="sync-name">Downloaded / cloud</span>
-          <div id="advStorage" class="chip-row"></div>
-          <button class="linkish" data-clear="storage">clear</button></div>
-      </details>
-
+      <!-- Most-used first: what a video is about, how good it is, and who is
+           in it. Then what belongs to the performers, then the sweeps. -->
       <div class="adv-block">
         <div class="adv-label">
-          Height
+          Tags
           <span class="adv-mode">
-            <label><input type="radio" name="heightMode" value="all" checked> all</label>
-            <label><input type="radio" name="heightMode" value="any"> any</label>
+            <label><input type="radio" name="tagMode" value="all" checked> all</label>
+            <label><input type="radio" name="tagMode" value="any"> any</label>
           </span>
-          <button class="linkish" data-clear="height">clear</button>
+          <button class="linkish" data-clear="tags">Clear</button>
         </div>
-        <div id="advHeight" class="chip-row"></div>
+        <input id="advTagsFind" class="chip-find" type="text" autocomplete="off"
+               spellcheck="false" placeholder="search tags">
+        <div id="advTags" class="chip-row scroller"></div>
       </div>
 
       <div class="adv-block">
         <div class="adv-label">
-          Bust
-          <span class="adv-mode">
-            <label><input type="radio" name="bustMode" value="all" checked> all</label>
-            <label><input type="radio" name="bustMode" value="any"> any</label>
-          </span>
-          <button class="linkish" data-clear="bust">clear</button>
+          Rating
+          <button class="linkish" data-clear="rating">Clear</button>
         </div>
-        <div id="advBust" class="chip-row"></div>
-      </div>
-
-      <div class="adv-block">
-        <div class="adv-label">
-          Body
-          <span class="adv-mode">
-            <label><input type="radio" name="bodyMode" value="all" checked> all</label>
-            <label><input type="radio" name="bodyMode" value="any"> any</label>
-          </span>
-          <button class="linkish" data-clear="body">clear</button>
-        </div>
-        <div id="advBody" class="chip-row"></div>
-      </div>
-
-      <div class="adv-block">
-        <div class="adv-label">
-          Race
-          <span class="adv-mode">
-            <label><input type="radio" name="raceMode" value="all" checked> all</label>
-            <label><input type="radio" name="raceMode" value="any"> any</label>
-          </span>
-          <button class="linkish" data-clear="race">clear</button>
-        </div>
-        <div id="advRace" class="chip-row"></div>
-      </div>
-
-      <div class="adv-block">
-        <div class="adv-label">
-          Favourites
-          <span class="adv-mode">
-            <label><input type="radio" name="favouritesMode" value="all" checked> all</label>
-            <label><input type="radio" name="favouritesMode" value="any"> any</label>
-          </span>
-          <button class="linkish" data-clear="favourites">clear</button>
-        </div>
-        <div id="advFavourites" class="chip-row"></div>
+        <div id="advRating" class="chip-row"></div>
       </div>
 
       <div class="adv-block">
@@ -525,34 +489,99 @@
             <label><input type="radio" name="modelMode" value="all" checked> all</label>
             <label><input type="radio" name="modelMode" value="any"> any</label>
           </span>
-          <button class="linkish" data-clear="models">clear</button>
+          <button class="linkish" data-clear="models">Clear</button>
         </div>
         <input id="advModelsFind" class="chip-find" type="text" autocomplete="off"
-               spellcheck="false" placeholder="search models">
+               spellcheck="false" placeholder="Type to find a performer">
         <div id="advModels" class="chip-row scroller"></div>
       </div>
 
-      <div class="adv-block">
-        <div class="adv-label">
-          Rating
-          <button class="linkish" data-clear="rating">clear</button>
-        </div>
-        <div id="advRating" class="chip-row"></div>
-      </div>
+      <!-- Height, bust, body, race and favourite tier belong to performers: a
+           video carries what its credited performers have. -->
+      <section class="adv-group" aria-labelledby="advPersonHead">
+        <h3 id="advPersonHead" class="adv-group-head">Performer</h3>
 
-      <div class="adv-block">
-        <div class="adv-label">
-          Tags
-          <span class="adv-mode">
-            <label><input type="radio" name="tagMode" value="all" checked> all</label>
-            <label><input type="radio" name="tagMode" value="any"> any</label>
-          </span>
-          <button class="linkish" data-clear="tags">clear</button>
+        <div class="adv-block">
+          <div class="adv-label">
+            Height
+            <span class="adv-mode">
+              <label><input type="radio" name="heightMode" value="all" checked> all</label>
+              <label><input type="radio" name="heightMode" value="any"> any</label>
+            </span>
+            <button class="linkish" data-clear="height">Clear</button>
+          </div>
+          <div id="advHeight" class="chip-row"></div>
         </div>
-        <input id="advTagsFind" class="chip-find" type="text" autocomplete="off"
-               spellcheck="false" placeholder="search tags">
-        <div id="advTags" class="chip-row scroller"></div>
-      </div>
+
+        <div class="adv-block">
+          <div class="adv-label">
+            Bust
+            <span class="adv-mode">
+              <label><input type="radio" name="bustMode" value="all" checked> all</label>
+              <label><input type="radio" name="bustMode" value="any"> any</label>
+            </span>
+            <button class="linkish" data-clear="bust">Clear</button>
+          </div>
+          <div id="advBust" class="chip-row"></div>
+        </div>
+
+        <div class="adv-block">
+          <div class="adv-label">
+            Body
+            <span class="adv-mode">
+              <label><input type="radio" name="bodyMode" value="all" checked> all</label>
+              <label><input type="radio" name="bodyMode" value="any"> any</label>
+            </span>
+            <button class="linkish" data-clear="body">Clear</button>
+          </div>
+          <div id="advBody" class="chip-row"></div>
+        </div>
+
+        <div class="adv-block">
+          <div class="adv-label">
+            Race
+            <span class="adv-mode">
+              <label><input type="radio" name="raceMode" value="all" checked> all</label>
+              <label><input type="radio" name="raceMode" value="any"> any</label>
+            </span>
+            <button class="linkish" data-clear="race">Clear</button>
+          </div>
+          <div id="advRace" class="chip-row"></div>
+        </div>
+
+        <div class="adv-block">
+          <div class="adv-label">
+            Favourites
+            <span class="adv-mode">
+              <label><input type="radio" name="favouritesMode" value="all" checked> all</label>
+              <label><input type="radio" name="favouritesMode" value="any"> any</label>
+            </span>
+            <button class="linkish" data-clear="favourites">Clear</button>
+          </div>
+          <div id="advFavourites" class="chip-row"></div>
+        </div>
+      </section>
+
+      <!-- Sync: what the sweeps have done, and where the file lives. Last: it
+           is the least-asked question on the dialog. -->
+      <details id="advMore" class="adv-block adv-sync">
+        <summary class="adv-label">Additional options</summary>
+        <div class="sync-row"><span class="sync-name">Framing</span>
+          <div id="advFraming" class="chip-row"></div>
+          <button class="linkish" data-clear="framing">Clear</button></div>
+        <div class="sync-row"><span class="sync-name">Fingerprints</span>
+          <div id="advFingerprint" class="chip-row"></div>
+          <button class="linkish" data-clear="fingerprint">Clear</button></div>
+        <div class="sync-row"><span class="sync-name">Profiling</span>
+          <div id="advProfiling" class="chip-row"></div>
+          <button class="linkish" data-clear="profiling">Clear</button></div>
+        <div class="sync-row"><span class="sync-name">Models suggested</span>
+          <div id="advSuggestions" class="chip-row"></div>
+          <button class="linkish" data-clear="suggestions">Clear</button></div>
+        <div class="sync-row"><span class="sync-name">Downloaded / cloud</span>
+          <div id="advStorage" class="chip-row"></div>
+          <button class="linkish" data-clear="storage">Clear</button></div>
+      </details>
 
     </div>
 
@@ -565,10 +594,10 @@
 
 <!-- Tag editor -->
 <div id="tagModal" class="modal" hidden>
-  <div class="modal-card">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="tagTitle">
     <header class="modal-head">
       <h2 id="tagTitle">Tags</h2>
-      <button class="btn btn-icon modal-close">✕</button>
+      <button class="btn btn-icon modal-close" aria-label="Close">✕</button>
     </header>
     <div class="tag-body">
       <section class="label-section">
@@ -604,12 +633,15 @@
 
 <!-- Settings -->
 <div id="settingsModal" class="modal" hidden>
-  <div class="modal-card">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
     <header class="modal-head">
-      <h2>Settings</h2>
-      <button class="btn btn-icon modal-close">✕</button>
+      <h2 id="settingsTitle">Settings</h2>
+      <button class="btn btn-icon modal-close" aria-label="Close">✕</button>
     </header>
     <div class="settings-body">
+      <!-- Four groups, in the order they are reached for: where the library
+           is, how previews are made, how the grid looks, and the labels. -->
+      <h3 class="settings-head settings-head-first">Library</h3>
       <label class="field-row">Default folder
         <span class="field-path">
           <input id="setHomeDir" type="text" spellcheck="false" placeholder="C:\Users\…\OneDrive">
@@ -619,13 +651,15 @@
       <label class="field-row check">
         <input id="setHomeFollow" type="checkbox"> Follow the signed-in OneDrive account
       </label>
-      <p class="hint" id="homeHint">Where the app opens on launch, and where the 🏠 button in the breadcrumb goes.</p>
+      <p class="hint" id="homeHint">Where the app opens on launch, and where the home button in the breadcrumb goes.</p>
       <label class="field-row">Folders shown there
         <input id="setHomeFolders" type="text" spellcheck="false" placeholder="Folder 0, Folder 1 — blank for all">
       </label>
       <p class="hint">Names, comma separated, applied at the default folder only. The sync root keeps
         Documents, Music and the rest beside your libraries; this hides them without hiding anything
         deeper in. Leave it blank to list everything.</p>
+
+      <h3 class="settings-head">Previews</h3>
       <label class="field-row">Hover engine
         <select id="setPreviewMode">
           <option value="live">Live video — instant, plays each segment</option>
@@ -642,46 +676,56 @@
       <label class="field-row check">
         <input id="setScrub" type="checkbox"> Scrub frames with mouse position instead of a timer
       </label>
-      <label class="field-row">Card size
-        <input id="cardWidth" type="range" min="200" max="520" step="20" value="200">
+      <label class="field-row">Frame dwell
+        <span class="slider-field">
+          <input id="dwellMs" type="range" min="1000" max="5000" step="250" value="2000">
+          <span id="dwellLabel" class="mono slider-value">2.0s</span>
+        </span>
       </label>
-      <label class="field-row">Frame dwell <span id="dwellLabel" class="mono">2.0s</span>
-        <input id="dwellMs" type="range" min="1000" max="5000" step="250" value="2000">
-      </label>
-      <p class="hint">Both take effect as you drag them, so the grid behind this can be
-        judged while you set them. They are remembered without pressing Save.</p>
       <p class="hint">Changing frame count or tile width rebuilds previews on next hover. Existing sprites stay cached under <span class="mono">.cache</span>.</p>
       <button id="clearCacheBtn" class="btn btn-danger">Clear preview cache</button>
 
+      <h3 class="settings-head">Appearance</h3>
+      <label class="field-row">Card size
+        <span class="slider-field">
+          <input id="cardWidth" type="range" min="200" max="520" step="20" value="200">
+          <span id="cardWidthLabel" class="mono slider-value">200px</span>
+        </span>
+      </label>
+      <label class="field-row check">
+        <input id="setCardDetails" type="checkbox"> Show details on cards — date, resolution and subfolder
+      </label>
+      <p class="hint">The size, the dwell and the details take effect at once, so the grid behind
+        this can be judged while you set them. They are remembered without pressing Save.</p>
       <!-- One colour for performers: a video has one, so there is nothing to
            pick a colour per value FOR -- the kind is what you are telling
            apart at a glance. Labels get one each, below. -->
-      <h3 class="settings-head">Colours</h3>
+      <h4 class="settings-sub">Colours</h4>
       <div class="facet-colours">
         <label class="facet-colour">
           <span class="chip chip-race swatch-demo" id="raceDemo">Race</span>
           <input id="colourRace" type="color" value="#c08cf0">
-          <button class="linkish" data-colour-clear="race">default</button>
+          <button class="linkish" data-colour-clear="race">Default</button>
         </label>
         <label class="facet-colour">
           <span class="chip chip-trait swatch-demo" id="heightDemo">Height</span>
           <input id="colourHeight" type="color" value="#8cb8f0">
-          <button class="linkish" data-colour-clear="height">default</button>
+          <button class="linkish" data-colour-clear="height">Default</button>
         </label>
         <label class="facet-colour">
           <span class="chip chip-trait swatch-demo" id="bustDemo">Bust</span>
           <input id="colourBust" type="color" value="#8cb8f0">
-          <button class="linkish" data-colour-clear="bust">default</button>
+          <button class="linkish" data-colour-clear="bust">Default</button>
         </label>
         <label class="facet-colour">
           <span class="chip chip-trait swatch-demo" id="bodyDemo">Body</span>
           <input id="colourBody" type="color" value="#8cb8f0">
-          <button class="linkish" data-colour-clear="body">default</button>
+          <button class="linkish" data-colour-clear="body">Default</button>
         </label>
         <label class="facet-colour">
           <span class="chip chip-model swatch-demo" id="modelsDemo">Model</span>
           <input id="colourModels" type="color" value="#9ece6a">
-          <button class="linkish" data-colour-clear="models">default</button>
+          <button class="linkish" data-colour-clear="models">Default</button>
         </label>
       </div>
 
@@ -704,6 +748,65 @@
   </div>
 </div>
 
+<!-- Keyboard shortcuts. Opened by ? anywhere you are not typing, and from the
+     player's footer. -->
+<div id="keysModal" class="modal" hidden>
+  <div class="modal-card keys-card" role="dialog" aria-modal="true" aria-labelledby="keysTitle">
+    <header class="modal-head">
+      <h2 id="keysTitle">Keyboard shortcuts</h2>
+      <button class="btn btn-icon modal-close" aria-label="Close">✕</button>
+    </header>
+    <div class="keys-body">
+      <section class="keys-group">
+        <h3 class="settings-head settings-head-first">Grid</h3>
+        <dl class="keys-list">
+          <dt><kbd>Tab</kbd></dt><dd>Move between cards</dd>
+          <dt><kbd>Enter</kbd></dt><dd>Play the focused card</dd>
+          <dt><kbd>Space</kbd></dt><dd>Select the focused card</dd>
+          <dt><kbd>/</kbd></dt><dd>Search</dd>
+          <dt><kbd>Backspace</kbd></dt><dd>Up one folder</dd>
+          <dt><kbd>Alt</kbd>+<kbd>←</kbd> <kbd>Alt</kbd>+<kbd>→</kbd></dt><dd>Back, forward</dd>
+          <dt><kbd>Ctrl</kbd>+wheel</dt><dd>Card size</dd>
+          <dt><kbd>Ctrl</kbd>+<kbd>F5</kbd></dt><dd>Reload with the view reset</dd>
+          <dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd></dt><dd>Start over at the default folder</dd>
+          <dt><kbd>?</kbd></dt><dd>This sheet</dd>
+        </dl>
+      </section>
+      <section class="keys-group">
+        <h3 class="settings-head settings-head-first">Selection</h3>
+        <dl class="keys-list">
+          <dt><kbd>Shift</kbd>+click</dt><dd>Select a range</dd>
+          <dt><kbd>Ctrl</kbd>+<kbd>A</kbd></dt><dd>Select everything listed</dd>
+          <dt><kbd>0</kbd>–<kbd>5</kbd></dt><dd>Rate; <kbd>0</kbd> clears</dd>
+          <dt><kbd>Shift</kbd>+digit</dt><dd>Rate with a half star</dd>
+          <dt><kbd>T</kbd></dt><dd>Tags and models</dd>
+          <dt><kbd>M</kbd></dt><dd>Move to…</dd>
+          <dt><kbd>Del</kbd></dt><dd>Delete (Recycle Bin)</dd>
+          <dt><kbd>Esc</kbd></dt><dd>Clear the selection</dd>
+        </dl>
+      </section>
+      <section class="keys-group">
+        <h3 class="settings-head settings-head-first">Player</h3>
+        <dl class="keys-list">
+          <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Previous, next video</dd>
+          <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Seek 5 seconds; a frame on the preview</dd>
+          <dt><kbd>Space</kbd> <kbd>K</kbd></dt><dd>Play, pause; Space on the preview plays it</dd>
+          <dt><kbd>J</kbd></dt><dd>Back 10 seconds</dd>
+          <dt><kbd>,</kbd> <kbd>.</kbd></dt><dd>Step a frame, while paused</dd>
+          <dt><kbd>&lt;</kbd> <kbd>&gt;</kbd></dt><dd>Slower, faster</dd>
+          <dt><kbd>L</kbd></dt><dd>Loop this video</dd>
+          <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Loop from A, to B</dd>
+          <dt><kbd>M</kbd></dt><dd>Sound on, off</dd>
+          <dt><kbd>F</kbd></dt><dd>Fullscreen</dd>
+          <dt><kbd>0</kbd>–<kbd>5</kbd></dt><dd>Rate this video; hold Shift for a half</dd>
+          <dt>Right-click timeline</dt><dd>Bookmark that moment</dd>
+          <dt><kbd>Esc</kbd></dt><dd>Close, one layer at a time</dd>
+        </dl>
+      </section>
+    </div>
+  </div>
+</div>
+
 <!-- What the three sweeps have done to the folder under the cursor. One shared
      card, positioned against the window: the tiles clip their own overflow and
      sit in a strip that scrolls, so a card inside one would be cut off. -->
@@ -714,7 +817,7 @@
      every poll, so a card left open goes on counting. -->
 <div id="pillPop" class="folder-pop pill-pop" role="tooltip" hidden></div>
 
-<div id="toasts" class="toasts"></div>
+<div id="toasts" class="toasts" role="status" aria-live="polite"></div>
 
 <!-- What "matches the advanced filter" means, shared with the server so the
      folder tiles can be counted where the videos actually are. Must load

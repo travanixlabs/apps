@@ -3,10 +3,10 @@
   --bg-elev: #161b22;
   --bg-elev-2: #1c232c;
   --border: #2a323d;
-  --border-strong: #3a4553;
+  --border-strong: #4a5666;
   --text: #e6edf3;
   --text-dim: #9aa7b4;
-  --text-faint: #6e7d8c;
+  --text-faint: #8391a0;
   --accent: #4c9aff;
   --accent-ink: #08131f;
   --danger: #f4685f;
@@ -45,6 +45,17 @@ body {
 }
 
 button, input, select { font: inherit; color: inherit; }
+
+/* One focus ring, for everything that can take the keyboard, shown only when
+   the keyboard put it there. :where() keeps it at no specificity, so a control
+   that draws its own ring -- the text fields' border glow -- keeps it. */
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* A dialog is focused as a whole when it opens; the ring would be a frame
+   round the entire dialog. */
+.modal-card:focus-visible, .modal-card:focus { outline: none; }
 .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
 
 /* ------------------------------------------------------------------ topbar */
@@ -208,7 +219,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
   flex-wrap: wrap;
 }
 kbd {
-  font: 600 10.5px/1 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font: 600 11px/1 ui-monospace, "Cascadia Mono", Consolas, monospace;
   background: var(--bg);
   border: 1px solid var(--border-strong);
   border-bottom-width: 2px;
@@ -326,7 +337,11 @@ kbd {
   border: none;
   color: var(--text-faint);
   cursor: pointer;
-  padding: 0 2px;
+  /* 24px square to hit, for an 11px glyph. */
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0 6px;
+  border-radius: 5px;
   font-size: 11px;
   transition: transform .14s, color .14s;
 }
@@ -737,6 +752,7 @@ main { padding: 16px; }
   left: 6px;
   width: 24px;
   height: 24px;
+  padding: 0;
   display: grid;
   place-content: center;
   border: 1.5px solid rgba(255, 255, 255, .5);
@@ -758,7 +774,11 @@ main { padding: 16px; }
   background: rgba(76, 154, 255, .35);
   transform: scale(1.12);
 }
-.card:hover .select-mark { opacity: 1; }
+.card:hover .select-mark,
+.card:focus-within .select-mark { opacity: 1; }
+/* Inside the card, which clips: drawn inset so it is not cut off. */
+.select-mark:focus-visible { outline-offset: 1px; }
+.card:focus-visible { outline-offset: 3px; }
 .card.selected .select-mark {
   opacity: 1;
   color: var(--accent-ink);
@@ -778,7 +798,9 @@ main { padding: 16px; }
   transform: translateY(-4px);
   transition: opacity .14s, transform .14s;
 }
-.card:hover .quickbar { opacity: 1; transform: none; }
+.card:hover .quickbar,
+.card:focus-within .quickbar { opacity: 1; transform: none; }
+.quickbar .qbtn:focus-visible { outline-offset: -2px; }
 
 .qbtn {
   width: 28px;
@@ -941,16 +963,6 @@ a.qbtn:hover { color: #dbe6f0; }
 
 #advBtn { position: relative; }
 #advBtn.on { border-color: var(--accent); color: var(--accent); }
-.adv-dot {
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-
 /* Wider than the settings dialog: the folder list is the point of it. */
 .modal-card.wide { width: min(760px, 94vw); }
 .adv-match { font-size: 12px; color: var(--text-dim); margin-left: auto; margin-right: 10px; }
@@ -990,12 +1002,16 @@ a.qbtn:hover { color: #dbe6f0; }
   letter-spacing: 0;
   font-weight: 500;
 }
-.adv-mode label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.adv-mode label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; min-height: 24px; padding: 0 4px; }
 .linkish {
   border: 0;
   background: none;
   color: var(--text-faint);
   font-size: 11px;
+  /* The text stays small; the padding makes it something to aim at. */
+  min-height: 24px;
+  padding: 4px 6px;
+  border-radius: 5px;
   text-transform: none;
   letter-spacing: 0;
   cursor: pointer;
@@ -1036,12 +1052,81 @@ a.qbtn:hover { color: #dbe6f0; }
 .group-head {
   grid-column: 1 / -1;
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 6px;
   margin: 18px 0 2px;
-  padding-bottom: 6px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
 }
+/* Line one: who this is. One row whatever the width -- the name gives way
+   (ellipsis) before anything else does. */
+.group-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 28px;
+}
+.group-line > * { flex: none; }
+.group-line > .group-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The rare answers, behind one quiet button at the end of the line. */
+.group-more {
+  margin-left: auto;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.group-more:hover { color: var(--text); border-color: var(--border-strong); background: var(--bg-elev-2); }
+.group-menu { min-width: 220px; padding: 6px; }
+.group-menu .fav-pop-title { padding: 2px 6px 0; margin-bottom: 4px; }
+.group-menu .menu-row:hover { color: #ff8b8b; }
+/* Line two: the four traits as one strip of cells, the same columns on every
+   heading so each lines up with the one above it. Shared out by how many
+   choices a cell holds -- three, four, five, four -- rather than equally: equal
+   quarters left Body's five pills a row short at 1280 while Height's three sat
+   in empty space. The pills inside a cell may still wrap on a narrower window;
+   the strip itself never adds a row. */
+.group-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 4fr) minmax(0, 5fr) minmax(0, 4fr);
+  gap: 6px;
+}
+.group-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 6px 2px 8px;
+  border-left: 2px solid transparent;
+  border-radius: 6px;
+  background: var(--bg-elev);
+}
+/* Nothing picked yet: a faint red edge, so what is left to do stands out
+   without the strip shouting. */
+.group-cell.empty {
+  border-left-color: rgba(224, 108, 108, .6);
+  background: rgba(224, 108, 108, .07);
+}
+.group-cell-lead {
+  flex: none;
+  width: 44px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.group-cell-opts { display: flex; flex-wrap: wrap; gap: 3px; min-width: 0; }
 .group-head:first-child { margin-top: 0; }
 /* The fold toggle, first in the heading. */
 .group-fold {
@@ -1070,17 +1155,18 @@ a.qbtn:hover { color: #dbe6f0; }
 }
 .groups-only[hidden] { display: none; }
 
-/* Above the player's suggestion tiles: turn every one of them down. */
-/* The strip wraps so this sits on a line of its own above the tiles. */
-.player-suggest:has(.suggest-none-row) { flex-wrap: wrap; }
-.suggest-none-row { flex: 0 0 100%; }
+/* At the end of the player's suggestion tiles: turn every one of them down.
+   A ghost button -- an answer you give, not an alarm. */
 .suggest-none {
-  display: block; margin: 0;
+  flex: none;
+  align-self: center;
+  margin: 0;
   font: inherit; font-size: 12px; cursor: pointer;
-  padding: 3px 10px; border-radius: 999px;
-  border: 1px solid #6a2d2d; background: transparent; color: #f08a8a;
+  min-height: 28px; padding: 4px 10px; border-radius: 7px;
+  border: 1px solid transparent; background: transparent; color: var(--text-dim);
+  white-space: nowrap;
 }
-.suggest-none:hover { background: rgba(240, 138, 138, .1); }
+.suggest-none:hover { border-color: var(--border-strong); color: #f0a9a2; background: var(--bg-elev-2); }
 .suggest-none:disabled { opacity: .5; cursor: default; }
 .group-name { font-size: 15px; font-weight: 600; }
 .group-count { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -1097,19 +1183,6 @@ a.qbtn:hover { color: #dbe6f0; }
   white-space: nowrap;
 }
 .group-profiled.all { color: #7fd1a3; border-color: #2f5a44; }
-/* Beside the profiled count: quiet until pointed at, red when it is. */
-.group-notperf {
-  font: inherit;
-  font-size: 11px;
-  color: var(--text-faint);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0 7px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.group-notperf:hover { color: #ff8b8b; border-color: #7a3a3a; }
 /* The score the sections are ordered by, gold as it is in Top performers. */
 .group-score { color: #f0c060; font-size: 12px; font-variant-numeric: tabular-nums; cursor: help; }
 .group-unnamed .group-name { color: var(--text-faint); font-style: italic; font-weight: 500; }
@@ -1187,21 +1260,24 @@ a.qbtn:hover { color: #dbe6f0; }
   align-items: center;
   min-width: 0;
 }
+/* The one definition of a chip. There used to be two, and the later -- under
+   the folder picker -- silently won every property it set; this is the look
+   that was actually on screen. */
 .chip {
   border: 1px solid var(--border-strong);
   background: var(--bg-elev-2);
   color: var(--text-dim);
-  border-radius: 999px;
-  padding: 1px 8px;
-  font-size: 11px;
+  border-radius: 20px;
+  padding: 4px 11px;
+  font-size: 12px;
   line-height: 1.6;
   cursor: pointer;
-  max-width: 160px;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.chip:hover { border-color: var(--accent); color: var(--text); }
+.chip:hover { border-color: var(--accent); color: #cfe2ff; }
 
 /* A chip carrying its own remove. Flex, so the cross keeps its width while the
    label takes what is left and ellipses -- `min-width: 0` is what lets a flex
@@ -1211,13 +1287,17 @@ a.qbtn:hover { color: #dbe6f0; }
 .chip.has-x .chip-text { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .chip-x {
   flex: none;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1;
-  opacity: .4;
-  /* Bigger than it looks: a 9px glyph is not a target. The padding is taken
+  opacity: .5;
+  /* Bigger than it looks: an 11px glyph is not a target. A 24px square, taken
      back by the negative margin, so the pill does not grow around it. */
-  padding: 4px;
-  margin: -4px -4px -4px 0;
+  display: inline-grid;
+  place-items: center;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  margin: -6px -9px -6px -4px;
 }
 .chip-x:hover { opacity: 1; color: #ff8b8b; }
 
@@ -1345,12 +1425,13 @@ a.qbtn:hover { color: #dbe6f0; }
 .record-read .chips { gap: 4px; }
 .record-read .chip {
   padding: 0 6px;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.35;
   max-width: 135px;
 }
+/* Solid, not dashed: the dashed edge this once asked for was always overridden
+   by the second .chip block, and the solid one is the look people know. */
 .chip-add {
-  border-style: dashed;
   color: var(--text-faint);
 }
 /* The bare "+" only earns its space once a card has tags to sit beside. */
@@ -1544,22 +1625,16 @@ body.dragging .card { cursor: grabbing; }
 
 /* The heading's race picker: four quiet choices, the current one lit. */
 /* At the right end of the heading, where "only this one" used to be. */
-.group-race { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; }
-.group-race-lead { font-size: 11px; color: var(--text-faint); margin-right: 3px; }
+/* 24px tall to hit, though the type stays small: the padding is the target. */
 .group-race-opt {
   font: inherit; font-size: 11px; line-height: 1.4; cursor: pointer;
-  padding: 1px 7px; border-radius: 999px;
-  border: 1px solid var(--border); background: transparent; color: var(--text-faint);
+  min-height: 24px; padding: 3px 8px; border-radius: 999px;
+  border: 1px solid var(--border); background: transparent; color: var(--text-dim);
 }
 .group-race-opt:hover { color: var(--text); border-color: var(--border-strong); }
-.group-race-opt.on { border-color: #6a4f8c; background: #241c30; color: #cfb4f0; }
-/* Height, bust and body sit at the right end, race after them; the heading
-   wraps onto a second line rather than squeezing the name. */
-.group-head { flex-wrap: wrap; row-gap: 4px; }
-.group-traits { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-left: auto; }
-.group-traits + .group-race { margin-left: 0; }
-.group-trait { margin-left: 0; }
-.group-trait .group-race-opt.on { border-color: #4f6f8c; background: #1c2630; color: #b4d2f0; }
+/* Lit: filled. Race in violet, the three traits in blue, until Settings says. */
+.group-race-opt.on { border-color: #4f6f8c; background: #1c2630; color: #b4d2f0; }
+:where(.group-cell:last-child) .group-race-opt.on { border-color: #6a4f8c; background: #241c30; color: #cfb4f0; }
 /* Height, bust and body as a settings swatch: the same blue as a lit choice. */
 .chip.chip-trait { border-color: #4f6f8c; background: #1c2630; color: #b4d2f0; }
 /* A lit heading choice wears the colour Settings gives its kind, as chips do. */
@@ -1571,7 +1646,7 @@ body.dragging .card { cursor: grabbing; }
 
 /* The favourite heart's tier, as a small figure beside it. */
 .group-fav.on { width: auto; min-width: 26px; padding: 0 5px; }
-.group-fav-tier { font-size: 10px; font-weight: 700; margin-left: 1px; vertical-align: super; }
+.group-fav-tier { font-size: 11px; font-weight: 700; margin-left: 1px; vertical-align: super; }
 
 /* The favourite popup: five tiers, then remove / cancel. */
 .fav-pop {
@@ -1593,7 +1668,7 @@ body.dragging .card { cursor: grabbing; }
 .label-picked[hidden] { display: none; }
 .label-picked .chip.has-x { font-size: 12px; padding: 2px 8px; max-width: none; }
 .label-picked .chip-x { background: none; border: none; color: inherit; cursor: pointer;
-  font-size: 10px; opacity: .55; padding: 4px; margin: -4px -4px -4px 0; }
+  font-size: 11px; opacity: .55; }
 .label-picked .chip-x:hover { opacity: 1; }
 .hint { color: var(--text-faint); font-size: 12px; }
 
@@ -2090,20 +2165,6 @@ body.dragging .card { cursor: grabbing; }
   gap: 6px;
   padding: 0 14px 10px;
 }
-.chip {
-  background: var(--bg-elev-2);
-  border: 1px solid var(--border-strong);
-  border-radius: 20px;
-  padding: 4px 11px;
-  font-size: 12px;
-  cursor: pointer;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.chip:hover { border-color: var(--accent); color: #cfe2ff; }
-
 /* Models read as people, not attributes, so they get their own colour and sit
    first on the card — a name is the thing you scan for.
    Written as `.chip.chip-model`, and placed after every plain `.chip` block, so
@@ -2416,7 +2477,7 @@ body.dragging .card { cursor: grabbing; }
   bottom: 4px;
   padding: 1px 5px;
   border-radius: 999px;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 650;
   background: rgba(0, 0, 0, .72);
   color: #fff;
@@ -2429,7 +2490,7 @@ body.dragging .card { cursor: grabbing; }
   position: absolute;
   right: 4px;
   bottom: 4px;
-  font-size: 9.5px;
+  font-size: 11px;
   color: #ffc85c;
   text-shadow: 0 1px 2px rgba(0, 0, 0, .9);
 }
@@ -2451,7 +2512,7 @@ body.dragging .card { cursor: grabbing; }
   border-radius: 999px;
   display: grid;
   place-items: center;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   line-height: 1;
   background: rgba(0, 0, 0, .72);
@@ -2465,7 +2526,7 @@ body.dragging .card { cursor: grabbing; }
 .face-tile.band-near .similar-shot { border-style: dashed; }
 
 .similar-name {
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 1.25;
   color: var(--text-dim);
   overflow: hidden;
@@ -2571,7 +2632,7 @@ body.dragging .card { cursor: grabbing; }
 }
 .face-hover-this figcaption {
   color: var(--text-faint);
-  font-size: 10px;
+  font-size: 11px;
   text-align: center;
   padding-top: 3px;
 }
@@ -2587,7 +2648,7 @@ body.dragging .card { cursor: grabbing; }
 .face-hover-cell { position: relative; }
 .face-hover-pct {
   position: absolute; right: 3px; bottom: 3px;
-  font-size: 10px; font-weight: 600; line-height: 1;
+  font-size: 11px; font-weight: 600; line-height: 1;
   padding: 2px 4px; border-radius: 4px;
   background: rgba(0, 0, 0, 0.7); color: #fff;
 }
@@ -2625,6 +2686,7 @@ body.dragging .card { cursor: grabbing; }
   padding: 4px 9px;
   font-size: 11px;
   flex: none;
+  border-color: var(--border-strong);
 }
 .face-hover-no:hover { border-color: #b4645c; color: #f0a9a2; }
 
@@ -2700,7 +2762,7 @@ body.dragging .card { cursor: grabbing; }
 
 .face-cell figcaption {
   color: var(--text-faint);
-  font-size: 10px;
+  font-size: 11px;
   margin-top: 3px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2723,7 +2785,7 @@ body.dragging .card { cursor: grabbing; }
 .pb-rate { min-width: 34px; font-size: 12px; }
 .pb-rate.on, #pbLoop.on, #pbAuto.on { color: var(--accent); }
 .pb-loop-ab {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   margin-left: 2px;
   letter-spacing: .5px;
@@ -2753,21 +2815,6 @@ body.dragging .card { cursor: grabbing; }
 .tag-rating { display: flex; align-items: center; gap: 10px; }
 .tag-rating .stars .star { font-size: 30px; padding: 0 2px; } /* as in the player */
 
-/* Each picker in its own box, so Height, Bust, Body and Race read as four
-   groups rather than one long run of pills. */
-.group-head .group-race {
-  padding: 2px 4px 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-elev);
-}
-.group-traits { gap: 4px 6px; }
-/* The picker's name above its choices, centred. */
-.group-head .group-race { flex-wrap: wrap; justify-content: center; padding: 3px 6px 4px; }
-.group-head .group-race-lead { flex-basis: 100%; text-align: center; margin: 0 0 2px; }
-/* A picker with nothing chosen yet: light red rather than grey. */
-.group-head .group-race.empty { background: rgba(224, 108, 108, 0.16); border-color: rgba(224, 108, 108, 0.45); }
-
 /* The Videos heading stays in view while the grid scrolls under it, the way
    the folders pane does -- so the count and Collapse all are always to hand.
    Pulled out to the edges with a background, so cards pass under it cleanly. */
@@ -2783,3 +2830,229 @@ body.dragging .card { cursor: grabbing; }
 
 /* Hidden when there is nothing to offer, e.g. the models list until you type. */
 .tag-suggest[hidden] { display: none; }
+
+/* ------------------------------------------------------- UI review, 2026-10 */
+
+/* The sweep pills lead with what they count. */
+.faces-noun { color: var(--text-dim); font-weight: 600; margin-right: 6px; }
+.faces-pill.done .faces-noun, .faces-pill.working .faces-noun { color: inherit; }
+
+/* Drawn icons sit on the text's centre line, wherever they are put. */
+.crumb-nav svg, .qbtn svg, .picker-list .ico svg, .preview-fail-head svg { display: block; }
+.picker-list .ico { display: grid; place-items: center; width: 16px; }
+.preview-fail-head { display: inline-flex; align-items: center; gap: 6px; justify-content: center; }
+.folder-cover svg { color: var(--text-dim); }
+.cloud-ico { display: grid; place-items: center; }
+
+/* The filter button's count: how many facets are in force. */
+.adv-count {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+}
+.adv-count[hidden] { display: none; }
+
+/* The filter in force, under the search row. */
+.active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.active-filters[hidden] { display: none; }
+.active-chip {
+  padding: 2px 10px;
+  font-size: 12px;
+  max-width: 360px;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-elev-2));
+  color: var(--text);
+  cursor: default;
+}
+.active-chip:hover { color: var(--text); }
+.active-chip .chip-x {
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 999px;
+}
+
+/* The menus' heading row, as in "Group by". */
+.menu-head {
+  padding: 6px 10px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .8px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.menu-row:focus-visible { outline-offset: -2px; }
+
+/* The group-by button wears the grouping's short name while one is on. */
+.group-btn { display: inline-flex; align-items: center; gap: 6px; }
+.group-btn-label { font-size: 12px; font-weight: 600; line-height: 1; }
+.group-btn-label[hidden] { display: none; }
+.group-echo { color: var(--text-dim); }
+.group-echo[hidden] { display: none; }
+
+/* A card's one line of when, how sharp and where. */
+.card-meta {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card-meta:empty, .no-details .card-meta { display: none; }
+
+/* The place mark only where the listing has both kinds of place. */
+#grid:not(.avail-mixed) .avail-mark { display: none; }
+
+/* The duration and the rating, side by side, the same height. */
+.badge-corner .badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  line-height: 1;
+}
+
+/* The advanced dialog's one line of instruction, and its performer group. */
+.adv-legend {
+  margin: 0;
+  padding: 8px 16px 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.adv-group {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 0 0 auto;
+  padding: 12px 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.adv-group-head {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .6px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* Settings: four headings, the first without a rule above it. */
+.settings-body .settings-head {
+  margin: 22px 0 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.settings-body .settings-head-first { margin-top: 10px; padding-top: 0; border-top: 0; }
+.settings-sub {
+  margin: 14px 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.slider-field { display: inline-flex; align-items: center; gap: 10px; }
+.slider-field input[type="range"] { width: 170px; }
+.slider-value {
+  min-width: 46px;
+  text-align: right;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The keyboard shortcuts sheet. Above the player it may be opened over. */
+#keysModal { z-index: 105; }
+.keys-card { width: min(900px, 100%); }
+.keys-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 6px 24px;
+  padding: 12px 18px 18px;
+  overflow-y: auto;
+}
+.keys-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 7px 12px;
+  margin: 8px 0 0;
+  font-size: 12.5px;
+}
+.keys-list dt { color: var(--text-dim); white-space: nowrap; }
+.keys-list dd { margin: 0; color: var(--text); }
+.keys-link { margin-left: 2px; font-size: 12px; text-decoration: none; }
+.keys-link:hover { text-decoration: underline; }
+
+/* An error toast keeps its place until dismissed. */
+.toast { display: flex; align-items: center; gap: 8px; }
+.toast-text { flex: 1 1 auto; min-width: 0; }
+.toast-act { margin-left: 0; flex: none; }
+.toast-x {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin: -4px -6px -4px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.toast-x:hover { background: var(--bg-elev); color: var(--text); }
+
+/* The lead label ahead of each row of tiles in the player. */
+.row-lead { align-self: center; min-width: 92px; }
+
+/* Similar videos: the label stays, the tiles scroll -- by wheel or drag, with
+   fades where there is more instead of a scrollbar. */
+.player-similar { overflow: visible; }
+.similar-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  cursor: grab;
+  --fade-l: 0px;
+  --fade-r: 0px;
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--fade-l),
+    #000 calc(100% - var(--fade-r)), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 var(--fade-l),
+    #000 calc(100% - var(--fade-r)), transparent 100%);
+}
+.similar-scroll::-webkit-scrollbar { display: none; }
+.similar-scroll.more-left { --fade-l: 36px; }
+.similar-scroll.more-right { --fade-r: 36px; }
+.similar-scroll.dragging { cursor: grabbing; user-select: none; }
+.similar-scroll.dragging .similar-tile { pointer-events: none; }
+
+/* The face card's heading: her name as a name, the count quieter beside it. */
+#faceHoverLabel {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.face-hover-name { color: var(--text); font-size: 13px; font-weight: 600; }
+.face-hover-count { color: var(--text-faint); font-size: 11.5px; }

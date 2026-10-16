@@ -83,7 +83,8 @@ const DEFAULT_CONFIG = {
   cacheNamesV2: false, // whether cached previews have been renamed to derivable names
   cacheTidyV3: false,  // whether the legacy-named leftovers have been swept up
   homeFollowsAccount: true, // resolve home from the signed-in OneDrive account
-  homeDir: '',        // opened on launch, and by the 🏠 button
+  homeDir: '',        // opened on launch, and by the home button
+  cardDetails: true,  // the date · resolution · folder line under each card's name
   // Folder names to show at the default folder, by name rather than path so the
   // list survives the sync folder moving. Empty means show whatever is there.
   homeFolders: [],
@@ -2770,6 +2771,10 @@ const server = http.createServer(async (req, res) => {
       if (body.action !== 'not-a-performer') return sendJson(res, 400, { error: `Unknown action "${body.action}"` });
       if (!name) return sendJson(res, 400, { error: 'Which name?' });
       const { changed } = library.removeTagEverywhere(name, 'models');
+      log(`not a performer: "${name}" taken off ${changed} video(s)`);
+      // Her average face was built from those credits. Rebuilt without them,
+      // she has none, and stops being suggested anywhere.
+      faces.rebuildSoon();
       if (library.isFavouriteModel(name)) library.setFavouriteModel(name, false);
       const races = library.setPerformerRace(name, '');
       const traits = library.setPerformerTraits(name, { height: '', bust: '', body: [] });
