@@ -31,6 +31,11 @@ const os = require('os');
 const engine = require('./face-engine');
 const priority = require('./priority');
 const { skipDir, statAll } = require('./walk-rules');
+// The key and the suggestion floor, shared with the label store, the filter
+// and the phone.
+const { keyFor, FACE_FLOOR } = require('./shared/facets.js');
+// Written whole or not at all; shared with the fingerprint store.
+const { writeWhole } = require('./write-whole');
 
 const log = (msg) => console.log(`[video-explorer] familiar faces: ${msg}`);
 
@@ -78,8 +83,9 @@ const BANDS = [
   { band: 'likely', score: 0.45, margin: 0.10 },
   { band: 'maybe', score: 0.38, margin: 0.06 },
   // Anything from a fifth up, whatever the margin: shown as a faint suggestion
-  // so a near miss is something you can click rather than nothing at all.
-  { band: 'faint', score: 0.20, margin: 0 },
+  // so a near miss is something you can click rather than nothing at all. The
+  // fifth is FACE_FLOOR, the same line the page and the filter draw.
+  { band: 'faint', score: FACE_FLOOR, margin: 0 },
 ];
 
 /**
@@ -138,7 +144,6 @@ const state = {
 
 // --------------------------------------------------------------------- store
 
-const keyFor = (stat) => `${stat.size}:${Math.round(stat.mtimeMs)}`;
 const fileNameFor = (key) => key.replace(':', '_');
 const keyFromFileName = (name) => name.replace(/\.json$/, '').replace('_', ':');
 
@@ -428,39 +433,9 @@ async function loadEntries() {
 const packVector = (v) => Array.from(v, (x) => Math.round(x * 10000) / 10000);
 const unpackVector = (a) => engine.normalise(Float32Array.from(a));
 
-/**
- * A file written whole or not at all.
- *
- * Everything this module writes lives in the sync root, and a plain writeFile
- * truncates first: a kill, a crash or a full disk part way through leaves a
- * torn file that OneDrive then faithfully uploads, and the phone reads as
- * nothing. Through a temporary name and a rename the old version stays whole
- * until the new one is complete. The temporary name carries the pid and a
- * sequence number so two writes of the same file -- a timer and a shutdown
- * flush -- cannot interleave inside one temporary file.
- *
- * OneDrive holds a handle on a synced file now and then and lets go a moment
- * later, so a refused rename is retried, as the label store's is. Still refused,
- * the old file is left alone and the caller hears about it.
- */
-let tempSeq = 0;
-async function writeWhole(file, body) {
-  tempSeq += 1;
-  const temp = `${file}.${process.pid}-${tempSeq}.tmp`;
-  await fsp.writeFile(temp, body);
-  let last = null;
-  for (let i = 0; i < 5; i += 1) {
-    try {
-      await fsp.rename(temp, file);
-      return;
-    } catch (err) {
-      last = err;
-      await new Promise((resolve) => { setTimeout(resolve, 60 * (i + 1)); });
-    }
-  }
-  await fsp.unlink(temp).catch(() => {});
-  throw last || new Error(`could not replace ${path.basename(file)}`);
-}
+// writeWhole -- a file written whole or not at all -- lives in write-whole.js
+// now, shared with the fingerprint store. Everything this module writes lives
+// in the sync root, which is why it matters: see the comment there.
 
 /** One profile, written the moment it exists. */
 async function writeEntry(key, entry) {
@@ -1745,10 +1720,6 @@ function forgetPath(key) {
   return state.pathByKey.delete(key);
 }
 
-function suggestionsFor(stat) {
-  return state.suggestions.get(keyFor(stat)) || [];
-}
-
 /**
  * Every performer scored, band or no band.
  *
@@ -2473,7 +2444,7 @@ module.exports = {
   knownKeys, rekey,
   init, start, setEnabled, status, rootsChanged, count, decorate, writeDigest,
   rescoreOne,
-  suggestionsFor, rankFor,
+  rankFor,
   lineup, faceImageByKey, standing, similar, bestOf, notePath, forgetPath,
   // The reading order, for checking what a fresh install would do first.
   __queueForTest: walkForWork,

@@ -21,6 +21,11 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const os = require('os');
+// The races, traits, tiers, rating scale and the key itself, shared with the
+// filter, the face index and the phone so the lists cannot drift apart.
+const {
+  RACES, TRAITS, TIERS, DEFAULT_TIER, RATING_MAX, keyFor,
+} = require('./shared/facets.js');
 
 // Models are kept separate from tags rather than being a tag convention: they
 // are a different kind of fact, they want their own filter facet, and a
@@ -90,6 +95,11 @@ const KEEP_BACKUPS = 14;
 // six hundred: far more than any editing session legitimately deletes, and
 // exactly what a Replace-mode slip looks like from in here.
 const BIG_DROP = 0.1;
+
+// ...or this many, whatever the share. A tenth of 22,700 records is 2,270, and
+// a slip that wipes a thousand labelled videos is not made safe by the library
+// being big: past this many lost at once, the outgoing file is kept regardless.
+const BIG_DROP_RECORDS = 200;
 
 // The record count last written, so the next write can notice a collapse.
 let lastWritten = 0;
@@ -170,6 +180,7 @@ async function init(oneDriveRoot) {
   if (!Array.isArray(data.favourites)) data.favourites = [];
   if (!data.races || typeof data.races !== 'object' || Array.isArray(data.races)) data.races = {};
   lastWritten = Object.keys(data.records).length;
+  await noteStaleTemps();
   // Today's copy, taken before this session can change anything.
   if (!readOnly && raw !== null) await dailyBackup(raw);
   // Five stars became ten. Done once, on whichever device reads the file
@@ -193,24 +204,50 @@ async function init(oneDriveRoot) {
   return { file: FILE, count: lastWritten, readOnly };
 }
 
-/** Whether edits will be accepted, and why not when they will not. */
-function status() {
-  return { file: FILE, readOnly, records: lastWritten };
+/**
+ * A temporary file left beside the library by a write that never finished --
+ * the process died between writing it and renaming it across.
+ *
+ * Said out loud and otherwise left alone. It is not adopted: the library itself
+ * is whole (that is what the rename buys), and a half-written temporary file
+ * is either a torn copy or an older one, neither of which should replace it.
+ * It is not deleted either, in case it is the only copy of something.
+ */
+async function noteStaleTemps() {
+  let names = [];
+  try { names = await fsp.readdir(path.dirname(FILE)); } catch { return; }
+  const base = path.basename(FILE).toLowerCase();
+  for (const name of names) {
+    const lower = name.toLowerCase();
+    if (lower.startsWith(base + '.') && lower.endsWith('.writing')) {
+      console.log(`[video-explorer] library: found ${name} from a write that did not finish -- left as it is`);
+    }
+  }
 }
 
 const backupDir = () => path.join(path.dirname(FILE), 'backups');
 
-// Ratings run 0 (unrated) to 10. They ran to 5 until 2026-10-05.
-const RATING_MAX = 10;
+// Ratings run 0 (unrated) to 10 -- RATING_MAX, in shared/facets.js. They ran
+// to 5 until 2026-10-05.
 
 const stamp = () => new Date().toISOString().replace(/[:.]/g, '-');
+
+/**
+ * The automatic snapshots, oldest first -- and only those.
+ *
+ * The pattern used to be any library-*.json, which counted a copy made by hand
+ * (library-before-the-import.json) as one of the fourteen, and pruned it as the
+ * oldest. A copy somebody took on purpose is theirs to delete, so only the
+ * dated names this module writes are counted or pruned.
+ */
+const AUTO_BACKUP = /^library-\d{4}-\d{2}-\d{2}T.*\.json$/;
 
 async function backupNames() {
   try {
     const names = await fsp.readdir(backupDir());
     // An ISO timestamp sorts chronologically as text, which is the whole reason
     // for naming them that way.
-    return names.filter((n) => /^library-.+\.json$/.test(n)).sort();
+    return names.filter((n) => AUTO_BACKUP.test(n)).sort();
   } catch {
     return [];
   }
@@ -252,10 +289,6 @@ async function dailyBackup(raw) {
   const names = await backupNames();
   if (names.some((n) => n.slice(8, 18) === today)) return false;
   return snapshot(raw);
-}
-
-function keyFor(stat) {
-  return `${stat.size}:${Math.round(stat.mtimeMs)}`;
 }
 
 async function stampOf(file) {
@@ -408,8 +441,9 @@ function decorate(stat) {
  * time either was noticed the previous contents were already gone. And the new
  * version lands through a temporary file and a rename, so a crash or a pulled
  * cable mid-write leaves the old file whole rather than a truncated one. If the
- * rename is refused -- OneDrive does occasionally hold a handle open -- it
- * falls back to writing in place, which is what this always used to do.
+ * rename is refused -- OneDrive does occasionally hold a handle open -- it is
+ * retried, and failing that the write is tried again a little later; it never
+ * writes the file in place.
  */
 async function writeNow() {
   if (readOnly) return { file: FILE, records: 0, readOnly };
@@ -422,7 +456,9 @@ async function writeNow() {
   const body = JSON.stringify(data);
   const count = Object.keys(data.records).length;
 
-  if (lastWritten && count < lastWritten * (1 - BIG_DROP)) {
+  const dropped = lastWritten - count;
+  if (lastWritten && dropped > 0
+    && (dropped >= BIG_DROP_RECORDS || dropped >= lastWritten * BIG_DROP)) {
     const was = await fsp.readFile(FILE).catch(() => null);
     if (was) await snapshot(was);
   }
@@ -652,8 +688,16 @@ function notModelsByKey(key) {
 
 /**
  * Follows a record onto a file whose bytes changed — which happens exactly once
- * per file, when its tags are written into it and the size grows.
+ * per file, when its tags are written into it and the size grows — or onto a
+ * copy that came back with a new modified time (the carry-over).
+ *
+ * The keys it was known by go with it, newest first, in `aliases`. Nothing
+ * looks a record up by them; they are the history, so a move that was wrong can
+ * be traced back to where the labels came from. Capped, since a record that has
+ * moved twenty times has a history nobody is going to read past.
  */
+const ALIAS_LIMIT = 20;
+
 function rekey(oldStat, newStat, name) {
   if (readOnly) return;
   const from = keyFor(oldStat);
@@ -661,7 +705,10 @@ function rekey(oldStat, newStat, name) {
   if (from === to) return;
   const record = data.records[from];
   if (!record) return;
-  data.records[to] = { ...record, name: name || record.name, updated: Date.now() };
+  const aliases = [...new Set([from, ...(Array.isArray(record.aliases) ? record.aliases : [])])]
+    .filter((k) => k !== to)
+    .slice(0, ALIAS_LIMIT);
+  data.records[to] = { ...record, name: name || record.name, updated: Date.now(), aliases };
   delete data.records[from];
   save();
 }
@@ -785,15 +832,14 @@ function isFavouriteModel(name) {
  * How much of a favourite each one is: lower-cased name -> 1 to 5, tier 1
  * the most. Only for names on the list, and a favourite with no tier recorded
  * -- every one marked before tiers existed, or marked on the phone -- is a 3.
+ * TIERS and DEFAULT_TIER are in shared/facets.js.
  */
-const TIERS = [1, 2, 3, 4, 5];
-
 function favouriteTiers() {
   const held = data.favouriteTiers || {};
   const out = {};
   for (const name of data.favourites || []) {
     const key = String(name).toLowerCase();
-    out[key] = TIERS.includes(held[key]) ? held[key] : 3;
+    out[key] = TIERS.includes(held[key]) ? held[key] : DEFAULT_TIER;
   }
   return out;
 }
@@ -822,13 +868,12 @@ function setFavouriteModel(name, on, tier) {
 }
 
 /**
- * Race, per performer: lower-cased name -> 'Asian' | 'Black' | 'White' | 'Other'.
+ * Race, per performer: lower-cased name -> one of RACES (shared/facets.js).
  *
  * Beside the favourites and for the same reason: it belongs to a person, not a
  * file. Given by hand -- nothing here infers it -- and read by the phone from
  * the same file.
  */
-const RACES = ['Asian', 'Black', 'White', 'Other'];
 
 function performerRaces() {
   return { ...(data.races || {}) };
@@ -850,13 +895,9 @@ function setPerformerRace(name, race) {
 /**
  * Height, bust and body, per performer: lower-cased name -> { height, bust,
  * body: [] }. Beside the races and for the same reason -- a person, not a file.
- * Height and bust are one answer each; body can be several.
+ * Height and bust are one answer each; body can be several. The answers are
+ * TRAITS, in shared/facets.js.
  */
-const TRAITS = {
-  height: ['Tall', 'Average', 'Small'],
-  bust: ['Massive', 'Big', 'Average', 'Small'],
-  body: ['Athletic', 'Tattoos', 'Curvy', 'Average', 'Petite'],
-};
 
 function performerTraits() {
   return JSON.parse(JSON.stringify(data.traits || {}));
@@ -904,10 +945,10 @@ function stats() {
 }
 
 module.exports = {
-  init, keyFor, get, all, decorate, apply, rekey, flush, status, snapshot,
+  init, keyFor, get, all, decorate, apply, rekey, flush,
   refreshFromDisk, mergeLibraries,
   notModelsByKey,
-  counts, tagCounts, modelCounts, studioCounts, productionCounts, stats, normaliseTags,
+  tagCounts, modelCounts, studioCounts, productionCounts, stats, normaliseTags,
   renameTag, removeTagEverywhere,
   favouriteModels, isFavouriteModel, setFavouriteModel, favouriteTiers,
   performerRaces, setPerformerRace, performerTraits, setPerformerTraits,

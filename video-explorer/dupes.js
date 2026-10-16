@@ -34,6 +34,10 @@ const os = require('os');
 const engine = require('./dupe-engine');
 const priority = require('./priority');
 const { skipDir, statAll } = require('./walk-rules');
+// The key every store here agrees on, shared with the label store and the phone.
+const { keyFor } = require('./shared/facets.js');
+// Written whole or not at all: the digest and the prints live in the sync root.
+const { writeWhole, writeWholeSync } = require('./write-whole');
 
 const log = (msg) => console.log(`[video-explorer] duplicates: ${msg}`);
 
@@ -90,7 +94,6 @@ const state = {
   counted: false,
 };
 
-const keyFor = (stat) => `${stat.size}:${Math.round(stat.mtimeMs)}`;
 const fileNameFor = (key) => `${key.replace(':', '_')}.json`;
 const keyFromFileName = (name) => name.replace(/\.json$/, '').replace('_', ':');
 
@@ -123,7 +126,9 @@ function loadDismissed() {
 
 function saveDismissed() {
   try {
-    fs.writeFileSync(path.join(state.dir, DISMISSED),
+    // Through a rename: this is in the sync root, and a torn copy reads as
+    // nothing set aside -- every dismissed set back on the page.
+    writeWholeSync(path.join(state.dir, DISMISSED),
       JSON.stringify([...state.dismissed], null, 1));
   } catch (err) {
     log(`could not write ${DISMISSED}: ${err.message}`);
@@ -337,9 +342,9 @@ async function readPrint(key) {
 }
 
 async function writePrint(key, row) {
-  const file = path.join(state.dir, ENTRIES, fileNameFor(key));
-  await fsp.writeFile(`${file}.tmp`, JSON.stringify(row));
-  await fsp.rename(`${file}.tmp`, file);
+  // A temporary name of its own per write, and a refused rename retried: one
+  // shared `.tmp` let a sweep and a command-line run interleave in it.
+  await writeWhole(path.join(state.dir, ENTRIES, fileNameFor(key)), JSON.stringify(row));
 }
 
 // -------------------------------------------------------------- the sweep
@@ -690,7 +695,10 @@ async function writeDigest(confirmed = [], possible = []) {
     confirmed,
     possible,
   };
-  await fsp.writeFile(path.join(state.dir, DIGEST), JSON.stringify(body, null, 1));
+  // Through a rename. It lives in the sync root and was written in place, so a
+  // kill mid-write left a torn digest for OneDrive to upload and the page to
+  // read as no duplicates at all.
+  await writeWhole(path.join(state.dir, DIGEST), JSON.stringify(body, null, 1));
   return body;
 }
 
@@ -1147,9 +1155,6 @@ module.exports = {
   secsFor,
   dismissGroup,
   restoreDismissed,
-  readPrint,
-  candidates,
-  keysOf,
   match,
   writeDigest,
   decorate,

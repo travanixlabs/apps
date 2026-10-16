@@ -821,8 +821,20 @@
 
 <!-- What "matches the advanced filter" means, shared with the server so the
      folder tiles can be counted where the videos actually are. Must load
-     first: app.js reads its tables while it is still being evaluated. -->
+     first: the page scripts read its tables while they are still being evaluated. -->
+<script src="/shared/facets.js"></script>
 <script src="/filter.js"></script>
-<script src="/app.js"></script>
+<!-- The page script, one file per concern. Classic scripts sharing one global
+     scope, so the order matters: each may only use, while it loads, what the
+     ones before it define. main.js is last and is the one that calls init(). -->
+<script src="/js/core.js"></script>
+<script src="/js/nav.js"></script>
+<script src="/js/view.js"></script>
+<script src="/js/faces.js"></script>
+<script src="/js/labels.js"></script>
+<script src="/js/previews.js"></script>
+<script src="/js/player.js"></script>
+<script src="/js/grid.js"></script>
+<script src="/js/main.js"></script>
 </body>
 </html>

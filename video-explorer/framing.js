@@ -29,6 +29,8 @@ const path = require('path');
 
 const priority = require('./priority');
 const { skipDir, statAll } = require('./walk-rules');
+// The key every store here agrees on.
+const { keyFor } = require('./shared/facets.js');
 
 const log = (msg) => console.log(`[video-explorer] framing: ${msg}`);
 
@@ -116,7 +118,6 @@ const VIDEO_EXT = new Set(['.mp4', '.m4v', '.mov']);
 // The skip list and the batched stat live in walk-rules.js, shared with the
 // other two sweeps; the measurement behind the batch size moved there with it.
 
-const keyFor = (stat) => `${stat.size}:${Math.round(stat.mtimeMs)}`;
 
 // The measured batch size and the shared statAll moved to walk-rules.js with
 // the skip list: one at a time took 2,518-6,663ms over the real 27,239 videos,

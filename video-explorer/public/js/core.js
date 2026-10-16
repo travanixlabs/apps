@@ -1,0 +1,563 @@
+'use strict';
+
+/* Video Explorer front-end: sprite-scrubbing grid + hover quick actions. */
+
+const $ = (sel) => document.querySelector(sel);
+
+/** The only scrolling element — observers must measure against it, not the page. */
+const scrollRoot = document.getElementById('scrollArea');
+
+/**
+ * Name order, made once. localeCompare with options builds a collator on every
+ * call, and sorting 27,000 videos asks it some four hundred thousand times --
+ * the sort spent most of its time setting up rather than comparing.
+ *   BY_NAME        numbers in order, case and accents ignored
+ *   BY_NAME_EXACT  numbers in order, case still telling two names apart
+ *   BY_LETTERS     case and accents ignored, digits read one at a time
+ */
+const BY_NAME = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare;
+const BY_NAME_EXACT = new Intl.Collator(undefined, { numeric: true }).compare;
+const BY_LETTERS = new Intl.Collator(undefined, { sensitivity: 'base' }).compare;
+
+// The facet tables, the filter object and the matcher live in filter.js, which
+// the page loads before this file and the server requires. They were here until
+// the folder tiles had to say how many videos in a subfolder match -- a question
+// only the server can answer, since it is the only one holding those videos.
+// Read them as globals below: CHOICES, CHOICE_FACETS, FACETS, LABEL_FACETS,
+// NOTHING, SINGLE_VALUED, newAdvFilter, picked, choiceMatch, compileAdvanced,
+// matchesAdvanced.
+
+const state = {
+  config: {},
+  files: [],          // videos shown for the current folder
+  byPath: new Map(),  // the same, by path -- only ever set through setFiles()
+  folders: [],        // immediate subfolders of the current folder
+  view: [],           // filtered + sorted
+  dir: '',
+  parent: null,
+  history: [],        // folders visited, oldest first
+  historyIndex: -1,   // where we currently sit in that list
+  totalBelow: 0,
+  cloudBelow: 0,
+  rendered: 0,        // how many of state.view are on screen (pagination)
+  meta: new Map(),    // path -> probed metadata, filled in per page
+  metaAsked: new Set(),
+  cloudOptIn: new Set(), // cloud files the user explicitly chose to fetch
+  cards: [],           // grouped: every card in reading order, for the player
+  playing: null,      // file open in the player modal
+  playingAnchor: null, // the slot it held, once a filter drops it from the view
+  // Which card it was opened from, grouped: the same video sits in a section per
+  // performer, so "the next one" depends on which copy you clicked.
+  playingCard: null,
+  selected: new Set(),
+  lastClickedIndex: -1,
+  rangeList: null,     // which list that index was into: a section, or the view
+  sprites: new Map(),  // path -> { url, frames }
+  thumbs: new Map(),   // path -> poster blob URL
+  pending: new Map(),  // path -> in-flight poster/sprite promise
+  failed: new Set(),
+  picker: null,        // { dir, onConfirm, title }
+  // '' | 'models' | 'dupes' -- off, by who is credited, by copies of the same
+  // video. Empty rather than false because everything downstream asks whether
+  // it is grouped far more often than it asks how.
+  grouped: '',
+  groups: [],          // [{ key, name, files }] when grouped, favourites first
+  slots: [],           // the grouped layout flattened: a heading or a card
+  favourites: [],      // performer names marked a favourite, library-wide
+  favSet: new Set(),   // the same, lower-cased, for asking about one video
+  tagVocab: [],        // [{ tag, count }] across the whole library
+  modelVocab: [],      // the same, for performer names
+  tagTargets: [],      // files the open label dialog will edit
+  adv: newAdvFilter(), // the advanced filter currently applied
+  raceOf: new Map(),   // lower-cased performer name -> the race you gave her
+};
+
+
+
+/**
+ * Which row draws which facet, and what each answer is called.
+ *
+ * One table rather than a loop each in the renderer: they differed only in
+ * their host element and their labels, and every difference between them was a
+ * chance for one to drift. Empty while no one-question facet is on the dialog.
+ */
+const CHOICE_ROWS = [
+  ['#advFraming', 'framing', [['done', 'completed'], ['todo', 'not completed']]],
+  ['#advFingerprint', 'fingerprint', [['done', 'completed'], ['todo', 'not completed']]],
+  ['#advProfiling', 'profiling', [['done', 'completed'], ['todo', 'not completed']]],
+  ['#advSuggestions', 'suggestions', [['some', 'suggested'], ['none', 'none suggested']]],
+  ['#advStorage', 'storage', [['downloaded', 'downloaded'], ['cloud', 'cloud']]],
+];
+
+
+/**
+ * The interface's pictures, in the toolbar's style: a 16-unit box, a 1.4
+ * stroke in the text colour, no fill. Colour emoji came out of a different
+ * font per machine and shouted over everything beside them.
+ */
+const svgIcon = (body, size = 14) => `<svg viewBox="0 0 16 16" width="${size}" height="${size}" `
+  + 'aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" '
+  + `stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+const ICON_PATHS = {
+  home: '<path d="M2.5 7.4 8 2.8l5.5 4.6M4 6.3v6.9h3V9.8h2v3.4h3V6.3"/>',
+  folder: '<path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.4 1.6h5.6c.7 0 1.2.5 1.2 1.2v6.4c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2z"/>',
+  drive: '<rect x="1.8" y="4.5" width="12.4" height="7" rx="1.4"/><path d="M4.5 9h.01M7 9h4.5"/>',
+  link: '<path d="M6.8 9.2a2.6 2.6 0 0 0 3.7 0l2.2-2.2a2.6 2.6 0 0 0-3.7-3.7l-.9.9M9.2 6.8a2.6 2.6 0 0 0-3.7 0L3.3 9a2.6 2.6 0 0 0 3.7 3.7l.9-.9"/>',
+  cloud: '<path d="M4.5 12.5h7.2a2.8 2.8 0 0 0 .3-5.6 4 4 0 0 0-7.6-.9A3.3 3.3 0 0 0 4.5 12.5z"/>',
+  tag: '<path d="M2.5 2.5h5l6 6-5 5-6-6z"/><circle cx="5.3" cy="5.3" r=".9"/>',
+  rename: '<path d="M10.8 2.7l2.5 2.5-7.6 7.6-3.2.7.7-3.2z"/><path d="M9.4 4.1l2.5 2.5"/>',
+  move: '<path d="M2.5 8h10M9 4.5 12.5 8 9 11.5"/>',
+  trash: '<path d="M2.8 4.3h10.4M6.3 4.3V2.8h3.4v1.5M4.2 4.3l.6 8.9h6.4l.6-8.9M6.7 6.8v4M9.3 6.8v4"/>',
+  warn: '<path d="M8 2.3 14.2 13H1.8z"/><path d="M8 6.5v3M8 11.2h.01"/>',
+};
+const ICONS = Object.fromEntries(Object.entries(ICON_PATHS).map(([k, body]) => [k, svgIcon(body)]));
+
+// The two availability icons: a cloud for cloud-only, a tray arrow for on this PC.
+const ICON_CLOUD = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4.5 12.5h7.2a2.8 2.8 0 0 0 .3-5.6 4 4 0 0 0-7.6-.9A3.3 3.3 0 0 0 4.5 12.5z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+const ICON_LOCAL = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 2.5v7M5 6.8 8 9.8l3-3M3 11.5v2h10v-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+/**
+ * Download the cloud-only ones, or free up the downloaded ones -- through
+ * OneDrive's own pin / unpin, which it carries out in its own time. Only the
+ * files that need it are sent. The listing is told straight away and checked
+ * again a little later, once OneDrive has had a chance to act.
+ */
+async function setAvailability(files, want) {
+  const todo = files.filter((f) => (want === 'download' ? f.cloudOnly : !f.cloudOnly));
+  if (!todo.length) return;
+  try {
+    const out = await api('/api/availability', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: todo.map((f) => f.path), want }),
+    });
+    let ok = 0;
+    for (const f of todo) {
+      if (!(out.results[f.path] || {}).ok) continue;
+      ok += 1;
+      f.cloudOnly = want === 'cloud';
+      const live = fileAt(f.path);
+      if (live && live !== f) live.cloudOnly = f.cloudOnly;
+    }
+    toast(want === 'download'
+      ? `Downloading ${ok} video${ok === 1 ? '' : 's'} — OneDrive fetches them in the background`
+      : `${ok} video${ok === 1 ? '' : 's'} set to cloud only — OneDrive frees the space shortly`,
+    ok === todo.length ? 'ok' : 'err');
+  } catch (err) {
+    toast(err.message, 'err');
+    return;
+  }
+  render();
+  updateSelectionBar();
+  if (state.playing) syncPlayerAvail(state.playing);
+  // relistQuietly draws the page itself, and waits for an open player to close.
+  setTimeout(() => relistWhenFree().catch(() => {}), 20000);
+}
+
+/** The player's availability button: what this video is, and a click switches it. */
+function syncPlayerAvail(file) {
+  const btn = $('#playerAvail');
+  if (!btn) return;
+  const cloud = Boolean(file.cloudOnly);
+  btn.innerHTML = cloud ? ICON_CLOUD : ICON_LOCAL;
+  btn.classList.toggle('is-cloud', cloud);
+  btn.title = cloud ? 'Cloud only — click to download to this PC'
+    : 'Downloaded — click to free up space (cloud only)';
+  btn.setAttribute('aria-label', btn.title);
+}
+
+/** Which radio group drives which facet's all/any. */
+const MODE_INPUTS = [
+  ['height', 'heightMode'], ['bust', 'bustMode'], ['body', 'bodyMode'], ['race', 'raceMode'],
+  ['favourites', 'favouritesMode'], ['tags', 'tagMode'], ['models', 'modelMode'],
+];
+
+/** The performer rows of the dialog: facet, host, and what its "none" chip says. */
+const PERSON_ROWS = [
+  ['height', '#advHeight', 'no height'],
+  ['bust', '#advBust', 'no bust'],
+  ['body', '#advBody', 'no body'],
+  ['race', '#advRace', 'no race'],
+  ['favourites', '#advFavourites', 'no favourite'],
+];
+
+/**
+ * How the listing is set up, as opposed to how the app is configured. A refresh
+ * puts these back; card size, preview engine and the default folder are
+ * preferences and survive it.
+ */
+// Ratings run 0 (unrated) to 10. They ran to 5 until 2026-10-05; the
+// library doubled every one of them the first time it was opened after.
+const RATING_MAX = 10;
+const RATING_VALUES = Array.from({ length: RATING_MAX + 1 }, (_, n) => n);
+
+/** A rating as a filter chip: its stars, half one and all. */
+function ratingChipLabel(value) {
+  return value === 0 ? 'unrated' : starsNode(value);
+}
+
+/**
+ * The digit a rating key means, from the physical key -- Shift+3 reports "#"
+ * as its key, so the code is read instead. 0-5 only; anything else is null.
+ */
+function ratingDigit(ev) {
+  const m = /^(?:Digit|Numpad)([0-5])$/.exec(ev.code || '');
+  return m ? Number(m[1]) : null;
+}
+
+/** Shift, Alt or Ctrl held: the digit means that many stars and a half. */
+const halfHeld = (ev) => ev.shiftKey || ev.altKey || ev.ctrlKey;
+
+/**
+ * Whether a key is a rating key at all. 0-5 alone, 0-4 with a modifier --
+ * there is no five and a half.
+ */
+function isRatingKey(ev) {
+  const digit = ratingDigit(ev);
+  if (digit === null || ev.metaKey) return false;
+  return !(halfHeld(ev) && digit === 5);
+}
+
+/**
+ * A key as a rating: the digit is the stars, and Shift, Alt or Ctrl adds a
+ * half -- Shift+3 is 3½, Shift+0 is ½. 0 alone clears. Pressing the rating a
+ * video already has also clears it, the way clicking its lit star does.
+ */
+function keyRating(ev, files) {
+  const digit = ratingDigit(ev);
+  const want = digit * 2 + (halfHeld(ev) ? 1 : 0);
+  if (!want) return 0;
+  const all = files.length && files.every((f) => (Number(f.rating) || 0) === want);
+  return all ? 0 : want;
+}
+
+/**
+ * A stored rating (0-10) drawn as stars: 7 is three whole stars and a half
+ * one -- the star glyph with only its left half gold.
+ */
+function starsNode(rating) {
+  const r = Math.max(0, Math.min(RATING_MAX, Math.round(Number(rating) || 0)));
+  const run = document.createElement('span');
+  run.className = 'star-run';
+  for (let i = 1; i <= Math.ceil(r / 2); i += 1) {
+    const star = document.createElement('span');
+    star.className = 'sr' + (r >= i * 2 ? '' : ' half');
+    star.textContent = '\u2605';
+    run.appendChild(star);
+  }
+  return run;
+}
+
+/** A stored rating as a number of stars, for tooltips: 7 is "3.5". */
+function starsNumber(rating) {
+  return String((Math.round(Number(rating) || 0)) / 2);
+}
+
+/** Lights a row of five for a value: whole stars, then a half if it is odd. */
+function paintStarRow(wrap, value) {
+  wrap.querySelectorAll('.star').forEach((star, i) => {
+    const full = value >= (i + 1) * 2;
+    const half = !full && value === i * 2 + 1;
+    star.classList.toggle('on', full);
+    star.classList.toggle('half', half);
+    star.textContent = full || half ? '\u2605' : '\u2606';
+  });
+}
+
+/**
+ * Five stars, each worth two steps: the left half of a star is the half, the
+ * right half the whole. Hovering previews where a click would land; clicking
+ * the rating already held clears it.
+ */
+function buildStarRow(current, onPick, className = 'stars') {
+  const wrap = document.createElement('span');
+  wrap.className = className;
+  const at = (star, ev) => {
+    const box = star.getBoundingClientRect();
+    const i = Number(star.dataset.n);
+    return ev.clientX - box.left < box.width / 2 ? i * 2 - 1 : i * 2;
+  };
+  for (let i = 1; i <= RATING_MAX / 2; i += 1) {
+    const star = document.createElement('button');
+    star.type = 'button';
+    star.className = 'star';
+    star.dataset.n = String(i);
+    star.addEventListener('pointermove', (ev) => {
+      const v = at(star, ev);
+      paintStarRow(wrap, v);
+      star.title = v === current ? 'Clear rating' : `Rate ${starsNumber(v)}`;
+    });
+    star.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      const v = at(star, ev);
+      onPick(v === current ? 0 : v);
+    });
+    wrap.appendChild(star);
+  }
+  wrap.addEventListener('pointerleave', () => paintStarRow(wrap, current));
+  paintStarRow(wrap, current);
+  return wrap;
+}
+
+
+const VIEW_DEFAULTS = { sort: 'rating', sortDir: 'desc', recursive: false, grouped: '' };
+const RESET_KEY = 've-reset-home';
+// The filters and the search, carried across an F5. Session storage, so it
+// lasts exactly as long as this window: a fresh launch starts with none of it.
+const VIEW_KEY = 've-view';
+// Set by Ctrl+Shift+F5 on the way out: the reload that follows starts clean.
+const HARD_KEY = 've-reset-view';
+
+/** Drops filters, search and sort back to the defaults, saving as it goes. */
+function resetView() {
+  Object.assign(state.config, VIEW_DEFAULTS);
+  state.grouped = '';
+  syncGroupButton();
+  saveConfig({ ...VIEW_DEFAULTS });
+  state.adv = newAdvFilter();
+  advDraft = newAdvFilter();
+  // Chromium restores form values across a reload, so this is cleared rather
+  // than assumed empty.
+  $('#searchInput').value = '';
+  syncAdvBadge();
+}
+
+/** The applied filter, unless asked about another one -- the draft, usually. */
+function advActive(adv = state.adv) {
+  return filterActive(adv);
+}
+
+/**
+ * The one fact the shared matcher cannot work out from a video: which
+ * performers are marked as favourites. The server reads the same list off the
+ * library when it counts a folder, so both sides answer "a favourite is in it"
+ * the same way.
+ */
+const filterCtx = () => ({
+  favSet: state.favSet, raceOf: state.raceOf,
+  traitsOf: state.traits || new Map(), favTiers: state.favTiers || new Map(),
+});
+
+/** Whether the filter in force asks about anything that belongs to a performer. */
+const personFiltered = () => PERSON_FIELDS.some((f) => state.adv[f] && state.adv[f].size);
+
+// ----------------------------------------------------------------- utilities
+
+function fmtBytes(bytes) {
+  if (!bytes) return '—';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  let n = bytes;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i += 1; }
+  return `${n < 10 && i > 0 ? n.toFixed(1) : Math.round(n)} ${units[i]}`;
+}
+
+function fmtDuration(seconds) {
+  if (!seconds || seconds < 0) return '—';
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (v) => String(v).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+function fmtDate(ms) {
+  if (!ms) return '—';
+  return new Date(ms).toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+// More than this at once is a wall over the grid; the oldest goes first.
+const TOAST_CAP = 3;
+
+function toast(message, kind = '', action = null) {
+  const host = $('#toasts');
+  const el = document.createElement('div');
+  el.className = 'toast' + (kind ? ' ' + kind : '');
+  const text = document.createElement('span');
+  text.className = 'toast-text';
+  text.textContent = message;
+  el.appendChild(text);
+  // A toast with a button is an offer, and an offer needs time to be taken.
+  if (action) {
+    const btn = document.createElement('button');
+    btn.className = 'toast-act';
+    btn.type = 'button';
+    btn.textContent = action.label;
+    btn.addEventListener('click', () => { el.remove(); action.run(); });
+    el.appendChild(btn);
+  }
+  // An error stays until it is read: it fading while you looked elsewhere was
+  // how a failed move went unnoticed. So it carries its own way out.
+  const sticky = kind === 'err';
+  if (sticky) {
+    el.setAttribute('role', 'alert');
+    const x = document.createElement('button');
+    x.className = 'toast-x';
+    x.type = 'button';
+    x.textContent = '\u00d7';
+    x.title = 'Dismiss';
+    x.setAttribute('aria-label', 'Dismiss');
+    x.addEventListener('click', () => el.remove());
+    el.appendChild(x);
+  }
+  host.appendChild(el);
+  while (host.children.length > TOAST_CAP) host.firstElementChild.remove();
+  if (sticky) return;
+  setTimeout(() => {
+    el.style.transition = 'opacity .25s';
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 260);
+    // A message that asks you to do something has to outlast a glance.
+  }, action ? 9000 : (kind === 'warn' ? 6000 : 3200));
+}
+
+function setStatus(text) {
+  $('#status').textContent = text || '';
+}
+
+async function api(url, options) {
+  const res = await fetch(url, options);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `${res.status} ${res.statusText}`);
+  return body;
+}
+
+/**
+ * A listing entry, with everything the server left out put back.
+ *
+ * Nine tenths of a library has no tags, no models and no rating, and saying so
+ * 27,240 times was 8MB of "": [] per listing. The server now omits anything
+ * that is merely the default and this puts them back on arrival, so nothing
+ * below here has to know the difference.
+ *
+ * Any metadata the server already had comes with the entry too, which is what
+ * spares the page a hundred and nine round trips asking for it.
+ */
+function hydrate(file) {
+  if (file.meta) {
+    state.meta.set(file.path, file.meta);
+    state.metaAsked.add(file.path);
+    delete file.meta;
+  }
+  file.rating = file.rating || 0;
+  file.tags = file.tags || [];
+  file.models = file.models || [];
+  file.notModels = file.notModels || [];
+  file.url = file.url || '';
+  file.marks = file.marks || [];
+  file.resume = file.resume || 0;
+  file.updated = file.updated || 0;
+  file.suggested = file.suggested || [];
+  file.people = file.people || 0;
+  file.profiled = file.profiled || false;
+  file.cloudOnly = file.cloudOnly || false;
+  file.duplicate = file.duplicate || false;
+  file.copies = file.copies || 0;
+  file.dupeKinds = file.dupeKinds || null;
+  searchHay(file);
+  return file;
+}
+
+const hydrateAll = (files) => (files || []).map(hydrate);
+
+/**
+ * What a bare search term is looked for in, lower-cased once per record rather
+ * than once per record per keystroke. Name and subfolder only: the tags and
+ * models are edited in place far too often to be safely held here, so the
+ * matcher still reads those live. Called again wherever a video is renamed.
+ */
+function searchHay(file) {
+  file._hay = (file.name + ' ' + file.relFolder).toLowerCase();
+  return file._hay;
+}
+
+/**
+ * The listing, and the same videos by path.
+ *
+ * A path lookup used to be state.files.find(), a walk of up to 27,000 records,
+ * made per tile scrolled into view and per metadata chunk. Every replacement of
+ * the listing goes through here so the map can never describe a different one;
+ * a rename moves its entry by hand (see doAction).
+ */
+function setFiles(files) {
+  state.files = files;
+  state.byPath = new Map(files.map((f) => [f.path, f]));
+}
+
+/** A video of the current listing, by path; undefined for one that is not in it. */
+const fileAt = (path) => state.byPath.get(path);
+
+async function saveConfig(patch) {
+  Object.assign(state.config, patch);
+  try {
+    state.config = await api('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+  } catch (err) {
+    toast('Could not save settings: ' + err.message, 'err');
+  }
+}
+
+// ------------------------------------------------------------------ scanning
+
+async function scan(dir, { record = true } = {}) {
+  const target = (dir || $('#dirInput').value).trim();
+  if (!target) { toast('Enter a folder path first', 'err'); return; }
+  heldGroups = null;
+
+  setStatus('Scanning…');
+  $('#empty').hidden = true;
+  try {
+    // The scan always lists everything that is there. Narrowing to what is
+    // downloaded is a filter, not a different listing — Advanced filters →
+    // Availability — so the count in the heading stays honest about the folder.
+    const recursive = $('#recursiveToggle').checked ? '1' : '0';
+    const data = await api(
+      `/api/scan?dir=${encodeURIComponent(target)}&recursive=${recursive}`,
+    );
+    state.dir = data.dir;
+    state.parent = data.parent;
+    if (record) pushHistory(data.dir);
+    state.selected.clear();
+    state.lastClickedIndex = -1;
+    state.meta.clear();
+    state.metaAsked.clear();
+    clearSprites();
+    // After the clears: the listing carries what the server already knew about
+    // each video's bytes, and that goes straight into the same store /api/meta
+    // would have filled a hundred round trips later.
+    setFiles(hydrateAll(data.files));
+    state.folders = data.folders || [];
+    state.totalBelow = data.totalBelow || 0;
+    state.cloudBelow = data.cloudBelow || 0;
+    // Which walk this listing came from. A folder served from the last walk of
+    // it is confirmed against the disk in the background, and the status poll
+    // is where we hear that it came back different.
+    state.walkVersion = Number(data.walkVersion) || 0;
+    state.walkStale = (Number(data.walkAge) || 0) > 0;
+    $('#dirInput').value = data.dir;
+    saveConfig({
+      lastDir: data.dir,
+      recursive: $('#recursiveToggle').checked,
+    });
+    render();
+    if (scrollRoot) scrollRoot.scrollTop = 0;
+  } catch (err) {
+    setStatus('');
+    $('#empty').hidden = false;
+    toast(err.message, 'err');
+  }
+}
+
+/** Navigating into a folder is just a scan of that folder. */
+function navigateTo(dir) {
+  $('#dirInput').value = dir;
+  scan(dir);
+}
+

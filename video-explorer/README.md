@@ -286,11 +286,14 @@ So edits land in `.video-explorer\library.json` at the OneDrive sync root, and
 syncing it is what makes ratings appear on every device running the app. The
 previews and face profiles now sit beside it, but they are not the same kind of
 thing: those can be rebuilt given time and the videos, and this cannot be
-rebuilt at all. Two megabytes of hand-entered judgement over about six thousand
-videos.
+rebuilt at all. About four and a half megabytes of hand-entered judgement over
+some 22,700 videos.
 
 Records are keyed by **size + modified time**, not by path, so a rename or a move
-keeps its rating and tags attached, whether done in the app or in Explorer.
+keeps its rating and tags attached, whether done in the app or in Explorer. When a
+record has to follow a file onto a new key — tags written into it, or a copy that
+came back with a new modified time — the keys it was known by go with it, newest
+first, in `aliases` (twenty at most), so where a record came from can be traced.
 Dehydration changes neither value, so a cloud file's tags survive Storage Sense
 reclaiming its bytes.
 
@@ -302,19 +305,37 @@ to do anything.
 
 **A copy a day.** Startup writes `library.json` into `.video-explorer\backups\`
 if nothing there is from today, named for the moment it was taken. Fourteen are
-kept, which is about 30 MB and a fortnight of history. The phone takes the same
+kept, which is about 65 MB and a fortnight of history. Only these dated copies
+(`library-2026-…T….json`) are counted and pruned; a copy you make by hand under any
+other name — `library-before-the-import.json` — is yours, and is left alone. The phone takes the same
 copy into the same folder, so a day when the PC never came on is still covered.
 
-**A copy before a collapse.** Any write that would drop more than a tenth of the
-records copies the outgoing file first. A tenth of six thousand is six hundred —
-far more than an editing session deletes on purpose, and exactly the shape of a
-mistake. The backup is of what is on disk, not of what is in memory: by the time
+**A copy before a collapse.** Any write that would drop a tenth of the records,
+or 200 of them, whichever comes first, copies the outgoing file first. A tenth
+alone stopped being a guard as the library grew — at 22,700 records it would let
+two thousand go without a copy — so there is a floor as well: 200 labelled videos
+gone in one write is the shape of a mistake however big the library is. The backup is of what is on disk, not of what is in memory: by the time
 a bad write is detected, memory already holds the damage.
 
 **A write that cannot half-happen.** The new version is written alongside and
 renamed over the old one, so a crash or a pulled cable mid-write leaves the
 previous file whole rather than truncated. If OneDrive has a handle open and
-refuses the rename, it falls back to writing in place.
+refuses the rename, it is retried a few times, and if it is still refused the
+temporary file is removed and the write tried again a couple of seconds later —
+the edits are still in memory. It never writes the file in place: that used to
+be the fallback, and two bulk runs that died inside it took the library with
+them. Writes run one at a time. A temporary file left by a process that died
+mid-write (`library.json.<pid>-<n>.writing`) is mentioned in the log at the next
+start and otherwise left where it is.
+
+**Other devices' edits are merged, not overwritten.** The phone, this library open
+on a second PC, OneDrive restoring a version — any of them can change the file
+while the app is running. Before every write the app checks whether the file on
+disk is still the one it last read or wrote; if not, it merges three ways (what
+both started from, its own, theirs): a record changed on one side only takes that
+side, one changed on both takes the later edit, and an edit beats a deletion.
+Favourites merge by name; races, traits and tiers per performer. While nothing is
+waiting to be written, it also looks every half minute and takes in what changed.
 
 **Read failures are not empty libraries.** The distinction the code now makes is
 between a sidecar that is *absent* and one that is merely *unreadable*. Absent
@@ -725,7 +746,22 @@ everything rebuilds on demand.
 ## Files
 
 ```
-server.js            HTTP server, ffmpeg orchestration, file operations
+server.js            entry point: startup, store loading, shutdown
+server/              the server, one file per concern:
+  util.js            log, limiters, running ffmpeg and friends
+  config.js          settings, home folder, authorised folders, shared state
+  cloud.js           Graph streaming URLs and thumbnails
+  files.js           walking folders, cloud placeholders, the Recycle Bin
+  cache.js           preview strips, posters, probed metadata
+  walk.js            listings and the filtered folder counts
+  fileops.js         tags into files, carry-over, move/copy/rename/delete
+  http.js            JSON, static files, bodies, streaming, the foreign gate
+  routes.js          every /api route
+shared/facets.js     races, traits, tiers, rating scale, suggestion floor, the
+                     size+mtime key -- loaded by the server, the page and (as a
+                     copy made by tools/sync-shared.js) the phone
+write-whole.js       temp-file-and-rename writes for the face and print stores
+test/                npm test -- node:test, no dependencies, temp files only
 graph.js             Microsoft Graph: cloud thumbnails and streaming URLs
 library.js           ratings and tags, keyed by size + modified time
 faces.js             familiar faces: the index, the sweep, the suggestions
@@ -735,19 +771,27 @@ public/index.html    layout
 public/app.js        grid, hover scrubbing, actions
 public/styles.css    dark theme
 config.json          dev runs only; the packaged app keeps its settings in
-                     %APPDATA%\Video Explorer — last folder, view settings,
+                     %APPDATA%\Video Explorer\config.json (the native host sets
+                     VIDEO_EXPLORER_CONFIG) — last folder, view settings,
                      authorised folders
 ```
+
+The server's log is one file a day, `server-YYYY-MM-DD.log`, in
+`%LOCALAPPDATA%\video-explorer\logs` (`VIDEO_EXPLORER_LOG_DIR` overrides it) —
+never the sync root, since a log is this machine's business. A week is kept. A
+crash or a 500 is written there with its stack, which is the only place the
+packaged app, having no console, says anything at all.
 
 Everything this app knows about a library lives in one place, in the sync root:
 
 ```
 OneDrive\.video-explorer\
   library.json      ratings, tags, models, studio, production, links
+                    (~4.5MB, ~22,700 records)
   cache\            preview strips and probed metadata (~17KB a video)
   faces\v\          one face profile per video (~4KB), written once
   faces\thumbs\     the face pictures behind a suggestion (~26KB)
-  faces\suggestions.json   the conclusions, for the phone to read
+  faces\suggestions.json   the conclusions, for the phone to read (~15MB)
   backups\          a copy of library.json a day, fourteen kept
 ```
 
@@ -827,7 +871,8 @@ than taken on trust.
   anywhere so you can choose move/copy destinations freely.
 - ffmpeg runs at most `cores - 2` jobs concurrently (min 2, max 6).
 - Recognises `.mp4`, `.m4v`, and `.mov`. Add extensions to `VIDEO_EXT` in
-  `server.js` to widen it.
+  `server/files.js` (and the sweeps' own copies in `dupes.js` and `framing.js`)
+  to widen it.
 - If your videos are cloud-only OneDrive placeholders, generating a preview
   forces a full download of that file. Mark the folder **Always keep on this
   device** first if you want to avoid surprise downloads.
