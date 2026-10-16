@@ -2481,10 +2481,17 @@ body.dragging .card { cursor: grabbing; }
   flex: 0 1 auto;
   min-height: 120px;
   display: flex;
+  /* Once playing, the video kept its own height while the stage shrank, and
+     the overflow painted under the rating row and the tiles. */
+  overflow: hidden;
 }
 #playerModal #player {
   height: 100%;
   width: 100%;
+  min-height: 0;
+  /* What the card has left once its heading and footer are drawn: the card
+     stops at 92vh, the footer's height is measured as it changes. */
+  max-height: min(68vh, calc(92vh - var(--head-h, 62px) - var(--foot-h, 0px) - 2px));
   object-fit: contain;
   margin: auto;
 }

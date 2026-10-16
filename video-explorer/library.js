@@ -94,6 +94,18 @@ const BIG_DROP = 0.1;
 // The record count last written, so the next write can notice a collapse.
 let lastWritten = 0;
 
+// The file as this process last read or wrote it: the bytes, and the size and
+// modified time they had on disk. Another writer -- the phone, this library
+// open on a second PC, OneDrive restoring a version -- shows up as a stamp that
+// no longer matches, and its changes are merged rather than written over.
+let baseRaw = null;
+let diskStamp = null;
+
+// Writes run one at a time: two overlapping writes once shared a temp file and
+// left a truncated library behind.
+let writing = Promise.resolve();
+let tempSeq = 0;
+
 // Why writing is refused, or '' when it is fine. Set when the file exists but
 // could not be read: an unreadable sidecar must not be silently replaced by the
 // empty one this module would otherwise start from.
@@ -136,6 +148,8 @@ async function init(oneDriveRoot) {
   let raw = null;
   try {
     raw = await fsp.readFile(FILE, 'utf8');
+    baseRaw = raw;
+    diskStamp = await stampOf(FILE);
   } catch (err) {
     if (err.code !== 'ENOENT') {
       readOnly = `${path.basename(FILE)} could not be read (${err.code || err.message})`;
@@ -244,6 +258,102 @@ function keyFor(stat) {
   return `${stat.size}:${Math.round(stat.mtimeMs)}`;
 }
 
+async function stampOf(file) {
+  try {
+    const st = await fsp.stat(file);
+    return { size: st.size, mtimeMs: st.mtimeMs };
+  } catch {
+    return null;
+  }
+}
+
+const sameStamp = (a, b) => Boolean(a && b && a.size === b.size && a.mtimeMs === b.mtimeMs);
+
+/**
+ * Three ways to one library: what both sides started from, ours, theirs.
+ *
+ * Per record (and per entry of races, traits and favourite tiers): changed on
+ * one side only, that side wins; changed on both, the later `updated` wins and
+ * ours on a tie -- except that an edit always beats a deletion, because a
+ * deleted record is an empty one and labels are the thing not to lose.
+ * Favourites merge by name the same way. The phone carries a copy of this.
+ */
+function mergeLibraries(base, ours, theirs) {
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const pick = (b, o, t, both) => {
+    const oc = !same(o, b);
+    const tc = !same(t, b);
+    if (oc && !tc) return o;
+    if (tc && !oc) return t;
+    if (!oc) return o;
+    if (o === undefined) return t;
+    if (t === undefined) return o;
+    return both(o, t);
+  };
+  const newer = (o, t) => ((Number(t.updated) || 0) > (Number(o.updated) || 0) ? t : o);
+  const mine = (o) => o;
+  const mergeMap = (bm, om, tm, both) => {
+    bm = bm || {}; om = om || {}; tm = tm || {};
+    const out = {};
+    for (const k of new Set([...Object.keys(bm), ...Object.keys(om), ...Object.keys(tm)])) {
+      const v = pick(bm[k], om[k], tm[k], both);
+      if (v !== undefined) out[k] = v;
+    }
+    return out;
+  };
+  const names = (list) => new Map((Array.isArray(list) ? list : []).map((n) => [String(n).toLowerCase(), n]));
+  const bf = names(base.favourites);
+  const of = names(ours.favourites);
+  const tf = names(theirs.favourites);
+  const favourites = [];
+  for (const k of new Set([...bf.keys(), ...of.keys(), ...tf.keys()])) {
+    const keep = of.has(k) !== bf.has(k) ? of.has(k) : tf.has(k);
+    if (keep) favourites.push(of.get(k) || tf.get(k));
+  }
+  favourites.sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: 'base' }));
+  return {
+    ...theirs,
+    ...ours,
+    records: mergeMap(base.records, ours.records, theirs.records, newer),
+    races: mergeMap(base.races, ours.races, theirs.races, mine),
+    traits: mergeMap(base.traits, ours.traits, theirs.traits, mine),
+    favouriteTiers: mergeMap(base.favouriteTiers, ours.favouriteTiers, theirs.favouriteTiers, mine),
+    favourites,
+  };
+}
+
+/**
+ * Takes in what another writer put on disk, if anything did.
+ *
+ * In place, so anything holding `data.records` (the face index reads it
+ * directly) sees the merged records rather than an orphaned map.
+ */
+async function adoptDisk() {
+  const now = await stampOf(FILE);
+  if (!now || sameStamp(now, diskStamp)) return false;
+  let theirsRaw;
+  let theirs;
+  try {
+    theirsRaw = await fsp.readFile(FILE, 'utf8');
+    theirs = JSON.parse(theirsRaw);
+  } catch {
+    return false; // half-synced or locked: the next look will do
+  }
+  if (!theirs || !theirs.records || typeof theirs.records !== 'object') return false;
+  if (theirsRaw === baseRaw) { diskStamp = now; return false; }
+  let base = { records: {} };
+  try { if (baseRaw) base = JSON.parse(baseRaw); } catch { /* treat as empty */ }
+  const merged = mergeLibraries(base, data, theirs);
+  for (const key of Object.keys(data.records)) if (!(key in merged.records)) delete data.records[key];
+  Object.assign(data.records, merged.records);
+  for (const [k, v] of Object.entries(merged)) if (k !== 'records') data[k] = v;
+  baseRaw = theirsRaw;
+  diskStamp = now;
+  lastWritten = Object.keys(data.records).length;
+  console.log(`[video-explorer] library: merged changes written by another device (${lastWritten} records)`);
+  return true;
+}
+
 function get(stat) {
   return data.records[keyFor(stat)] || null;
 }
@@ -303,6 +413,9 @@ function decorate(stat) {
  */
 async function writeNow() {
   if (readOnly) return { file: FILE, records: 0, readOnly };
+  // Somebody else wrote since we last looked: theirs merged in first, so this
+  // write carries both rather than replacing theirs with ours.
+  await adoptDisk();
   // Compact, not indented. The indentation was 740KB of spaces and newlines in
   // a 3.8MB file that lives in the sync root and is re-uploaded whole after
   // every burst of edits -- and that a phone downloads to read one rating.
@@ -315,7 +428,8 @@ async function writeNow() {
   }
 
   await fsp.mkdir(path.dirname(FILE), { recursive: true });
-  const temp = `${FILE}.writing`;
+  tempSeq += 1;
+  const temp = `${FILE}.${process.pid}-${tempSeq}.writing`;
   await fsp.writeFile(temp, body);
 
   // The rename is the whole of the atomicity, so a refusal is retried rather
@@ -325,6 +439,8 @@ async function writeNow() {
     try {
       await fsp.rename(temp, FILE);
       lastWritten = count;
+      baseRaw = body;
+      diskStamp = await stampOf(FILE);
       return { file: FILE, records: count };
     } catch {
       await new Promise((resolve) => { setTimeout(resolve, 60 * (i + 1)); });
@@ -334,17 +450,39 @@ async function writeNow() {
   // Still refused. This used to fall back to writing FILE in place, which
   // truncates it first -- and a process that dies in that window leaves a
   // truncated file or an empty one. Two bulk runs died exactly there and took
-  // the library with them. So the old file is left whole and the new content
-  // stays beside it; save() comes round again in 400ms.
-  return { file: FILE, records: count, deferred: `${path.basename(temp)} is waiting` };
+  // the library with them. So the old file is left whole, and the write is
+  // tried again shortly -- the edits are still here in memory.
+  await fsp.unlink(temp).catch(() => {});
+  clearTimeout(timer);
+  timer = setTimeout(() => { timer = null; writeSerial().catch(() => {}); }, 2000);
+  return { file: FILE, records: count, deferred: 'rename refused; trying again' };
+}
+
+/** One write at a time, each starting from the one before. */
+function writeSerial() {
+  writing = writing.then(writeNow, writeNow);
+  return writing;
 }
 
 function save() {
   clearTimeout(timer);
   timer = setTimeout(() => {
+    timer = null;
     // A read-only or offline sync folder must not break editing.
-    writeNow().catch(() => {});
+    writeSerial().catch(() => {});
   }, 400);
+}
+
+/**
+ * Another device's edits, picked up while this one sits idle. Only when no
+ * write of ours is waiting -- that write merges anyway.
+ */
+async function refreshFromDisk() {
+  if (readOnly || timer || !FILE) return false;
+  let changed = false;
+  writing = writing.then(async () => { changed = await adoptDisk(); }, async () => { changed = await adoptDisk(); });
+  await writing;
+  return changed;
 }
 
 /**
@@ -352,8 +490,11 @@ function save() {
  * debounce is there to coalesce a burst of clicks, not to survive a process.
  */
 async function flush() {
+  const pending = timer !== null;
   clearTimeout(timer);
-  return writeNow();
+  timer = null;
+  if (!pending) { await writing.catch(() => {}); return { file: FILE, records: lastWritten }; }
+  return writeSerial();
 }
 
 /**
@@ -764,6 +905,7 @@ function stats() {
 
 module.exports = {
   init, keyFor, get, all, decorate, apply, rekey, flush, status, snapshot,
+  refreshFromDisk, mergeLibraries,
   notModelsByKey,
   counts, tagCounts, modelCounts, studioCounts, productionCounts, stats, normaliseTags,
   renameTag, removeTagEverywhere,

@@ -397,6 +397,11 @@ function frames(file, opts, onFrame) {
       '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1',
     ], { windowsHide: true });
 
+    // Long enough to decode a long film at the sampling rate; a stuck read
+    // is killed and treated as a video with what it gave by then.
+    const watchdog = setTimeout(() => proc.kill(), 15 * 60 * 1000);
+    proc.on('close', () => clearTimeout(watchdog));
+
     const frameBytes = W * H * 3;
     const chunks = [];
     let pending = 0;

@@ -92,6 +92,26 @@ function init({ build, hasStrip, countCached = null, roots = [], home = null }) 
 
 const isCloudOnly = (s) => (s.size ? (s.blocks || 0) * 512 < s.size * 0.5 : false);
 
+/**
+ * The walk that queued this file may be hours old. Freed up since -- by Storage
+ * Sense, or from the app -- reading it would download the whole video, which
+ * only the user's own Download may ever cause. So it is looked at again, the
+ * moment before ffmpeg opens it, and left alone if it is not still here.
+ */
+async function stillLocal(file, stat) {
+  let now;
+  try { now = await fsp.stat(file); } catch { throw notLocal('gone since the walk'); }
+  if (isCloudOnly(now)) throw notLocal('cloud-only now');
+  if (keyFor(now) !== keyFor(stat)) throw notLocal('changed since the walk');
+  return now;
+}
+
+function notLocal(why) {
+  const err = new Error(why);
+  err.code = 'NOT_LOCAL';
+  return err;
+}
+
 const VIDEO_EXT = new Set(['.mp4', '.m4v', '.mov']);
 // The skip list and the batched stat live in walk-rules.js, shared with the
 // other two sweeps; the measurement behind the batch size moved there with it.
@@ -165,11 +185,14 @@ async function frame(next) {
   state.lastBuilt = state.current;
   if (!state.startedAt) state.startedAt = Date.now();
   try {
-    await state.build(next.file, next.stat);
+    // The fresh stat goes to the builder too: it decides local-or-cloud from it.
+    const now = await stillLocal(next.file, next.stat);
+    await state.build(next.file, now);
     state.framed += 1;
     state.done += 1;
     state.failures.delete(next.key);
-  } catch {
+  } catch (err) {
+    if (err && err.code === 'NOT_LOCAL') { state.current = ''; return; }
     // A damaged file, or a seek past the last keyframe. Counted so it is not
     // returned to on every walk for the rest of the session.
     state.failures.set(next.key, (state.failures.get(next.key) || 0) + 1);

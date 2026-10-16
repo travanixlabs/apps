@@ -1699,6 +1699,26 @@ function lineup(model, limit = 8, against = null) {
 const isCloudOnly = (s) => (s.size ? (s.blocks || 0) * 512 < s.size * 0.5 : false);
 
 /**
+ * The walk that queued this file may be hours old. Freed up since -- by Storage
+ * Sense, or from the app -- reading it would download the whole video, which
+ * only the user's own Download may ever cause. So it is looked at again, the
+ * moment before ffmpeg opens it, and left alone if it is not still here.
+ */
+async function stillLocal(file, stat) {
+  let now;
+  try { now = await fsp.stat(file); } catch { throw notLocal('gone since the walk'); }
+  if (isCloudOnly(now)) throw notLocal('cloud-only now');
+  if (keyFor(now) !== keyFor(stat)) throw notLocal('changed since the walk');
+  return now;
+}
+
+function notLocal(why) {
+  const err = new Error(why);
+  err.code = 'NOT_LOCAL';
+  return err;
+}
+
+/**
  * Reads one video and files what it found.
  *
  * The expensive half is ffmpeg, so the result is written the moment it exists:
@@ -1709,6 +1729,7 @@ async function profile(file, stat, opts = {}) {
   const key = keyFor(stat);
   const have = state.index.videos[key];
   if (have && !opts.force) return have;
+  await stillLocal(file, stat);
   const faces = await engine.facesIn(file, opts);
   const groups = faces.length >= 2 ? engine.groupFaces(faces) : [];
   const people = groups
@@ -2045,8 +2066,12 @@ async function worker() {
           const record = (state.library ? state.library.all() : {})[next.key];
           if (record && (record.models || []).length === 1) rebuildLater();
         }
-      } catch {
-        state.failures.set(next.key, (state.failures.get(next.key) || 0) + 1);
+      } catch (err) {
+        // Not here any more is not a failure of the file: the next walk sees
+        // it for what it is.
+        if (!err || err.code !== 'NOT_LOCAL') {
+          state.failures.set(next.key, (state.failures.get(next.key) || 0) + 1);
+        }
       }
       state.done += 1;
       state.current = '';

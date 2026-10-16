@@ -6585,6 +6585,8 @@ function syncFootHeight() {
   const foot = $('#playerModal .modal-foot');
   if (!foot) return;
   $('#playerModal').style.setProperty('--foot-h', `${foot.offsetHeight}px`);
+  const head = $('#playerModal .modal-head');
+  if (head) $('#playerModal').style.setProperty('--head-h', `${head.offsetHeight}px`);
 }
 
 // The player filling the app window instead of floating over the grid. Held

@@ -415,7 +415,9 @@ const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { maxBuffer: 32 * 1024 * 1024, windowsHide: true, ...opts }, (err, stdout, stderr) => {
+    // A time limit on every child: one hung ffmpeg otherwise holds its sweep,
+    // or a slot of the shared limiter, for the rest of the session.
+    execFile(cmd, args, { maxBuffer: 32 * 1024 * 1024, windowsHide: true, timeout: 10 * 60 * 1000, ...opts }, (err, stdout, stderr) => {
       if (err) { err.stderr = String(stderr || ''); return reject(err); }
       resolve({ stdout: String(stdout || ''), stderr: String(stderr || '') });
     });
@@ -2178,9 +2180,36 @@ async function handleAction(body) {
  */
 let coreReady = Promise.resolve();
 
+/**
+ * Whether a request comes from somewhere other than this app's own page.
+ *
+ * The server is on loopback, but any website open in a browser on this PC can
+ * still send it a request -- a form post needs no permission -- and it can
+ * move, delete and re-root files. So: the Host must be this server (a page
+ * that rebinds its own domain to 127.0.0.1 fails here), and a browser request
+ * must say it came from this origin. Browsers always say; the native host and
+ * the command-line tools send neither header, and are let through.
+ */
+const OWN_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
+function foreignRequest(req) {
+  const host = String(req.headers.host || '').toLowerCase();
+  if (host && !OWN_HOSTS.has(host)) return `host ${host}`;
+  const site = req.headers['sec-fetch-site'];
+  if (site && site !== 'same-origin' && site !== 'none') return `${site} request`;
+  const origin = req.headers.origin;
+  if (origin && !OWN_HOSTS.has(origin.replace(/^https?:\/\//i, '').toLowerCase())) return `origin ${origin}`;
+  return '';
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${HOST}:${PORT}`);
   const route = url.pathname;
+
+  const foreign = foreignRequest(req);
+  if (foreign) {
+    log(`refused ${req.method} ${route}: ${foreign}`);
+    return sendJson(res, 403, { error: 'Requests from other sites are not accepted' });
+  }
 
   try {
     if (route.startsWith('/api/') && route !== '/api/config') await coreReady;
@@ -2189,6 +2218,13 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && !route.startsWith('/api/')) {
       return serveStatic(res, route.replace(/^\/+/, ''));
+    }
+
+    // The window is closing: everything held in memory goes to disk before the
+    // host ends the process, which it does without a signal.
+    if (req.method === 'POST' && route === '/api/shutdown') {
+      await flushAll();
+      return sendJson(res, 200, { ok: true });
     }
 
     if (route === '/api/config') {
@@ -3034,6 +3070,14 @@ async function main() {
 async function loadCore(mark) {
   const lib = await library.init(ONEDRIVE_ROOT);
   mark(`labels: ${lib.count} records at ${lib.file}`);
+  // The phone, or this library open on another PC, writes the same file.
+  // Its edits are taken in while this one sits idle; a write of ours merges
+  // them anyway.
+  setInterval(() => {
+    library.refreshFromDisk()
+      .then((changed) => { if (changed) faces.rebuildSoon(); })
+      .catch(() => {});
+  }, 30000).unref();
   // An unreadable sidecar is the one startup condition worth shouting about:
   // everything still works except the thing you would not notice was broken.
   if (lib.readOnly) log(`LABELS READ-ONLY: ${lib.readOnly} — edits refused until this reads`);
@@ -3170,10 +3214,17 @@ server.on('error', (err) => {
 
 // The face index is written lazily; a close would otherwise cost whatever the
 // sweep managed since the last save.
+async function flushAll() {
+  flushMeta();
+  await Promise.all([
+    library.flush().catch((err) => log('library flush failed:', err.message)),
+    faces.flush(),
+  ]);
+}
+
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, async () => {
-    flushMeta();
-    await faces.flush();
+    await flushAll();
     process.exit(0);
   });
 }

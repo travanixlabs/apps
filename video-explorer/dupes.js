@@ -350,6 +350,26 @@ async function writePrint(key, row) {
 
 const isCloudOnly = (s) => (s.size ? (s.blocks || 0) * 512 < s.size * 0.5 : false);
 
+/**
+ * The walk that queued this file may be hours old. Freed up since -- by Storage
+ * Sense, or from the app -- reading it would download the whole video, which
+ * only the user's own Download may ever cause. So it is looked at again, the
+ * moment before ffmpeg opens it, and left alone if it is not still here.
+ */
+async function stillLocal(file, stat) {
+  let now;
+  try { now = await fsp.stat(file); } catch { throw notLocal('gone since the walk'); }
+  if (isCloudOnly(now)) throw notLocal('cloud-only now');
+  if (keyFor(now) !== keyFor(stat)) throw notLocal('changed since the walk');
+  return now;
+}
+
+function notLocal(why) {
+  const err = new Error(why);
+  err.code = 'NOT_LOCAL';
+  return err;
+}
+
 const VIDEO_EXT = new Set(['.mp4', '.m4v', '.mov']);
 // The skip list and the batched stat live in walk-rules.js, shared with the
 // other two sweeps. This one used to know THREE never-walk folders to the face
@@ -402,6 +422,7 @@ async function walkForWork() {
  */
 async function profile(file, stat) {
   const key = keyFor(stat);
+  await stillLocal(file, stat);
   const raw = await engine.fingerprint(file);
   const row = engine.pack(raw);
   row.name = path.basename(file);
@@ -921,8 +942,8 @@ async function worker() {
       try {
         await profile(next.file, next.stat);
         state.sinceMatch += 1;
-      } catch {
-        state.failures.add(next.key);
+      } catch (err) {
+        if (!err || err.code !== 'NOT_LOCAL') state.failures.add(next.key);
       }
       state.current = '';
       if (state.sinceMatch >= MATCH_AFTER

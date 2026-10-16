@@ -103,6 +103,9 @@ function collect(args, { level = 'error' } = {}) {
   return new Promise((resolve) => {
     const proc = spawn('ffmpeg', ['-hide_banner', '-loglevel', level, ...args],
       { windowsHide: true });
+    // It reads the first fifteen minutes; well past that, it is stuck.
+    const watchdog = setTimeout(() => proc.kill(), 10 * 60 * 1000);
+    proc.on('close', () => clearTimeout(watchdog));
     const out = [];
     const err = [];
     proc.stdout.on('data', (c) => out.push(c));
