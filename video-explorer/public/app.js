@@ -2377,7 +2377,7 @@ function buildFaceChip(file, sug, { onPick, showFace = true } = {}) {
  */
 const HOVER_IN_MS = 170;
 const HOVER_OUT_MS = 160;
-const HOVER_CROPS = 6;
+const HOVER_CROPS = 12;
 const HOVER_STALE_MS = 60000;
 
 // One request per performer rather than per chip: the same name appears on
@@ -2385,13 +2385,27 @@ const HOVER_STALE_MS = 60000;
 // lived, because the sweep is writing new profiles the whole time.
 const herFaces = new Map();
 
-function herLineup(name) {
-  const held = herFaces.get(name);
+function herLineup(name, file, person) {
+  const id = `${name}\u0000${file.path}\u0000${person ?? ''}`;
+  const held = herFaces.get(id);
   if (held && Date.now() - held.at < HOVER_STALE_MS) return held.p;
-  const p = api(`/api/faces/lineup?model=${encodeURIComponent(name)}&limit=12`)
-    .catch(() => { herFaces.delete(name); return null; });
-  herFaces.set(name, { at: Date.now(), p });
+  // Ranked against this video's face, so each of hers comes with how alike.
+  const p = api(`/api/faces/lineup?model=${encodeURIComponent(name)}&limit=${HOVER_CROPS + 1}`
+    + `&path=${encodeURIComponent(file.path)}&person=${person ?? ''}`)
+    .catch(() => { herFaces.delete(id); return null; });
+  herFaces.set(id, { at: Date.now(), p });
   return p;
+}
+
+/**
+ * What the hover card needs for a credited name: her suggestion on this video
+ * when the faces put her among them, or just the name when they do not.
+ */
+function creditedSuggestion(file, name) {
+  const want = String(name).toLowerCase();
+  const found = (file.suggested || []).filter((s) => s.name.toLowerCase() === want)
+    .sort((a, b) => b.score - a.score)[0];
+  return found || { name, person: null, score: null, credited: true };
 }
 
 const hover = { in: 0, out: 0, token: null, held: null };
@@ -2424,18 +2438,20 @@ async function openFaceHover(anchor, file, sug) {
   hover.token = token;
   hover.held = { file, sug };
 
-  $('#faceHoverThis').src =
-    `/api/faces/face?path=${encodeURIComponent(file.path)}&person=${sug.person || 0}`;
+  const own = (person) => `/api/faces/face?path=${encodeURIComponent(file.path)}&person=${person || 0}`;
+  $('#faceHoverThis').src = own(sug.person);
   $('#faceHoverLabel').textContent = `${sug.name} · loading her faces…`;
   $('#faceHoverGrid').replaceChildren();
 
   const pct = Math.round(sug.score * 100);
   const gap = Math.round(sug.margin * 100);
   const verdict = $('#faceHoverVerdict');
-  verdict.textContent = sug.band === 'near'
-    ? `${pct}% alike — below the bar to suggest, so judge it yourself`
-    : `${pct}% alike, ${gap} clear of ${sug.runnerUp} — ${BAND_LABEL[sug.band]}`;
-  verdict.className = `face-hover-verdict band-${sug.band}`;
+  verdict.textContent = sug.score === null
+    ? `Credited on this video — not among the names its faces suggest`
+    : sug.band === 'near'
+      ? `${pct}% alike — below the bar to suggest, so judge it yourself`
+      : `${pct}% alike, ${gap} clear of ${sug.runnerUp} — ${BAND_LABEL[sug.band]}`;
+  verdict.className = `face-hover-verdict band-${sug.band || 'near'}`;
   $('#faceHoverMore').textContent = `See all of ${sug.name}'s faces`;
   const no = $('#faceHoverNo');
   const credited = (file.models || []).some((m) => m.toLowerCase() === sug.name.toLowerCase());
@@ -2449,19 +2465,23 @@ async function openFaceHover(anchor, file, sug) {
   card.hidden = false;
   placeFaceHover(anchor);
 
-  const data = await herLineup(sug.name);
+  const data = await herLineup(sug.name, file, sug.person);
   if (hover.token !== token) return;
+  // A credited name names no face: the server picked the one most like her.
+  if (sug.person === null && data && Number.isInteger(data.mine)) $('#faceHoverThis').src = own(data.mine);
   if (!data) { $('#faceHoverLabel').textContent = `Could not read ${sug.name}'s faces`; return; }
 
   // This video is the question, not part of the answer.
   const others = (data.faces || []).filter((f) => f.key !== keyOf(file)).slice(0, HOVER_CROPS);
   $('#faceHoverLabel').textContent = others.length
-    ? `${sug.name} · ${others.length} of her ${data.total} read`
+    ? `${sug.name} · ${others.length} most alike of her ${data.total}`
     : `No stored faces for ${sug.name} yet`;
 
   const grid = $('#faceHoverGrid');
   grid.replaceChildren();
   for (const other of others) {
+    const cell = document.createElement('div');
+    cell.className = 'face-hover-cell';
     const img = document.createElement('img');
     img.loading = 'lazy';
     img.alt = '';
@@ -2469,8 +2489,16 @@ async function openFaceHover(anchor, file, sug) {
     // counts towards her average whether or not it flatters the picture.
     if (other.agrees !== null && other.agrees < 0.3) img.className = 'face-odd-thumb';
     img.src = `/api/faces/crop?key=${encodeURIComponent(other.key)}&person=0`;
-    img.addEventListener('error', () => img.remove());
-    grid.appendChild(img);
+    img.addEventListener('error', () => cell.remove());
+    cell.appendChild(img);
+    // How like this video's face that one of hers is.
+    if (typeof other.score === 'number') {
+      const pct = document.createElement('span');
+      pct.className = 'face-hover-pct';
+      pct.textContent = `${Math.round(other.score * 100)}%`;
+      cell.appendChild(pct);
+    }
+    grid.appendChild(cell);
   }
   // The grid was empty when this was first placed, so it is a different height
   // now and 'above the chip' means somewhere else.
@@ -3967,6 +3995,8 @@ function buildLabelChips(file, field, { add: withAdd = true, edit = true } = {})
       ev.stopPropagation();
       filterByLabel(field, value);
     });
+    // In the player, a credited name shows her faces most like this video's.
+    if (edit && field === 'models' && state.playing) attachFaceHover(chip, file, creditedSuggestion(file, value));
 
     const drop = () => editRecords(
       [file.path],

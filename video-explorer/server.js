@@ -2790,9 +2790,18 @@ const server = http.createServer(async (req, res) => {
 
     // A performer's other faces, to hold the suggested one up against.
     if (req.method === 'GET' && route === '/api/faces/lineup') {
+      // With a video, hers are ranked by how like that video's face they are.
+      let against = null;
+      const from = url.searchParams.get('path');
+      if (from) {
+        const stat = await fsp.stat(authoriseOrThrow(from));
+        const person = url.searchParams.get('person');
+        against = { key: faces.keyFor(stat), person: person === null || person === '' ? null : Number(person) };
+      }
       return sendJson(res, 200, faces.lineup(
         url.searchParams.get('model') || '',
         Number(url.searchParams.get('limit') || 8),
+        against,
       ));
     }
 

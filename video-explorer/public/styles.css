@@ -2535,7 +2535,7 @@ body.dragging .card { cursor: grabbing; }
 .face-hover {
   position: fixed;
   z-index: 110;
-  width: 340px;
+  width: 460px;
   padding: 10px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
@@ -2568,8 +2568,15 @@ body.dragging .card { cursor: grabbing; }
    break, without the card growing into the thing it replaced. */
 .face-hover-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 5px;
+}
+.face-hover-cell { position: relative; }
+.face-hover-pct {
+  position: absolute; right: 3px; bottom: 3px;
+  font-size: 10px; font-weight: 600; line-height: 1;
+  padding: 2px 4px; border-radius: 4px;
+  background: rgba(0, 0, 0, 0.7); color: #fff;
 }
 .face-hover-grid img {
   width: 100%;

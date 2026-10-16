@@ -1613,7 +1613,7 @@ async function faceImageByKey(key, person = 0) {
  * Solo credits lead, because those are the videos her average is actually built
  * from; a face from a two-hander might be the other performer.
  */
-function lineup(model, limit = 8) {
+function lineup(model, limit = 8, against = null) {
   const want = String(model || '').toLowerCase();
   if (!want) return { model: '', total: 0, faces: [] };
   const records = state.library ? state.library.all() : {};
@@ -1645,6 +1645,43 @@ function lineup(model, limit = 8) {
     odd = rows.filter((r) => r.agrees !== null && r.agrees < SAME_PERSON).length;
     rows.sort((a, b) => (b.agrees ?? -1) - (a.agrees ?? -1)
       || Number(b.solo) - Number(a.solo) || b.faces - a.faces);
+  }
+  // Held up against one video: hers most like ITS face first, each with how
+  // alike. Her face in each of hers is the first person, as in her average;
+  // this video's is the one asked about, or -- for a name credited rather
+  // than suggested -- whichever of its faces is most like her.
+  let mine = null;
+  const asked = against && state.index.videos[against.key];
+  if (asked && (asked.people || []).length) {
+    const people = asked.people;
+    const which = Number.isInteger(against.person) && people[against.person]
+      ? [against.person] : people.map((_, i) => i);
+    const vecs = which.map((i) => ({ i, v: unpackVector(people[i].vec) }));
+    const totals = new Map(which.map((i) => [i, 0]));
+    const scored = [];
+    for (const row of rows) {
+      if (row.key === against.key) continue;
+      const theirs = state.index.videos[row.key].people[0];
+      const v = unpackVector(theirs.vec);
+      let best = -1;
+      for (const m of vecs) {
+        const sim = engine.cosine(m.v, v);
+        totals.set(m.i, totals.get(m.i) + sim);
+        if (sim > best) best = sim;
+      }
+      row.score = Math.round(best * 100) / 100;
+      scored.push(row);
+    }
+    scored.sort((a, b) => b.score - a.score);
+    mine = [...totals.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    return {
+      model,
+      total: scored.length,
+      odd,
+      contributing: centroid ? centroid.count : 0,
+      mine,
+      faces: scored.slice(0, Math.max(1, Math.min(24, limit))),
+    };
   }
   return {
     model,
