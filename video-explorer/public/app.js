@@ -71,6 +71,7 @@ const CHOICE_ROWS = [
   ['#advFraming', 'framing', [['done', 'completed'], ['todo', 'not completed']]],
   ['#advFingerprint', 'fingerprint', [['done', 'completed'], ['todo', 'not completed']]],
   ['#advProfiling', 'profiling', [['done', 'completed'], ['todo', 'not completed']]],
+  ['#advSuggestions', 'suggestions', [['some', 'suggested'], ['none', 'none suggested']]],
   ['#advStorage', 'storage', [['downloaded', 'downloaded'], ['cloud', 'cloud']]],
 ];
 
@@ -1806,7 +1807,7 @@ function openAdvanced() {
     }
   }
   // Additional options start folded, and open only when one of them is in use.
-  $('#advMore').open = ['framing', 'fingerprint', 'profiling', 'storage']
+  $('#advMore').open = ['framing', 'fingerprint', 'profiling', 'suggestions', 'storage']
     .some((f) => advDraft[f] && advDraft[f].size);
   $('#advModal').hidden = false;
   renderAdvanced();
@@ -2569,6 +2570,39 @@ async function refuseSuggestedGroup(group) {
     await editRecords(paths.slice(i, i + 200), { addNotModels: [name] });
   }
   toast(`${name} turned down on ${paths.length} video${paths.length === 1 ? '' : 's'}`, 'ok');
+  render();
+}
+
+/**
+ * "All profiled": on every video in the section, each suggested name that is
+ * neither credited nor already turned down is turned down. Credits stay.
+ */
+async function settleGroupSuggestions(group) {
+  const byName = new Map();
+  const touched = new Set();
+  for (const file of new Set(group.files)) {
+    const done = new Set([...(file.models || []), ...(file.notModels || [])].map((n) => n.toLowerCase()));
+    for (const s of file.suggested || []) {
+      const key = String(s.name).toLowerCase();
+      if (s.score < FACE_FLOOR || done.has(key)) continue;
+      done.add(key);
+      if (!byName.has(s.name)) byName.set(s.name, []);
+      byName.get(s.name).push(file.path);
+      touched.add(file.path);
+    }
+  }
+  if (!touched.size) { toast(`Nothing suggested is waiting on ${group.name}'s videos`, 'info'); return; }
+  let pairs = 0;
+  for (const paths of byName.values()) pairs += paths.length;
+  if (!window.confirm(`Turn down every suggested name on ${group.name}'s videos?\n\n`
+    + `${pairs} suggestion${pairs === 1 ? '' : 's'} across ${touched.size} video${touched.size === 1 ? '' : 's'}`
+    + ` (${byName.size} name${byName.size === 1 ? '' : 's'}). Credited names are left as they are.`)) return;
+  for (const [name, paths] of byName) {
+    for (let i = 0; i < paths.length; i += 200) {
+      await editRecords(paths.slice(i, i + 200), { addNotModels: [name] });
+    }
+  }
+  toast(`${pairs} suggestion${pairs === 1 ? '' : 's'} turned down on ${touched.size} of ${group.name}'s videos`, 'ok');
   render();
 }
 
@@ -6969,6 +7003,19 @@ function buildGroupHead(group) {
       notAPerformer(group.name);
     });
     head.appendChild(not);
+
+    // Her videos are settled: whoever else the faces point to on them is not
+    // in them. Every pending suggestion on every one is turned down.
+    const settled = document.createElement('button');
+    settled.type = 'button';
+    settled.className = 'group-notperf';
+    settled.textContent = 'all profiled';
+    settled.title = `Turn down every suggested name on ${group.name}'s videos`;
+    settled.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      settleGroupSuggestions(group);
+    });
+    head.appendChild(settled);
 
     // Grouped by suggestion: every video here only looks like her. Turn the
     // name down on all of them at once.
