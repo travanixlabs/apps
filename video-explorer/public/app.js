@@ -7,16 +7,30 @@ const $ = (sel) => document.querySelector(sel);
 /** The only scrolling element — observers must measure against it, not the page. */
 const scrollRoot = document.getElementById('scrollArea');
 
+/**
+ * Name order, made once. localeCompare with options builds a collator on every
+ * call, and sorting 27,000 videos asks it some four hundred thousand times --
+ * the sort spent most of its time setting up rather than comparing.
+ *   BY_NAME        numbers in order, case and accents ignored
+ *   BY_NAME_EXACT  numbers in order, case still telling two names apart
+ *   BY_LETTERS     case and accents ignored, digits read one at a time
+ */
+const BY_NAME = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare;
+const BY_NAME_EXACT = new Intl.Collator(undefined, { numeric: true }).compare;
+const BY_LETTERS = new Intl.Collator(undefined, { sensitivity: 'base' }).compare;
+
 // The facet tables, the filter object and the matcher live in filter.js, which
 // the page loads before this file and the server requires. They were here until
 // the folder tiles had to say how many videos in a subfolder match -- a question
 // only the server can answer, since it is the only one holding those videos.
 // Read them as globals below: CHOICES, CHOICE_FACETS, FACETS, LABEL_FACETS,
-// NOTHING, SINGLE_VALUED, newAdvFilter, picked, choiceMatch, matchesAdvanced.
+// NOTHING, SINGLE_VALUED, newAdvFilter, picked, choiceMatch, compileAdvanced,
+// matchesAdvanced.
 
 const state = {
   config: {},
   files: [],          // videos shown for the current folder
+  byPath: new Map(),  // the same, by path -- only ever set through setFiles()
   folders: [],        // immediate subfolders of the current folder
   view: [],           // filtered + sorted
   dir: '',
@@ -100,7 +114,7 @@ async function setAvailability(files, want) {
       if (!(out.results[f.path] || {}).ok) continue;
       ok += 1;
       f.cloudOnly = want === 'cloud';
-      const live = state.files.find((x) => x.path === f.path);
+      const live = fileAt(f.path);
       if (live && live !== f) live.cloudOnly = f.cloudOnly;
     }
     toast(want === 'download'
@@ -114,7 +128,8 @@ async function setAvailability(files, want) {
   render();
   updateSelectionBar();
   if (state.playing) syncPlayerAvail(state.playing);
-  setTimeout(() => relistQuietly().then(() => render()).catch(() => {}), 20000);
+  // relistQuietly draws the page itself, and waits for an open player to close.
+  setTimeout(() => relistWhenFree().catch(() => {}), 20000);
 }
 
 /** The player's availability button: what this video is, and a click switches it. */
@@ -333,11 +348,6 @@ function fmtDate(ms) {
   });
 }
 
-function fmtBitrate(bps) {
-  if (!bps) return null;
-  return bps >= 1e6 ? `${(bps / 1e6).toFixed(1)} Mbps` : `${Math.round(bps / 1e3)} kbps`;
-}
-
 function toast(message, kind = '', action = null) {
   const el = document.createElement('div');
   el.className = 'toast' + (kind ? ' ' + kind : '');
@@ -403,10 +413,38 @@ function hydrate(file) {
   file.duplicate = file.duplicate || false;
   file.copies = file.copies || 0;
   file.dupeKinds = file.dupeKinds || null;
+  searchHay(file);
   return file;
 }
 
 const hydrateAll = (files) => (files || []).map(hydrate);
+
+/**
+ * What a bare search term is looked for in, lower-cased once per record rather
+ * than once per record per keystroke. Name and subfolder only: the tags and
+ * models are edited in place far too often to be safely held here, so the
+ * matcher still reads those live. Called again wherever a video is renamed.
+ */
+function searchHay(file) {
+  file._hay = (file.name + ' ' + file.relFolder).toLowerCase();
+  return file._hay;
+}
+
+/**
+ * The listing, and the same videos by path.
+ *
+ * A path lookup used to be state.files.find(), a walk of up to 27,000 records,
+ * made per tile scrolled into view and per metadata chunk. Every replacement of
+ * the listing goes through here so the map can never describe a different one;
+ * a rename moves its entry by hand (see doAction).
+ */
+function setFiles(files) {
+  state.files = files;
+  state.byPath = new Map(files.map((f) => [f.path, f]));
+}
+
+/** A video of the current listing, by path; undefined for one that is not in it. */
+const fileAt = (path) => state.byPath.get(path);
 
 async function saveConfig(patch) {
   Object.assign(state.config, patch);
@@ -449,7 +487,7 @@ async function scan(dir, { record = true } = {}) {
     // After the clears: the listing carries what the server already knew about
     // each video's bytes, and that goes straight into the same store /api/meta
     // would have filled a hundred round trips later.
-    state.files = hydrateAll(data.files);
+    setFiles(hydrateAll(data.files));
     state.folders = data.folders || [];
     state.totalBelow = data.totalBelow || 0;
     state.cloudBelow = data.cloudBelow || 0;
@@ -1116,19 +1154,21 @@ function closeFavouritePopup() {
 }
 
 function matchesQuery(file, terms) {
-  const haystack = (file.name + ' ' + file.relFolder).toLowerCase();
+  const haystack = file._hay || searchHay(file);
   // Wrapped rather than iterated, so a field holding a single string is not
-  // walked character by character.
-  const values = (field) => {
+  // walked character by character. Asked as it goes rather than lower-casing
+  // the whole list first: the first hit settles it.
+  const has = (field, value) => {
     const held = file[field];
-    return (Array.isArray(held) ? held : (held ? [held] : [])).map((t) => t.toLowerCase());
+    return (Array.isArray(held) ? held : (held ? [held] : []))
+      .some((t) => t.toLowerCase().includes(value));
   };
   return terms.every((term) => {
-    if (term.field) return values(term.field).some((t) => t.includes(term.value));
+    if (term.field) return has(term.field, term.value);
     // A bare term searches everything: name, subfolder, tags, models.
     return haystack.includes(term.value)
-      || values('tags').some((t) => t.includes(term.value))
-      || values('models').some((t) => t.includes(term.value));
+      || has('tags', term.value)
+      || has('models', term.value);
   });
 }
 
@@ -1171,14 +1211,19 @@ function applyFilterSort() {
   let list = state.files;
   const terms = parseQuery(query);
   if (terms.length) list = list.filter((f) => matchesQuery(f, terms));
-  if (advActive()) list = list.filter((f) => matchesAdvanced(f, state.adv, filterCtx()));
+  if (advActive()) {
+    // Read once for the pass, not once per video: see compileAdvanced.
+    const adv = compileAdvanced(state.adv);
+    const ctx = filterCtx();
+    list = list.filter((f) => matchesAdvanced(f, adv, ctx));
+  }
 
   list = list.slice().sort((a, b) => {
     let cmp;
     if (key === 'name' || key === 'relFolder') {
-      cmp = String(a[key]).localeCompare(String(b[key]), undefined, { numeric: true, sensitivity: 'base' });
+      cmp = BY_NAME(String(a[key]), String(b[key]));
       if (cmp === 0 && key === 'relFolder') {
-        cmp = a.name.localeCompare(b.name, undefined, { numeric: true });
+        cmp = BY_NAME_EXACT(a.name, b.name);
       }
     } else if (key === 'duration') {
       // Duration arrives from the lazy probe, not the scan.
@@ -1187,13 +1232,13 @@ function applyFilterSort() {
       cmp = av - bv;
     } else if (key === 'mtimeMs') {
       cmp = touchedAt(a) - touchedAt(b);
-      if (cmp === 0) return a.name.localeCompare(b.name, undefined, { numeric: true });
+      if (cmp === 0) return BY_NAME_EXACT(a.name, b.name);
     } else if (key === 'rating') {
       cmp = (Number(a.rating) || 0) - (Number(b.rating) || 0);
       // The name tiebreak is returned unflipped: within one rating band, names
       // should read A→Z whichever way the ratings are pointing. Multiplying it
       // by dir would put the unrated bulk in reverse alphabetical order.
-      if (cmp === 0) return a.name.localeCompare(b.name, undefined, { numeric: true });
+      if (cmp === 0) return BY_NAME_EXACT(a.name, b.name);
     } else if (LABEL_SORTS[key]) {
       // Sorting by a label sorts by its first value: "her name comes first
       // alphabetically" is the only ordering a list of them has.
@@ -1204,11 +1249,11 @@ function applyFilterSort() {
       // for the same reason as the ratings.
       const av = LABEL_SORTS[key](a);
       const bv = LABEL_SORTS[key](b);
-      if (!av && !bv) return a.name.localeCompare(b.name, undefined, { numeric: true });
+      if (!av && !bv) return BY_NAME_EXACT(a.name, b.name);
       if (!av) return 1;
       if (!bv) return -1;
-      cmp = av.localeCompare(bv, undefined, { numeric: true, sensitivity: 'base' });
-      if (cmp === 0) return a.name.localeCompare(b.name, undefined, { numeric: true });
+      cmp = BY_NAME(av, bv);
+      if (cmp === 0) return BY_NAME_EXACT(a.name, b.name);
     } else {
       cmp = (Number(a[key]) || 0) - (Number(b[key]) || 0);
     }
@@ -1287,9 +1332,12 @@ function buildModelGroups(list, namesOf = (file) => file.models || [], emptyLabe
     }
   }
 
+  // Asked once per section rather than twice per comparison: a few thousand
+  // performers sort in some fifty thousand comparisons.
+  for (const group of groups.values()) group.tier = favouriteTier(group.name) || 6;
   const out = [...groups.values()].sort((a, b) => {
-    const fa = favouriteTier(a.name) || 6;
-    const fb = favouriteTier(b.name) || 6;
+    const fa = a.tier;
+    const fb = b.tier;
     // Marked first, tier 1 ahead of 2, on down to 5 — that is what makes this a
     // favourites view rather than a leaderboard — then Top performers order
     // within each tier and among the rest. Ties go to whoever
@@ -1298,7 +1346,7 @@ function buildModelGroups(list, namesOf = (file) => file.models || [], emptyLabe
     return fa - fb
       || b.points - a.points
       || b.good - a.good
-      || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+      || BY_NAME(a.name, b.name);
   });
   if (unnamed.length) {
     out.push({
@@ -1335,7 +1383,7 @@ function orderedModels(names) {
   const at = (n) => String(n).trim().toLowerCase();
   return [...names].sort((a, b) => (favouriteTier(a) || 6) - (favouriteTier(b) || 6)
     || (state.modelPoints.get(at(b)) || 0) - (state.modelPoints.get(at(a)) || 0)
-    || String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
+    || BY_NAME(String(a), String(b)));
 }
 
 
@@ -1499,8 +1547,12 @@ function buildSlots() {
   holdGroupOrder();
   state.slots = [];
   state.cards = [];
+  state.headSlots = [];
   if (!state.grouped) { state.playingCard = null; return; }
   for (const group of state.groups) {
+    // Where each heading sits, in order, so the count of cards drawn so far is
+    // a search of the headings rather than a walk of everything drawn.
+    state.headSlots.push(state.slots.length);
     state.slots.push({ head: group });
     // Folded: the heading stays, the cards go -- from the page and from what
     // the player's arrows walk, since a hidden video is not one you are on.
@@ -1614,7 +1666,7 @@ function firstAlphabetically(values) {
   for (const raw of values || []) {
     const value = String(raw).trim();
     if (!value) continue;
-    if (!best || value.localeCompare(best, undefined, { sensitivity: 'base' }) < 0) best = value;
+    if (!best || BY_LETTERS(value, best) < 0) best = value;
   }
   return best;
 }
@@ -2101,7 +2153,7 @@ async function editRecords(paths, patch) {
         if (record.resume !== undefined) state.playing.resume = record.resume;
         drawMarks();
       }
-      const file = state.files.find((f) => f.path === filePath);
+      const file = fileAt(filePath);
       if (!file) continue;
       file.rating = record.rating;
       file.tags = record.tags;
@@ -2123,7 +2175,6 @@ async function editRecords(paths, patch) {
       refreshCardRecord(file);
     }
     pruneFiltered(Object.keys(data.records || {}));
-    syncTagVocab();
   } catch (err) {
     toast(err.message, 'err');
   }
@@ -2143,10 +2194,12 @@ function pruneFiltered(paths) {
   if (!paths.length || (!terms.length && !advActive())) return;
 
   const gone = new Set();
+  const adv = advActive() ? compileAdvanced(state.adv) : null;
+  const ctx = filterCtx();
   for (const path of paths) {
-    const file = state.files.find((f) => f.path === path);
+    const file = fileAt(path);
     if (!file) continue;
-    const keep = matchesQuery(file, terms) && (!advActive() || matchesAdvanced(file, state.adv, filterCtx()));
+    const keep = matchesQuery(file, terms) && (!adv || matchesAdvanced(file, adv, ctx));
     if (!keep) gone.add(path);
   }
   if (!gone.size) return;
@@ -2175,6 +2228,7 @@ function pruneFiltered(paths) {
     const loaded = state.rendered;
     buildSlots();
     $('#grid').innerHTML = '';
+    cardIndex.clear();
     state.rendered = 0;
     while (state.rendered < Math.min(loaded, state.slots.length)) appendPage();
   }
@@ -2250,10 +2304,6 @@ function refreshCardRecord(file) {
       if (badge) badge.remove();
       if (file.rating) corner.appendChild(buildCornerRating(file.rating));
     }
-    // The source link lives on the folder line, so a url arriving by edit has
-    // nowhere to appear unless that line is rebuilt too.
-    const line = card.querySelector('.folder-line');
-    if (line) line.replaceWith(buildFolderLine(file));
   }
   // The player shows the same row, so an edit made in either place has to land
   // in both — otherwise the footer keeps showing the rating you just changed.
@@ -2270,7 +2320,7 @@ function buildPlayerRecord(file) {
   if (!holder) return;
   // Prefer the live entry: editing elsewhere mutates that, not the snapshot the
   // player was opened with.
-  const current = state.files.find((f) => f.path === file.path) || file;
+  const current = fileAt(file.path) || file;
   holder.replaceChildren(buildRecordRow(current));
 }
 
@@ -2384,7 +2434,10 @@ const HOVER_STALE_MS = 60000;
 // One request per performer rather than per chip: the same name appears on
 // video after video and her faces do not change between two of them. Short-
 // lived, because the sweep is writing new profiles the whole time.
+// Bounded too: a long session of hovering keyed one entry per name per video,
+// and a Map keeps its oldest first, so the oldest is the one to let go.
 const herFaces = new Map();
+const HER_FACES_CAP = 200;
 
 function herLineup(name, file, person) {
   const id = `${name}\u0000${file.path}\u0000${person ?? ''}`;
@@ -2394,7 +2447,9 @@ function herLineup(name, file, person) {
   const p = api(`/api/faces/lineup?model=${encodeURIComponent(name)}&limit=${HOVER_CROPS + 1}`
     + `&path=${encodeURIComponent(file.path)}&person=${person ?? ''}`)
     .catch(() => { herFaces.delete(id); return null; });
+  herFaces.delete(id); // re-set below, so a refreshed entry counts as the newest
   herFaces.set(id, { at: Date.now(), p });
+  while (herFaces.size > HER_FACES_CAP) herFaces.delete(herFaces.keys().next().value);
   return p;
 }
 
@@ -2703,12 +2758,26 @@ function syncFacetColours() {
   }
 }
 
-async function setFacetColour(facet, colour) {
+/**
+ * A colour picker fires on every step of a drag, and each one used to save the
+ * config and rebuild the grid. Now the colour is taken at once, the chips that
+ * wear it are repainted where they stand (see repaintChips), and the save goes
+ * when the drag has been still for a moment -- one write per config key.
+ */
+const colourSaves = {};
+
+function saveColoursSoon(key) {
+  clearTimeout(colourSaves[key]);
+  colourSaves[key] = setTimeout(() => saveConfig({ [key]: state.config[key] }), 300);
+}
+
+function setFacetColour(facet, colour) {
   const held = { ...((state.config || {}).facetColours || {}) };
   held[facet] = colour;
-  await saveConfig({ facetColours: held });
+  state.config.facetColours = held;
+  saveColoursSoon('facetColours');
   syncFacetColours();
-  render();
+  repaintChips(facet);
 }
 
 /**
@@ -2725,7 +2794,7 @@ function labelRows() {
   for (const spare of (state.config || {}).spareLabels || []) {
     if (!counts.has(spare.toLowerCase())) rows.push({ tag: spare, count: 0 });
   }
-  return rows.sort((a, b) => a.tag.localeCompare(b.tag, undefined, { sensitivity: 'base' }));
+  return rows.sort((a, b) => BY_LETTERS(a.tag, b.tag));
 }
 
 function renderLabelList() {
@@ -2782,11 +2851,12 @@ function renderLabelList() {
   }
 }
 
-async function setLabelColour(tag, colour) {
+function setLabelColour(tag, colour) {
   const held = { ...((state.config || {}).labelColours || {}) };
   held[tag.toLowerCase()] = colour;
-  await saveConfig({ labelColours: held });
-  render();
+  state.config.labelColours = held;
+  saveColoursSoon('labelColours');
+  repaintChips('tags', tag);
 }
 
 /** Talks to the endpoint, then puts the answer back into the page. */
@@ -2984,7 +3054,7 @@ async function picturesFor(file, names) {
 async function buildPlayerSuggestions(file) {
   const host = $('#playerSuggest');
   if (!host) return;
-  const current = state.files.find((f) => f.path === file.path) || file;
+  const current = fileAt(file.path) || file;
   const suggested = uncredited(
     current, (current.suggested || []).filter((s) => s.score >= FACE_FLOOR));
   // These chips are about to be replaced, and a card left open would be
@@ -3263,7 +3333,7 @@ function buildSimilarTile(other) {
   tile.addEventListener('click', () => {
     // If it happens to be in the listing, play THAT object: it is the one the
     // grid, the arrows and the rating keys are all already pointing at.
-    const inView = state.files.find((f) => f.path === other.path);
+    const inView = fileAt(other.path);
     playFile(inView || other);
   });
   return tile;
@@ -3589,6 +3659,10 @@ let framingStatus = null;
  */
 const POLL_BUSY_MS = 2000;
 const POLL_IDLE_MS = 15000;
+// Minimised or behind another window: nobody can read the pills, so they are
+// not repainted and the server is asked once a minute rather than every two
+// seconds. Coming back asks at once (see the visibilitychange in init).
+const POLL_HIDDEN_MS = 60000;
 let pollTimer = null;
 
 function sweepRunning(status) {
@@ -3604,9 +3678,11 @@ async function pollStatus() {
   faceStatus = all ? all.faces : null;
   dupeStatus = all ? all.dupes : null;
   framingStatus = all ? all.framing : null;
-  renderFacePill();
-  renderDupePill();
-  renderFramingPill();
+  if (!document.hidden) {
+    renderFacePill();
+    renderDupePill();
+    renderFramingPill();
+  }
 
   // A folder served from the last walk of it is confirmed against the disk
   // behind the listing. When that comes back different, this is where we hear
@@ -3614,12 +3690,27 @@ async function pollStatus() {
   // next time you happen to open the folder.
   if (all && state.walkStale && Number(all.walkVersion) !== state.walkVersion) {
     state.walkStale = false;
-    relistQuietly();
+    relistWhenFree();
   }
 
   const busy = all && [all.faces, all.dupes, all.framing].some(sweepRunning);
   clearTimeout(pollTimer);
-  pollTimer = setTimeout(pollStatus, busy ? POLL_BUSY_MS : POLL_IDLE_MS);
+  pollTimer = setTimeout(pollStatus,
+    document.hidden ? POLL_HIDDEN_MS : (busy ? POLL_BUSY_MS : POLL_IDLE_MS));
+}
+
+/**
+ * A relist nobody asked for -- the walk came back different, OneDrive caught up
+ * with a download -- waits while a video is open. The redraw under the player
+ * cost a frame or two of the playthrough and moved the arrows' idea of next;
+ * the listing can catch up the moment the player closes (see closePlayer).
+ */
+let relistDeferred = false;
+
+function relistWhenFree() {
+  if (!$('#playerModal').hidden) { relistDeferred = true; return Promise.resolve(); }
+  relistDeferred = false;
+  return relistQuietly();
 }
 
 /**
@@ -3634,18 +3725,15 @@ async function relistQuietly() {
       `/api/scan?dir=${encodeURIComponent(state.dir)}&recursive=${recursive}`,
     );
     if (data.dir !== state.dir) return; // moved on while we were asking
-    const at = scrollRoot ? scrollRoot.scrollTop : 0;
-    const drawn = state.rendered;
-    state.files = hydrateAll(data.files);
+    setFiles(hydrateAll(data.files));
     state.folders = data.folders || [];
     state.totalBelow = data.totalBelow || 0;
     state.cloudBelow = data.cloudBelow || 0;
     state.walkVersion = Number(data.walkVersion) || 0;
+    // The view has not changed, so render() puts the page back on the card that
+    // was at the top and draws a chunk under it; the rest comes in as you
+    // scroll, as it does after any other edit.
     render();
-    // Back to roughly where they were: the same number of cards drawn, then
-    // the same offset down the page.
-    while (state.rendered < drawn && state.rendered < pageSource().length) appendPage();
-    if (scrollRoot) scrollRoot.scrollTop = at;
   } catch { /* a folder that has gone is the next scan's problem, not a toast */ }
 }
 
@@ -4003,11 +4091,29 @@ function chipColour(field, value) {
   return (config.facetColours || {})[field] || '';
 }
 
-/** Wears it, or leaves the stylesheet's default alone. */
+/**
+ * Wears it, or leaves the stylesheet's default alone.
+ *
+ * Every chip painted here says what it is a chip of, so a colour changed in
+ * Settings can find exactly the chips that wear it without a redraw.
+ */
 function paintChip(el, field, value) {
+  el.dataset.chipField = field;
+  el.dataset.chipValue = String(value).toLowerCase();
   const colour = chipColour(field, value);
   if (colour) el.style.setProperty('--chip-colour', colour);
   return el;
+}
+
+/** One colour's chips, repainted where they stand. A label names its value. */
+function repaintChips(field, value = null) {
+  const want = value == null ? null : String(value).toLowerCase();
+  for (const el of document.querySelectorAll(`[data-chip-field="${field}"]`)) {
+    if (want !== null && el.dataset.chipValue !== want) continue;
+    const colour = chipColour(field, el.dataset.chipValue);
+    if (colour) el.style.setProperty('--chip-colour', colour);
+    else el.style.removeProperty('--chip-colour');
+  }
 }
 
 function buildLabelChips(file, field, { add: withAdd = true, edit = true } = {}) {
@@ -4147,24 +4253,21 @@ function vocabFound(field, which) {
   return vocab.filter((entry) => entry.tag.toLowerCase().includes(want));
 }
 
+/**
+ * Sorted once per vocabulary rather than once per keystroke: 5,400 performers
+ * is a sort worth not repeating. Keyed on the array itself, which every update
+ * replaces rather than edits, so a new vocabulary is a new sort.
+ */
+const vocabSorted = new WeakMap();
+
 function vocabByName(field) {
   const vocab = field === 'models' ? state.modelVocab : state.tagVocab;
-  return vocab.slice().sort((a, b) =>
-    a.tag.localeCompare(b.tag, undefined, { numeric: true, sensitivity: 'base' }));
-}
-
-function syncTagVocab() {
-  for (const [field, id] of [['tags', '#tagVocab'], ['models', '#modelVocab']]) {
-    const list = $(id);
-    if (!list) continue;
-    list.innerHTML = '';
-    for (const entry of vocabByName(field)) {
-      const option = document.createElement('option');
-      option.value = entry.tag;
-      option.label = `${entry.count}`;
-      list.appendChild(option);
-    }
+  let sorted = vocabSorted.get(vocab);
+  if (!sorted) {
+    sorted = vocab.slice().sort((a, b) => BY_NAME(a.tag, b.tag));
+    vocabSorted.set(vocab, sorted);
   }
+  return sorted;
 }
 
 /** Which input holds which field, so the two sections stay symmetrical. */
@@ -4234,7 +4337,6 @@ function openTagDialog(files) {
   tagRating = single ? (Number(files[0].rating) || 0) : null;
   renderTagRating();
 
-  syncTagVocab();
   renderTagSuggestions();
   renderDialogSuggestions(files);
   $('#tagModal').hidden = false;
@@ -4389,7 +4491,7 @@ async function embedSelection() {
     const ok = data.results.filter((r) => r.ok);
     const failed = data.results.filter((r) => !r.ok);
     for (const result of ok) {
-      const file = state.files.find((f) => f.path === result.path);
+      const file = fileAt(result.path);
       if (file) file.size = result.size; // the file grew by the tag block
     }
     toast(failed.length
@@ -4405,11 +4507,12 @@ async function embedSelection() {
 // ------------------------------------------------------------------ sprites
 
 /**
- * Every tile's picture is fetched, on screen or not: the listing arrives whole,
- * so the pictures do too.
+ * A tile's picture is fetched as it comes within 400px of the window (see
+ * spriteObserver), not when its card is built. Queuing every card at build
+ * time meant a chunk drawn under the scroll asked for 240 pictures nobody was
+ * yet near, ahead of the ones being scrolled to.
  *
- * Six at a time and in the order the cards were built, so the top of the grid
- * fills first and the server's own ffmpeg limit is matched rather than buried
+ * Six at a time, so the server's own ffmpeg limit is matched rather than buried
  * under a thousand simultaneous requests.
  */
 // `queued` is membership only. Scanning the array for it would be a linear
@@ -4479,15 +4582,18 @@ function drainPosters() {
  * worth the moment a folder opens is a different thing from loading it.
  */
 const spriteObserver = new IntersectionObserver((entries) => {
-  for (const entry of entries) {
+  // Bottom up, since each one goes to the front of the queue: the top-left tile
+  // of what has just come into view ends up first in line.
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
     if (!entry.isIntersecting) continue;
     spriteObserver.unobserve(entry.target);
-    // On screen, or 400px from it: its picture jumps the queue. Everything is
-    // still fetched -- this only decides what is fetched next.
+    // On screen, or 400px from it: its picture is fetched now, ahead of
+    // anything queued from further back up the page.
     queuePoster(entry.target, true);
     // Build its strip now, while nobody is waiting on it, so opening it later
     // costs a read from disk.
-    const queued = state.files.find((f) => f.path === entry.target.dataset.path);
+    const queued = fileAt(entry.target.dataset.path);
     if (queued) queuePrebuild(queued);
   }
 }, { root: scrollRoot, rootMargin: '400px 0px' });
@@ -4559,7 +4665,7 @@ function loadSprite(filePath, previewEl) {
           // The strip is what was asked for; if it beat us, leave it alone.
           if (!blob || stripLanded) return;
           const url = URL.createObjectURL(blob);
-          state.thumbs.set(filePath, url);
+          keepThumb(filePath, url);
           if (!stripLanded) applyThumb(previewEl, url);
         })
         .catch(() => { /* no poster is simply no placeholder */ });
@@ -4657,6 +4763,43 @@ function applySprite(previewEl, entry) {
   buildTicks(previewEl, entry.frames);
 }
 
+/**
+ * How many posters are kept behind blob URLs at once.
+ *
+ * Each tile's picture was held for the rest of the session, and so was every
+ * one the player's rows of similar videos and faces fetched along the way.
+ * Over the cap the oldest go, unless something on the page is drawn from
+ * them: a card in the grid, a folder cover, a tile in the player, or the
+ * player's own poster. Trimmed well below the cap, so the walk runs once per
+ * couple of hundred pictures rather than once per picture.
+ */
+const THUMB_CAP = 1500;
+
+function keepThumb(filePath, url) {
+  state.thumbs.set(filePath, url);
+  if (state.thumbs.size > THUMB_CAP) trimThumbs();
+}
+
+function trimThumbs() {
+  const spare = state.thumbs.size - (THUMB_CAP - 200);
+  if (spare <= 0) return;
+  const keep = new Set();
+  if (state.playing) keep.add(state.playing.path);
+  for (const el of document.querySelectorAll('.folder-cover[data-path]')) keep.add(el.dataset.path);
+  // The player's tiles are drawn from a poster of some other video, often one
+  // that is not in this listing at all, so they are asked by the URL they show.
+  const shown = [...document.querySelectorAll('.similar-shot')]
+    .map((el) => el.style.backgroundImage).join(' ');
+  let freed = 0;
+  for (const [filePath, url] of state.thumbs) {
+    if (freed >= spare) break;
+    if (keep.has(filePath) || cardsFor(filePath).length || shown.includes(url)) continue;
+    URL.revokeObjectURL(url);
+    state.thumbs.delete(filePath);
+    freed += 1;
+  }
+}
+
 /** Single poster frame — used as the still image in live mode. */
 function loadThumb(filePath, previewEl, allowCloud = false) {
   if (!filePath) return Promise.resolve(null);
@@ -4696,7 +4839,7 @@ function loadThumb(filePath, previewEl, allowCloud = false) {
         throw new Error(body.error || `poster failed (${res.status})`);
       }
       const url = URL.createObjectURL(await res.blob());
-      state.thumbs.set(filePath, url);
+      keepThumb(filePath, url);
       return url;
     } catch (err) {
       state.failed.add(filePath);
@@ -4929,6 +5072,11 @@ function stopLive() {
 function attachHover(previewEl, file) {
   let timer = null;
   let index = 0;
+  // Which visit this is. The sprite can take seconds to arrive, and a pointer
+  // that has passed over the tile and gone in the meantime left an interval
+  // cycling frames on a tile nobody was hovering -- forever, since the
+  // mouseleave that clears it had already been and gone.
+  let visit = 0;
 
   const stopSprite = () => {
     clearInterval(timer);
@@ -4938,6 +5086,7 @@ function attachHover(previewEl, file) {
   };
 
   previewEl.addEventListener('mouseenter', async () => {
+    const mine = ++visit;
     // Before anything else, and whether or not previews are opted into: get the
     // streaming URL resolved now. Playing a cloud file needs a Graph lookup
     // worth about three seconds, and hovering is the warning that it is coming.
@@ -4959,6 +5108,7 @@ function attachHover(previewEl, file) {
     const entry = state.sprites.get(previewEl.dataset.path)
       || await loadSprite(previewEl.dataset.path, previewEl);
     if (!entry || state.config.scrubWithMouse) return;
+    if (mine !== visit) return; // left while it loaded
 
     index = 0;
     showSpriteFrame(previewEl, 0);
@@ -4979,6 +5129,7 @@ function attachHover(previewEl, file) {
   });
 
   previewEl.addEventListener('mouseleave', () => {
+    visit += 1;
     if (state.config.previewMode === 'sprite') stopSprite();
     else if (live.el === previewEl) stopLive();
   });
@@ -5037,19 +5188,22 @@ async function doAction(op, paths, extra = {}) {
     // neither can be the only case handled.
     const wasCopy = state.files.some((f) => removed.has(f.path) && f.duplicate)
       || elsewhere.files.some((f) => removed.has(f.path));
-    state.files = state.files.filter((f) => !removed.has(f.path));
+    setFiles(state.files.filter((f) => !removed.has(f.path)));
     removed.forEach((p) => state.selected.delete(p));
     forgetOtherCopies();
     if (wasCopy) await refreshDupeFlags();
   }
   const renamed = ok.filter((r) => op === 'rename' && r.dest);
   for (const r of renamed) {
-    const file = state.files.find((f) => f.path === r.path);
+    const file = fileAt(r.path);
     if (file) {
       const sprite = state.sprites.get(file.path);
       if (sprite) { state.sprites.delete(file.path); state.sprites.set(r.dest, sprite); }
+      state.byPath.delete(file.path);
       file.path = r.dest;
       file.name = baseName(r.dest);
+      state.byPath.set(file.path, file);
+      searchHay(file);
     }
     state.selected.delete(r.path);
   }
@@ -5242,7 +5396,7 @@ function moveOnFrom(file, after) {
     if (state.playing === before) closePlayer(); // every video in the round has played
     return;
   }
-  const still = after && state.files.find((f) => f.path === after.path);
+  const still = after && fileAt(after.path);
   if (still) playFile(still);
   else closePlayer();
 }
@@ -5266,7 +5420,7 @@ async function renameFromPlayer(file) {
 
   if (!ok) { reopenPlayer(file); return; }
 
-  const renamed = state.files.find((f) => f.path === ok.dest) || { ...file, path: ok.dest, name: baseName(ok.dest) };
+  const renamed = fileAt(ok.dest) || { ...file, path: ok.dest, name: baseName(ok.dest) };
   state.playing = renamed;
   $('#playerTitle').textContent = renamed.name;
   buildPlayerActions(renamed);
@@ -5335,7 +5489,7 @@ function playFile(file, seq = null) {
       .then((blob) => {
         if (!blob) return;
         const url = URL.createObjectURL(blob);
-        state.thumbs.set(file.path, url);
+        keepThumb(file.path, url);
         // Only if this is still the video on screen, and only while it has
         // nothing of its own to show yet.
         if (state.playing && state.playing.path === file.path && player.readyState < 2) {
@@ -6422,7 +6576,14 @@ function drawMarks() {
   const duration = playerDuration();
   if (!(duration > 0)) return;
 
-  for (const mark of playerMarks()) {
+  const marks = playerMarks();
+  // The icon set is fetched the first time a bookmark has to be drawn, rather
+  // than at startup for a session that may never open a bookmarked video. The
+  // pips are drawn with their names meanwhile, and again once it lands.
+  if (marks.length && !markIcons.loaded) {
+    loadMarkIcons().then(() => { if (watching()) drawMarks(); });
+  }
+  for (const mark of marks) {
     const icon = iconFor(mark.icon);
     const pip = document.createElement('button');
     pip.type = 'button';
@@ -6465,9 +6626,10 @@ function openMarkMenu(seconds, clientX) {
   // icons rather than filtered.
   $('#pbMarkFind').value = '';
   drawIconChoices();
-  // Usually already in hand -- the fetch runs at startup and the promise is
-  // kept -- but on the very first opening of a cold session this is what fills
-  // the grid a tick later rather than leaving it empty.
+  // Usually already in hand -- the first bookmarked video to open starts the
+  // fetch and the promise is kept -- but on the very first opening of a session
+  // with none yet this is what fills the grid a tick later rather than leaving
+  // it empty.
   loadMarkIcons().then(() => { if (!$('#pbMarkMenu').hidden) drawIconChoices(); });
 
   // Held inside the track, the same way the hover preview is.
@@ -6642,6 +6804,7 @@ function closePlayer() {
   $('#playerModal').hidden = true;
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   resetPlayMode();
+  if (relistDeferred) relistWhenFree();
 }
 
 // ---------------------------------------------------------------- rendering
@@ -6687,7 +6850,15 @@ function render() {
     appendPage();
     el = findAnchor(anchor.id);
   }
-  while (state.rendered < was.drawn && state.rendered < source) appendPage();
+  // Only as far as the card at the top of the page and one chunk under it --
+  // enough to fill the window below. Rebuilding everything that had been drawn
+  // made every label or rating cost as much as scrolling there had, all in one
+  // task; the tail marker brings the rest back in as the scroll reaches it.
+  // An anchor that has gone was looked for past everything drawn before, so
+  // the old offset has cards under it either way; with no anchor at all, the
+  // old offset is all there is and it needs the old depth.
+  if (el && state.rendered < source) appendPage();
+  if (!anchor) while (state.rendered < was.drawn && state.rendered < source) appendPage();
   if (el) pinAnchor(el, anchor.offset);
   else scrollRoot.scrollTop = was.top;
 }
@@ -6735,6 +6906,10 @@ function renderListing() {
   posters.queued.clear();
   if (gridTailWatcher) gridTailWatcher.disconnect();
   grid.innerHTML = '';
+  // Every card it held has just left the page. cardsFor() drops them as it
+  // trips over them, but only for paths it is asked about -- the rest of a
+  // folder's worth stayed reachable from here for the whole session.
+  cardIndex.clear();
 
   renderBreadcrumb();
   // Asked before the tiles are drawn, so they show this folder's state rather
@@ -7125,7 +7300,6 @@ async function notAPerformer(name) {
     setFavourites(data.favourites, data.favouriteTiers);
     setRaces(data.races);
     setTraits(data.traits);
-    syncTagVocab();
     // The listing in hand still credits the name on every one of them.
     await relistQuietly();
     render();
@@ -7141,12 +7315,27 @@ function syncFileCount() {
   // Grouped, the honest number is cards rather than videos: the same video is on
   // screen once per performer in it, and "12 of 9" would look like a bug.
   const total = slotCards();
-  const loaded = state.grouped
-    ? state.slots.slice(0, state.rendered).filter((s) => s.file).length
-    : state.rendered;
+  const loaded = state.grouped ? state.rendered - headsBefore(state.rendered) : state.rendered;
   $('#fileCount').textContent = loaded < total
     ? `(${loaded} of ${total})`
     : `(${total}${total === state.files.length ? '' : ' of ' + state.files.length})`;
+}
+
+/**
+ * How many headings sit in the first `n` slots. A binary search of where they
+ * are, because the count of cards drawn is asked after every chunk, and
+ * counting them meant copying and walking everything drawn so far each time.
+ */
+function headsBefore(n) {
+  const heads = state.headSlots || [];
+  let lo = 0;
+  let hi = heads.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (heads[mid] < n) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
 }
 
 function updateStatusLine() {
@@ -7193,12 +7382,10 @@ async function fetchMetaFor(files) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ paths: chunk }),
       });
-      // One map per chunk rather than a search of the whole listing per video.
-      const byPath = new Map(state.files.map((f) => [f.path, f]));
       for (const [filePath, info] of Object.entries(meta)) {
         if (!info || info.error || info.skipped) continue;
         state.meta.set(filePath, info);
-        updateCardMeta(filePath, byPath.get(filePath));
+        updateCardMeta(filePath, fileAt(filePath));
       }
     } catch (err) {
       // This chunk and everything behind it went unanswered, so let a later
@@ -7212,16 +7399,13 @@ async function fetchMetaFor(files) {
 
 /** Fills in duration/resolution once a probe lands, without a full re-render. */
 function updateCardMeta(filePath, known) {
-  const file = known || state.files.find((f) => f.path === filePath);
+  const file = known || fileAt(filePath);
   if (!file) return;
   const info = state.meta.get(filePath) || {};
 
   // Every copy: one probe answers for the video, and grouped it is on screen
   // once per performer in it.
   for (const card of cardsFor(filePath)) {
-    const line = card.querySelector('.meta-line');
-    if (line) line.innerHTML = metaLineHtml(file, info);
-
     // The corner no longer falls back to a file size, so an unprobed tile has
     // no duration badge at all -- it has to be made when the probe lands, and
     // put in front of the rating rather than after it.
@@ -7256,6 +7440,7 @@ function buildCard(file, index, group = null, seq = null) {
   card.dataset.path = file.path;
   if (group && group.key != null) card.dataset.group = group.key;
   indexCard(file.path, card);
+  cardArgs.set(card, { file, index, group, seq });
 
   // ---- preview -------------------------------------------------------
   const info = state.meta.get(file.path) || {};
@@ -7342,47 +7527,19 @@ function buildCard(file, index, group = null, seq = null) {
   playBtn.type = 'button';
   playBtn.textContent = '▶';
   playBtn.title = 'View in player';
-  playBtn.addEventListener('click', (ev) => {
-    ev.stopPropagation();
-    ev.preventDefault();
-    playFile(file, seq);
-  });
   preview.appendChild(playBtn);
 
   preview.appendChild(buildQuickbar(file, card));
 
-  /**
-   * The thumbnail plays; the ring selects.
-   *
-   * Watching something is the common case, so a bare click does that. Once a
-   * selection exists you are plainly in the middle of picking things, and a
-   * click adds to it rather than interrupting with a player — so building a
-   * selection stays a one-click-per-item job after the first.
-   *
-   * The first item therefore has to come from the ring, which is the only
-   * unambiguous way to say "select" rather than "play".
-   */
-  preview.addEventListener('click', (ev) => {
-    if (ev.target.closest('.quickbar') || ev.target.closest('.play-center')) return;
-    if (ev.target.closest('.select-mark')) return; // the ring handles itself
-
-    const selecting = state.selected.size > 0 || ev.shiftKey;
-    if (!selecting) { playFile(file, seq); return; }
-    if (ev.shiftKey) ev.preventDefault(); // stop shift-click text selection
-    toggleSelect(file.path, index, ev.shiftKey, group);
-  });
-
-  selectMark.addEventListener('click', (ev) => {
-    ev.stopPropagation();
-    ev.preventDefault();
-    toggleSelect(file.path, index, ev.shiftKey, group);
-  });
+  // The picture, the play button and the ring answer clicks through the grid
+  // (see onGridClick), and so does dragging the card.
   selectMark.title = 'Select';
 
   attachHover(preview, file);
-  // Cloud tiles are asked for too: the server serves an already-cached poster
-  // and answers 409 when there is none, so nothing gets downloaded either way.
-  queuePoster(preview);
+  // Its picture is asked for once it nears the window -- including the tiles
+  // already in it, which the observer reports on its first pass. Cloud tiles
+  // are asked for too: the server serves an already-cached poster and answers
+  // 409 when there is none, so nothing gets downloaded either way.
   spriteObserver.observe(preview);
   card.appendChild(preview);
 
@@ -7403,73 +7560,74 @@ function buildCard(file, index, group = null, seq = null) {
   details.appendChild(buildRecordRow(file, { edit: false }));
 
   card.appendChild(details);
-  attachDrag(card, file, index);
+  card.draggable = true;
   return card;
 }
 
 /**
- * Date, subfolder, and — pushed to the right — a link to wherever this video is
- * catalogued, when the record carries one. Opening it is the point of storing
- * it, so it is an anchor rather than text: the native shell hands target=_blank
- * to the system browser.
+ * What each card was built for: the video, its place in its list, its section
+ * and its seat in the reading order -- what the one set of grid listeners below
+ * needs to act on a card. Kept with the element rather than looked up by path:
+ * the duplicates view draws copies from other folders that are not in this
+ * listing at all, and a weak map lets a discarded card go with its entry.
  */
-function buildFolderLine(file) {
-  const line = document.createElement('div');
-  line.className = 'folder-line';
+const cardArgs = new WeakMap();
 
-  const where = document.createElement('span');
-  where.className = 'folder-where';
-  where.title = file.folder;
+function cardAt(target) {
+  const card = target && target.closest ? target.closest('.card') : null;
+  const args = card ? cardArgs.get(card) : null;
+  return args ? { card, ...args } : null;
+}
 
-  // The same date the sort uses, or a list ordered by date would look wrong on
-  // screen. Where the two differ, the tooltip gives both — the file's own date
-  // is a fact about the file and worth not hiding.
-  const when = document.createElement('span');
-  when.textContent = fmtDate(touchedAt(file));
-  const edited = (Number(file.updated) || 0) > (Number(file.mtimeMs) || 0);
-  when.title = edited
-    ? `Labelled ${fmtDate(file.updated)} · file modified ${fmtDate(file.mtimeMs)}`
-    : `File modified ${fmtDate(file.mtimeMs)}`;
-  if (edited) when.className = 'when-labelled';
-  where.appendChild(when);
-  where.appendChild(document.createTextNode('  •  '));
-
-  // The folder is a way of getting there, not merely a note of where this came
-  // from — most useful with the subfolders flattened, where the listing is the
-  // only place that name appears. Clicking it scans that folder, exactly as
-  // clicking its tile would. Nothing to go to when the file is already here.
-  if (file.relFolder === '.') {
-    where.appendChild(document.createTextNode('this folder'));
-  } else {
-    const jump = document.createElement('a');
-    jump.className = 'folder-jump';
-    jump.href = '#';
-    jump.textContent = file.relFolder;
-    jump.title = `Open ${file.folder}`;
-    jump.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();   // a card click plays the video; this one must not
-      navigateTo(file.folder);
-    });
-    where.appendChild(jump);
+/**
+ * Clicks on a card, for every card at once.
+ *
+ * Three listeners on each of a few thousand cards were thousands of closures
+ * made per chunk and dropped per redraw; one on the grid does the same job.
+ * Anything inside a card that must not reach here -- the quick bar, the label
+ * chips -- already stops its click on the way up, as it had to before.
+ *
+ * The thumbnail plays; the ring selects. Watching something is the common case,
+ * so a bare click does that. Once a selection exists you are plainly in the
+ * middle of picking things, and a click adds to it rather than interrupting with
+ * a player -- so building a selection stays a one-click-per-item job after the
+ * first. The first item therefore has to come from the ring, which is the only
+ * unambiguous way to say "select" rather than "play".
+ */
+function onGridClick(ev) {
+  const at = cardAt(ev.target);
+  if (!at) return;
+  const { file, index, group, seq } = at;
+  if (ev.target.closest('.select-mark')) {
+    ev.stopPropagation();
+    ev.preventDefault();
+    toggleSelect(file.path, index, ev.shiftKey, group);
+    return;
   }
-
-  line.appendChild(where);
-
-  if (file.url) {
-    const link = document.createElement('a');
-    link.className = 'source-link';
-    link.href = file.url;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    link.textContent = sourceLabel(file.url);
-    link.title = file.url;
-    // A card click plays the video; this one must not.
-    link.addEventListener('click', (ev) => ev.stopPropagation());
-    line.appendChild(link);
+  if (ev.target.closest('.play-center')) {
+    ev.stopPropagation();
+    ev.preventDefault();
+    playFile(file, seq);
+    return;
   }
+  if (!ev.target.closest('.preview') || ev.target.closest('.quickbar')) return;
+  const selecting = state.selected.size > 0 || ev.shiftKey;
+  if (!selecting) { playFile(file, seq); return; }
+  if (ev.shiftKey) ev.preventDefault(); // stop shift-click text selection
+  toggleSelect(file.path, index, ev.shiftKey, group);
+}
 
-  return line;
+/** Wires the grid once; the cards themselves carry no click or drag listeners. */
+function attachGridHandlers() {
+  const grid = $('#grid');
+  grid.addEventListener('click', onGridClick);
+  grid.addEventListener('dragstart', (ev) => {
+    const at = cardAt(ev.target);
+    if (at) cardDragStart(ev, at.file, at.index);
+  });
+  grid.addEventListener('dragend', (ev) => {
+    if (cardAt(ev.target)) cardDragEnd();
+  });
 }
 
 /** The host, without the www, which is all the room there is for it. */
@@ -7479,21 +7637,6 @@ function sourceLabel(url) {
   } catch {
     return 'source \u2197';
   }
-}
-
-/** Size and date come from the cheap scan; the rest waits on a probe. */
-function metaLineHtml(file, info) {
-  const bits = [];
-  if (info.duration) bits.push(`<b>${fmtDuration(info.duration)}</b>`);
-  if (info.width) bits.push(`${info.width}×${info.height}`);
-  if (info.fps) bits.push(`${info.fps} fps`);
-  bits.push(fmtBytes(file.size));
-  const rate = fmtBitrate(info.bitrate);
-  if (rate) bits.push(rate);
-  if (info.codec) bits.push(info.codec);
-  if (file.cloudOnly) bits.push('<span class="cloud-tag">☁ not downloaded</span>');
-  else if (!info.duration) bits.push('<span class="pending">reading…</span>');
-  return bits.join('<span class="sep">·</span>');
 }
 
 /**
@@ -7526,7 +7669,7 @@ function actionsFor(file, { card = null, inPlayer = false } = {}) {
       {
         icon: '⌗',
         title: 'Tags',
-        run: () => openTagDialog([state.files.find((f) => f.path === file.path) || file]),
+        run: () => openTagDialog([fileAt(file.path) || file]),
       },
     ]),
     {
@@ -7694,32 +7837,29 @@ function removeDragGhost() {
   dragGhost = null;
 }
 
-function attachDrag(card, file, index) {
-  card.draggable = true;
+/** A card picked up: reached through the grid (see attachGridHandlers). */
+function cardDragStart(ev, file, index) {
+  // Dragging an unselected tile makes it the selection, so what moves is
+  // always exactly what's highlighted.
+  if (!state.selected.has(file.path)) {
+    state.selected.clear();
+    state.selected.add(file.path);
+    state.lastClickedIndex = index;
+    syncSelectionUI();
+  }
 
-  card.addEventListener('dragstart', (ev) => {
-    // Dragging an unselected tile makes it the selection, so what moves is
-    // always exactly what's highlighted.
-    if (!state.selected.has(file.path)) {
-      state.selected.clear();
-      state.selected.add(file.path);
-      state.lastClickedIndex = index;
-      syncSelectionUI();
-    }
+  const paths = selectedPaths();
+  ev.dataTransfer.effectAllowed = 'copyMove';
+  ev.dataTransfer.setData(DRAG_TYPE, JSON.stringify(paths));
+  ev.dataTransfer.setData('text/plain', paths.join('\n'));
+  ev.dataTransfer.setDragImage(makeDragGhost(paths.length), 18, 16);
+  document.body.classList.add('dragging');
+}
 
-    const paths = selectedPaths();
-    ev.dataTransfer.effectAllowed = 'copyMove';
-    ev.dataTransfer.setData(DRAG_TYPE, JSON.stringify(paths));
-    ev.dataTransfer.setData('text/plain', paths.join('\n'));
-    ev.dataTransfer.setDragImage(makeDragGhost(paths.length), 18, 16);
-    document.body.classList.add('dragging');
-  });
-
-  card.addEventListener('dragend', () => {
-    document.body.classList.remove('dragging');
-    removeDragGhost();
-    document.querySelectorAll('.drop-target').forEach((el) => el.classList.remove('drop-target'));
-  });
+function cardDragEnd() {
+  document.body.classList.remove('dragging');
+  removeDragGhost();
+  document.querySelectorAll('.drop-target').forEach((el) => el.classList.remove('drop-target'));
 }
 
 function readDragPaths(ev) {
@@ -7794,6 +7934,7 @@ function relayoutGroups(key) {
   buildSlots();
   const at = key ? state.slots.findIndex((s) => s.head && s.head.key === key) : -1;
   $('#grid').innerHTML = '';
+  cardIndex.clear();
   state.rendered = 0;
   const want = Math.min(state.slots.length, Math.max(loaded, at + 1));
   while (state.rendered < want) appendPage();
@@ -8025,16 +8166,43 @@ function wireEvents() {
   // that changes is the tiles; the app itself never zooms.
   //
   // passive: false because preventDefault is the entire point. Without it the
-  // browser zooms the interface instead, which is what this is here to stop. A
-  // trackpad pinch arrives as exactly this event, so pinching works too.
-  document.addEventListener('wheel', (ev) => {
+  // browser zooms the interface instead, which is what this is here to stop.
+  //
+  // But a wheel listener that can cancel has to be waited on before every
+  // scroll the page makes, so it is only there while Control is down: the rest
+  // of the time the grid scrolls without asking the page first. Losing the
+  // window takes it off too, or a Control released elsewhere would leave it on.
+  //
+  // A trackpad pinch arrives as a ctrl wheel with no Control key behind it.
+  // The passive listener below notices the first such event and puts the real
+  // one on for the rest of the gesture -- that first step cannot be cancelled,
+  // so a pinch begun cold may nudge the browser's own zoom by one step.
+  const zoomWheel = (ev) => {
     if (!ev.ctrlKey) return;
     ev.preventDefault();
-    // Up is bigger. One slider step per notch: the wheel reports its delta in
-    // wildly different units between devices, so only the sign is worth
-    // reading.
+    sizeByWheel(ev);
+  };
+  // Up is bigger. One slider step per notch: the wheel reports its delta in
+  // wildly different units between devices, so only the sign is worth reading.
+  const sizeByWheel = (ev) => {
     setCardWidth(cardWidth() + (ev.deltaY < 0 ? CARD_STEP : -CARD_STEP), { save: true });
-  }, { passive: false });
+  };
+  let zoomWheelOn = false;
+  const holdZoomWheel = (on) => {
+    if (on === zoomWheelOn) return;
+    zoomWheelOn = on;
+    if (on) document.addEventListener('wheel', zoomWheel, { passive: false });
+    else document.removeEventListener('wheel', zoomWheel);
+  };
+  // Capturing, so a field that keeps its keys to itself cannot hide either one.
+  window.addEventListener('keydown', (ev) => { if (ev.key === 'Control') holdZoomWheel(true); }, true);
+  window.addEventListener('keyup', (ev) => { if (ev.key === 'Control') holdZoomWheel(false); }, true);
+  window.addEventListener('blur', () => holdZoomWheel(false));
+  document.addEventListener('wheel', (ev) => {
+    if (!ev.ctrlKey || zoomWheelOn) return;
+    holdZoomWheel(true);
+    sizeByWheel(ev);
+  }, { passive: true });
 
   $('#dwellMs').addEventListener('input', (ev) => {
     $('#dwellLabel').textContent = (Number(ev.target.value) / 1000).toFixed(1) + 's';
@@ -8060,7 +8228,7 @@ function wireEvents() {
     ev.stopPropagation();
     const file = state.playing;
     if (!file) return;
-    const live = state.files.find((f) => f.path === file.path) || file;
+    const live = fileAt(file.path) || file;
     setAvailability([live], live.cloudOnly ? 'download' : 'cloud');
   });
 
@@ -8177,6 +8345,11 @@ function wireEvents() {
   // One poll for all three sweeps, which slows itself down when none of them
   // is running. It reschedules itself, so there is no interval to set here.
   pollStatus();
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    clearTimeout(pollTimer);
+    pollStatus();
+  });
 
   // settings
   $('#groupBtn').addEventListener('click', toggleGrouped);
@@ -8420,9 +8593,6 @@ function wireEvents() {
   // a fraction of it, and before it lands there is nothing to be a fraction of.
   player.addEventListener('durationchange', drawMarks);
   player.addEventListener('loadedmetadata', drawMarks);
-  // And once the icon set is in, so a pip drawn before it landed stops showing
-  // its own name and starts showing its picture.
-  loadMarkIcons().then(() => { if (watching()) drawMarks(); });
 
   seekEl.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0) return;
@@ -8739,6 +8909,7 @@ function onKeyDown(ev) {
 
 async function init() {
   wireEvents();
+  attachGridHandlers();
   try {
     state.config = await api('/api/config');
   } catch {
@@ -8828,9 +8999,12 @@ async function init() {
     setFavourites(data.favourites, data.favouriteTiers);
     setRaces(data.races);
     setTraits(data.traits);
-    // The cards already drawn were drawn before anyone's race was known.
-    if (state.raceOf.size) render();
-    syncTagVocab();
+    // The page already drawn was drawn before anyone's race or tier was known.
+    // That only shows in a grouped view -- the sections' order and headings,
+    // the order of names on a card -- or under a filter on the performers;
+    // a plain listing would be the same page drawn twice on the way in.
+    const depends = state.grouped || personFiltered();
+    if (depends && state.files.length && (state.raceOf.size || state.favSet.size)) render();
   }).catch(() => {});
 
   if (start) scan(start);

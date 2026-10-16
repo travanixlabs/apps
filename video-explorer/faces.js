@@ -428,6 +428,40 @@ async function loadEntries() {
 const packVector = (v) => Array.from(v, (x) => Math.round(x * 10000) / 10000);
 const unpackVector = (a) => engine.normalise(Float32Array.from(a));
 
+/**
+ * A file written whole or not at all.
+ *
+ * Everything this module writes lives in the sync root, and a plain writeFile
+ * truncates first: a kill, a crash or a full disk part way through leaves a
+ * torn file that OneDrive then faithfully uploads, and the phone reads as
+ * nothing. Through a temporary name and a rename the old version stays whole
+ * until the new one is complete. The temporary name carries the pid and a
+ * sequence number so two writes of the same file -- a timer and a shutdown
+ * flush -- cannot interleave inside one temporary file.
+ *
+ * OneDrive holds a handle on a synced file now and then and lets go a moment
+ * later, so a refused rename is retried, as the label store's is. Still refused,
+ * the old file is left alone and the caller hears about it.
+ */
+let tempSeq = 0;
+async function writeWhole(file, body) {
+  tempSeq += 1;
+  const temp = `${file}.${process.pid}-${tempSeq}.tmp`;
+  await fsp.writeFile(temp, body);
+  let last = null;
+  for (let i = 0; i < 5; i += 1) {
+    try {
+      await fsp.rename(temp, file);
+      return;
+    } catch (err) {
+      last = err;
+      await new Promise((resolve) => { setTimeout(resolve, 60 * (i + 1)); });
+    }
+  }
+  await fsp.unlink(temp).catch(() => {});
+  throw last || new Error(`could not replace ${path.basename(file)}`);
+}
+
 /** One profile, written the moment it exists. */
 async function writeEntry(key, entry) {
   state.snapshotDirty = true;
@@ -440,7 +474,9 @@ async function writeEntry(key, entry) {
       ...entry,
       people: (entry.people || []).map((p) => ({ ...p, vec: Array.from(p.vec || []) })),
     };
-    await fsp.writeFile(path.join(dir, `${fileNameFor(key)}.json`), JSON.stringify(plain));
+    // Whole or not at all: another machine reads this file, and a torn one
+    // would read back as no profile and be profiled again from scratch.
+    await writeWhole(path.join(dir, `${fileNameFor(key)}.json`), JSON.stringify(plain));
   } catch { /* a full or read-only disk must not break browsing */ }
 }
 
@@ -474,7 +510,13 @@ async function flush() {
  * tell them apart.
  */
 const DIGEST = 'suggestions.json';
-const DIGEST_DEBOUNCE_MS = 30000;
+// Five minutes, not thirty seconds. The file is ~15MB at a full library and
+// lives in the sync root, so every write is a 15MB upload: at half a minute a
+// night's sweep re-sent it about a thousand times. Five minutes is the same
+// cadence the averages are rebuilt at during a sweep, so the phone is never
+// told less than the desktop itself knows for long, and a shutdown flushes
+// whatever is pending (see flush()).
+const DIGEST_DEBOUNCE_MS = 5 * 60 * 1000;
 
 let digestTimer = null;
 let digestDirty = false;
@@ -489,19 +531,46 @@ let digestDirty = false;
  * is: which crops, in which order, with how much each agrees.
  *
  * Only rebuilt when the averages themselves have moved, which is what changes an
- * ordering. During a sweep the digest is rewritten every half minute and this is
- * not, because nothing in it has changed.
+ * ordering. During a sweep the digest is rewritten every few minutes and this
+ * is not, because nothing in it has changed.
  */
 const LINEUPS = 'lineups.json';
 
 let lineupsDirty = true;
 
+/**
+ * Which videos each performer is credited on, worked out in one pass.
+ *
+ * A lineup on its own has to find her videos by walking the whole index, and
+ * doing that once per performer made the set eight hundred walks of 28,000
+ * entries. One walk that files every video under every name on it answers all
+ * eight hundred. Keys stay in index order, so a lineup built from this is the
+ * same lineup, in the same order, as one built the long way.
+ */
+function videosByModel() {
+  const records = state.library ? state.library.all() : {};
+  const byModel = new Map();
+  for (const [key, entry] of Object.entries(state.index.videos)) {
+    const record = records[key];
+    if (!record || !(entry.people || []).length) continue;
+    for (const m of record.models || []) {
+      const name = String(m).toLowerCase();
+      let list = byModel.get(name);
+      if (!list) { list = []; byModel.set(name, list); }
+      // One name written twice on a video, in two cases, is still one video.
+      if (list[list.length - 1] !== key) list.push(key);
+    }
+  }
+  return byModel;
+}
+
 async function writeLineups() {
   if (!lineupsDirty || !state.dir) return false;
   lineupsDirty = false;
   const performers = {};
-  // Each lineup walks the whole index, so the set is ~10 s of CPU: yielded
-  // between performers for the same reason the re-score is.
+  const byModel = videosByModel();
+  // Yielded between performers for the same reason the re-score is: the
+  // agreement within each is every one of her faces against every other.
   let slice = Date.now();
   for (const name of [...state.centroids.keys()]) {
     if (Date.now() - slice >= SLICE_MS) {
@@ -509,7 +578,7 @@ async function writeLineups() {
       slice = Date.now();
     }
     if (!state.centroids.has(name)) continue;
-    const built = lineup(name, 24);
+    const built = lineup(name, 24, null, byModel);
     if (!built.faces.length) continue;
     performers[name] = {
       total: built.total,
@@ -523,7 +592,7 @@ async function writeLineups() {
     };
   }
   try {
-    await fsp.writeFile(path.join(state.dir, LINEUPS), JSON.stringify({
+    await writeWhole(path.join(state.dir, LINEUPS), JSON.stringify({
       version: 1,
       model: state.index.model || '',
       updated: Date.now(),
@@ -534,15 +603,17 @@ async function writeLineups() {
     }));
     return true;
   } catch {
+    // Still stale, so still owed: the next digest write tries again.
+    lineupsDirty = true;
     return false;
   }
 }
 
 /**
  * A sweep finishes a video every seven seconds, and this file sits in a synced
- * folder. Half a minute of coalescing turns a night of profiling into a
- * manageable number of uploads, and the worst case of being half a minute
- * behind is a suggestion appearing on the phone a moment late.
+ * folder. Five minutes of coalescing turns a night of profiling into about a
+ * hundred uploads rather than a thousand, and the worst case of being five
+ * minutes behind is a suggestion appearing on the phone a little late.
  */
 function digestSoon() {
   digestDirty = true;
@@ -553,7 +624,24 @@ function digestSoon() {
   }, DIGEST_DEBOUNCE_MS);
 }
 
-async function writeDigest() {
+/**
+ * One digest write at a time.
+ *
+ * The timer and a shutdown flush can both ask. Without a queue the flush saw
+ * "nothing dirty" -- the timer's write had already claimed it -- and returned
+ * while that write was still in flight, so the process could end half way
+ * through it. Queued, the flush waits for the write in progress and then
+ * writes again only if something changed since.
+ */
+let digestWriting = Promise.resolve();
+
+function writeDigest() {
+  const next = digestWriting.then(() => writeDigestNow());
+  digestWriting = next.catch(() => false);
+  return next;
+}
+
+async function writeDigestNow() {
   if (!digestDirty || !state.dir) return false;
   digestDirty = false;
   clearTimeout(digestTimer);
@@ -578,7 +666,9 @@ async function writeDigest() {
 
   try {
     await fsp.mkdir(state.dir, { recursive: true });
-    await fsp.writeFile(path.join(state.dir, DIGEST), JSON.stringify({
+    // Through a rename: a torn 15MB file in the sync root is what the phone
+    // would otherwise download after a crash, and it parses as nothing.
+    await writeWhole(path.join(state.dir, DIGEST), JSON.stringify({
       version: 2,
       model: state.index.model || '',
       updated: Date.now(),
@@ -590,6 +680,8 @@ async function writeDigest() {
     await writeLineups();
     return true;
   } catch {
+    // Not written, so still owed -- the next flush or digestSoon picks it up.
+    digestDirty = true;
     return false;   // a read-only or offline folder is not worth an error
   }
 }
@@ -770,6 +862,9 @@ function rebuildCentroids() {
 // up, different people around 0.1. Used to order a lineup, not to filter one.
 const SAME_PERSON = 0.30;
 
+// performer -> { sig, count, agreement }. See agreementWithin.
+const agreementCache = new Map();
+
 /**
  * How much each of a performer's videos looks like the rest of her.
  *
@@ -787,7 +882,21 @@ const SAME_PERSON = 0.30;
  * So nothing is thrown away. This only says which faces are most like her, so
  * a lineup can lead with those rather than opening on the co-star.
  */
-function agreementWithin(acc) {
+function agreementWithin(acc, name = null) {
+  // Remembered per performer for as long as her set of videos is the same set.
+  // It is every one of her faces against every other -- 40,000 dot products for
+  // a performer with two hundred videos -- and the lineup panel asks again on
+  // every open, the precomputed lineups once per performer per rebuild. The
+  // signature is the XOR of her keys, so it moves whenever her set does; a
+  // video re-read in place keeps its key, and drops the whole cache instead
+  // (see profile()).
+  if (name !== null) {
+    const held = agreementCache.get(name);
+    if (held && held.sig === acc.sig && held.count === acc.count) return held.agreement;
+    const agreement = agreementWithin(acc);
+    agreementCache.set(name, { sig: acc.sig, count: acc.count, agreement });
+    return agreement;
+  }
   const entries = [...acc.keys.entries()];
   if (entries.length < 2) return new Map(entries.map(([k]) => [k, 1]));
   const sims = entries.map(([, a]) => entries.map(([, b]) => engine.cosine(a, b)));
@@ -982,9 +1091,11 @@ let ownerOfFor = -1;
 let matrixBuild = 0;
 
 function ownerIndex() {
-  const v = vectorsDirty || !vectors ? buildVectors() : vectors;
+  const v = currentVectors();
+  // The matrix keeps its own key -> row index now, appended to as it grows, so
+  // there is no second map to rebuild from 28,000 keys after every video.
   if (ownerOfFor !== matrixBuild || !ownerOf) {
-    ownerOf = new Map(v.keys.map((key, i) => [key, i]));
+    ownerOf = v.index;
     ownerOfFor = matrixBuild;
   }
   return { v, ownerOf };
@@ -1053,6 +1164,11 @@ async function rescoreInThread(run, cast) {
 
   const payload = centroidPayload(cast.names, owners);
   const answer = await new Promise((resolve) => {
+    // A newer re-score replaces the one waiting. The older one's answer will
+    // never be accepted -- scorerSays matches on the run -- so it is told so
+    // now, rather than left awaiting a promise nothing would ever settle,
+    // which kept its whole rescore() frame and payload alive for the session.
+    if (scorerWaiting) { const w = scorerWaiting; scorerWaiting = null; w.resolve(null); }
     scorerWaiting = { run, resolve };
     worker.postMessage({
       type: 'score',
@@ -1274,8 +1390,19 @@ const SIMILAR_BANDS = [
   { band: 'maybe', at: SAME_WOMAN },
 ];
 
+// True when the matrix has to be built again from nothing: a profile replaced
+// or moved, or the store read back in. A video profiled for the first time
+// only goes on the end -- see vectorsAdded.
 let vectorsDirty = true;
 let vectors = null;
+// Keys profiled for the first time since the matrix was last brought up to
+// date. They are appended rather than rebuilt for.
+let vectorsAdded = [];
+
+// Rows of headroom the matrix grows by. A sweep adds one video every few
+// seconds; growing by a thousand rows at a time means the 74MB block is copied
+// once every thousand videos rather than once per video.
+const VECTOR_GROW_ROWS = 1024;
 
 /**
  * Every profiled face, as one flat matrix.
@@ -1285,36 +1412,135 @@ let vectors = null;
  * whole library, measured. Unpacking them per request instead cost more than
  * the multiplication did.
  *
- * Rebuilt only when the index gains or loses a video, which during a sweep is
- * once every few seconds and otherwise never.
+ * Rebuilt whole only when a profile is replaced, moved or re-read. A sweep only
+ * ever ADDS videos, and rebuilding 74MB from 28,000 entries for each one -- the
+ * next "more of her" after every video read -- was most of what a sweep cost
+ * the rest of the app. New videos go on the end instead; see appendVectors.
+ *
+ * The arrays handed out are views of the right length over buffers with
+ * headroom, so anything reading `mat`, `owner` or `person` sees exactly
+ * `count` rows, as it always did.
  */
 function buildVectors() {
-  const keys = [];
-  const rows = [];
+  const entries = [];
+  let nRows = 0;
+  let dim = 0;
   for (const [key, entry] of Object.entries(state.index.videos)) {
     const people = entry.people || [];
     if (!people.length) continue;
-    const owner = keys.length;
-    keys.push(key);
-    for (const [person, p] of people.entries()) {
-      rows.push({ owner, person, vec: unpackVector(p.vec) });
-    }
+    entries.push([key, people]);
+    if (!dim) dim = vectorLength(people[0].vec);
+    nRows += people.length;
   }
-  const dim = rows.length ? rows[0].vec.length : 0;
-  const mat = new Float32Array(rows.length * dim);
-  const owner = new Int32Array(rows.length);
-  const person = new Int32Array(rows.length);
-  for (const [i, row] of rows.entries()) {
-    mat.set(row.vec, i * dim);
-    owner[i] = row.owner;
-    person[i] = row.person;
-  }
-  vectors = { keys, mat, owner, person, dim, count: rows.length };
+  const cap = nRows + VECTOR_GROW_ROWS;
+  const v = {
+    keys: [],
+    index: new Map(),      // key -> owner
+    firstRow: [],          // owner -> the row of its first person
+    store: new Float32Array(cap * dim),
+    ownerStore: new Int32Array(cap),
+    personStore: new Int32Array(cap),
+    cap,
+    dim,
+    count: 0,
+  };
+  for (const [key, people] of entries) placeVideo(v, key, people);
+  vectorsAdded = [];
   vectorsDirty = false;
+  return publishVectors(v);
+}
+
+/** One video's faces onto the end of the matrix. Room is the caller's job. */
+function placeVideo(v, key, people) {
+  const owner = v.keys.length;
+  v.keys.push(key);
+  v.index.set(key, owner);
+  v.firstRow.push(v.count);
+  for (const [person, p] of people.entries()) {
+    const vec = unpackVector(p.vec);
+    // A vector of another width would spill into its neighbour's row; it is
+    // cut or padded to the matrix's width instead, as the snapshot does.
+    v.store.set(vec.length === v.dim ? vec : vec.subarray(0, v.dim), v.count * v.dim);
+    v.ownerStore[v.count] = owner;
+    v.personStore[v.count] = person;
+    v.count += 1;
+  }
+}
+
+/** The matrix as its readers see it: exactly `count` rows, and a new build. */
+function publishVectors(v) {
+  v.mat = v.store.subarray(0, v.count * v.dim);
+  v.owner = v.ownerStore.subarray(0, v.count);
+  v.person = v.personStore.subarray(0, v.count);
+  vectors = v;
   // Anything holding a copy of the old matrix -- the scoring thread, the owner
   // index -- is now holding the wrong one.
   matrixBuild += 1;
   return vectors;
+}
+
+/**
+ * The videos profiled since the last build, onto the end of the matrix.
+ *
+ * Falls back to a full build for anything an append cannot express: a key the
+ * matrix already holds (a replacement), a vector of a different width, or a
+ * matrix with nothing in it yet to take its width from.
+ */
+function appendVectors() {
+  const v = vectors;
+  const adding = [];
+  const seen = new Set();
+  for (const key of vectorsAdded) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (v.index.has(key)) return buildVectors();
+    const entry = state.index.videos[key];
+    const people = (entry && entry.people) || [];
+    if (!people.length) continue;   // read, faceless: never in the matrix
+    if (!v.dim || people.some((p) => vectorLength(p.vec) !== v.dim)) return buildVectors();
+    adding.push([key, people]);
+  }
+  vectorsAdded = [];
+  if (!adding.length) return v;
+
+  const need = v.count + adding.reduce((n, [, people]) => n + people.length, 0);
+  if (need > v.cap) {
+    const cap = need + VECTOR_GROW_ROWS;
+    const store = new Float32Array(cap * v.dim);
+    store.set(v.store.subarray(0, v.count * v.dim));
+    const ownerStore = new Int32Array(cap);
+    ownerStore.set(v.ownerStore.subarray(0, v.count));
+    const personStore = new Int32Array(cap);
+    personStore.set(v.personStore.subarray(0, v.count));
+    Object.assign(v, { store, ownerStore, personStore, cap });
+  }
+  for (const [key, people] of adding) placeVideo(v, key, people);
+  return publishVectors(v);
+}
+
+/** The matrix, brought up to date the cheapest way that is still correct. */
+function currentVectors() {
+  if (vectorsDirty || !vectors) return buildVectors();
+  if (vectorsAdded.length) return appendVectors();
+  return vectors;
+}
+
+/**
+ * One face of one video, as a row of the matrix rather than a fresh unpack.
+ *
+ * The matrix already holds every vector normalised, which is exactly what
+ * unpackVector would make again -- a 2KB allocation per call, and the lineup
+ * against a video made one per video of hers. A view costs nothing.
+ */
+function faceRow(v, key, person) {
+  const owner = v.index.get(key);
+  const entry = state.index.videos[key];
+  if (owner === undefined || !entry || !(entry.people || [])[person]) {
+    return entry && (entry.people || [])[person]
+      ? unpackVector(entry.people[person].vec) : null;
+  }
+  const row = v.firstRow[owner] + person;
+  return v.mat.subarray(row * v.dim, (row + 1) * v.dim);
 }
 
 function bandForSimilar(score) {
@@ -1341,7 +1567,7 @@ function similar(stat, limit = 12, offset = 0) {
   const mine = (entry.people || []).map((p) => unpackVector(p.vec));
   if (!mine.length) return { profiled: true, people: 0, total: 0, videos: [] };
 
-  const v = vectorsDirty || !vectors ? buildVectors() : vectors;
+  const v = currentVectors();
   const best = new Float32Array(v.keys.length).fill(-1);
   const theirs = new Int32Array(v.keys.length);
   const ours = new Int32Array(v.keys.length);
@@ -1430,7 +1656,7 @@ function bestOf(stat, names) {
   const mine = (entry.people || []).map((p) => unpackVector(p.vec));
   if (!mine.length) return out;
 
-  const v = vectorsDirty || !vectors ? buildVectors() : vectors;
+  const v = currentVectors();
   const best = new Float32Array(v.keys.length).fill(-1);
   const theirs = new Int32Array(v.keys.length);
   for (const q of mine) {
@@ -1613,14 +1839,19 @@ async function faceImageByKey(key, person = 0) {
  * Solo credits lead, because those are the videos her average is actually built
  * from; a face from a two-hander might be the other performer.
  */
-function lineup(model, limit = 8, against = null) {
+function lineup(model, limit = 8, against = null, byModel = null) {
   const want = String(model || '').toLowerCase();
   if (!want) return { model: '', total: 0, faces: [] };
   const records = state.library ? state.library.all() : {};
   const rows = [];
-  for (const [key, entry] of Object.entries(state.index.videos)) {
+  // Her videos from the index writeLineups built once for every performer, or
+  // found the long way for a single lineup asked for on its own.
+  const candidates = byModel
+    ? (byModel.get(want) || []).map((key) => [key, state.index.videos[key]])
+    : Object.entries(state.index.videos);
+  for (const [key, entry] of candidates) {
     const record = records[key];
-    if (!record || !(entry.people || []).length) continue;
+    if (!record || !entry || !(entry.people || []).length) continue;
     const models = record.models || [];
     if (!models.some((m) => m.toLowerCase() === want)) continue;
     rows.push({
@@ -1639,7 +1870,7 @@ function lineup(model, limit = 8, against = null) {
   // make the lineup a nicer picture of a less honest answer.
   let odd = 0;
   if (centroid) {
-    const agreement = agreementWithin(centroid);
+    const agreement = agreementWithin(centroid, model);
     for (const row of rows) row.agrees = agreement.has(row.key)
       ? Math.round(agreement.get(row.key) * 100) / 100 : null;
     odd = rows.filter((r) => r.agrees !== null && r.agrees < SAME_PERSON).length;
@@ -1656,13 +1887,16 @@ function lineup(model, limit = 8, against = null) {
     const people = asked.people;
     const which = Number.isInteger(against.person) && people[against.person]
       ? [against.person] : people.map((_, i) => i);
-    const vecs = which.map((i) => ({ i, v: unpackVector(people[i].vec) }));
+    // Rows of the matrix rather than fresh unpacks: the same normalised numbers,
+    // without a 2KB allocation per video of hers.
+    const mat = currentVectors();
+    const vecs = which.map((i) => ({ i, v: faceRow(mat, against.key, i) }));
     const totals = new Map(which.map((i) => [i, 0]));
     const scored = [];
     for (const row of rows) {
       if (row.key === against.key) continue;
-      const theirs = state.index.videos[row.key].people[0];
-      const v = unpackVector(theirs.vec);
+      const v = faceRow(mat, row.key, 0);
+      if (!v) continue;
       let best = -1;
       for (const m of vecs) {
         const sim = engine.cosine(m.v, v);
@@ -1742,7 +1976,15 @@ async function profile(file, stat, opts = {}) {
     gen: HARVEST_GEN,
   };
   state.index.videos[key] = entry;
-  vectorsDirty = true;
+  if (have) {
+    // A replacement: its rows are somewhere in the middle of the matrix, and
+    // what her set agreed on was worked out from the old ones.
+    vectorsDirty = true;
+    agreementCache.clear();
+  } else {
+    // New to the index: it only needs to go on the end.
+    vectorsAdded.push(key);
+  }
   state.indexStamp += 1;
   await writeEntry(key, entry);
 

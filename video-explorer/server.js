@@ -12,6 +12,8 @@ const fsp = fs.promises;
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const util = require('util');
+const zlib = require('zlib');
 const { execFile, execFileSync, spawn } = require('child_process');
 
 // Optional: absent or signed-out simply means no cloud thumbnails.
@@ -27,6 +29,9 @@ const library = require('./library');
 const faces = require('./faces');
 const dupes = require('./dupes');
 const framing = require('./framing');
+// The cache-name arithmetic, shared with the headless strip builder so the two
+// cannot drift apart. See strips.js.
+const strips = require('./strips');
 // The same file the page loads as a script. What "matches the advanced
 // filter" means is one definition, not two that would have to agree.
 const filter = require('./public/filter');
@@ -120,8 +125,65 @@ let metaIndex = {};   // cacheKey -> probed metadata
 
 // ---------------------------------------------------------------- utilities
 
+/**
+ * The log, on the disk as well as the console.
+ *
+ * The app runs inside a native window with no console anyone can see, so a
+ * line printed there is a line nobody reads -- and the ones that matter most,
+ * a crash or a 500, are exactly the ones that are gone by the time anybody
+ * asks. One file per day under %LOCALAPPDATA%, never the sync root: a log is
+ * this machine's business and rewriting it there would mean an upload per
+ * line. A week is kept; anything older is deleted at launch.
+ *
+ * Appended synchronously. There are a few lines a minute, it is a local disk,
+ * and a line written by an uncaught exception has to be on the disk before the
+ * process can be trusted to still be there.
+ */
+const LOG_DIR = process.env.VIDEO_EXPLORER_LOG_DIR
+  || path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'video-explorer', 'logs');
+const LOG_KEEP_DAYS = 7;
+let logDirReady = false;
+
+function localDay(when) {
+  const d = new Date(when);
+  const two = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+}
+
+function logToFile(text) {
+  try {
+    if (!logDirReady) { fs.mkdirSync(LOG_DIR, { recursive: true }); logDirReady = true; }
+    const now = new Date();
+    fs.appendFileSync(path.join(LOG_DIR, `server-${localDay(now)}.log`),
+      `${now.toISOString()} ${text}\n`);
+  } catch { /* a log that cannot be written must not take the server with it */ }
+}
+
+/** Last week's files and older, gone. Run once at launch. */
+function pruneLogs() {
+  const oldest = localDay(Date.now() - (LOG_KEEP_DAYS - 1) * 24 * 3600 * 1000);
+  let names = [];
+  try { names = fs.readdirSync(LOG_DIR); } catch { return; }
+  for (const name of names) {
+    const m = /^server-(\d{4}-\d{2}-\d{2})\.log$/.exec(name);
+    if (m && m[1] < oldest) {
+      try { fs.unlinkSync(path.join(LOG_DIR, name)); } catch { /* still open elsewhere */ }
+    }
+  }
+}
+
 function log(...args) {
   console.log('[video-explorer]', ...args);
+  logToFile(util.format(...args));
+}
+
+/**
+ * A failure, with its stack in the file. The console keeps the one-line
+ * message it always printed; the stack is for whoever reads the log later.
+ */
+function logFailure(what, err) {
+  console.log('[video-explorer]', what, err && err.message ? err.message : String(err));
+  logToFile(`${what} ${err && err.stack ? err.stack : String(err)}`);
 }
 
 async function exists(p) {
@@ -149,9 +211,51 @@ let saveTimer = null;
 function saveConfigSoon() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    fsp.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2)).catch(() => {});
+    saveTimer = null;
+    writeConfig();
     writeColours();
   }, 300);
+}
+
+/**
+ * The config file, written whole and one write at a time.
+ *
+ * Two writes used to be able to overlap -- the debounce only coalesces calls
+ * that land within 300ms of each other, and a slow disk can take longer than
+ * that -- and two writeFile calls on the same file interleave: the result was
+ * a truncated config.json, which loads as nothing, which is every setting
+ * silently back to its default. So writes queue behind one another, and each
+ * lands through a temporary file and a rename so a kill mid-write leaves the
+ * previous file whole. The body is taken when the write is queued, so the last
+ * one queued is the one that ends up on the disk.
+ */
+let configWriting = Promise.resolve();
+function writeConfig() {
+  const body = JSON.stringify(config, null, 2);
+  configWriting = configWriting.then(async () => {
+    const temp = `${CONFIG_FILE}.${process.pid}.tmp`;
+    await fsp.writeFile(temp, body);
+    for (let i = 0; i < 5; i += 1) {
+      try { await fsp.rename(temp, CONFIG_FILE); return; } catch (err) {
+        if (i === 4) {
+          await fsp.unlink(temp).catch(() => {});
+          throw err;
+        }
+        await sleep(60 * (i + 1));
+      }
+    }
+  }).catch((err) => log('config not saved:', err.message));
+  return configWriting;
+}
+
+/** For shutdown: a save still waiting on its debounce goes now, and is waited for. */
+function flushConfig() {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    writeConfig();
+  }
+  return configWriting;
 }
 
 /**
@@ -424,11 +528,9 @@ function run(cmd, args, opts = {}) {
   });
 }
 
-function cacheKey(file, stat, salt) {
-  return crypto.createHash('sha1')
-    .update([path.resolve(file), stat.size, Math.round(stat.mtimeMs), salt].join('|'))
-    .digest('hex');
-}
+// The sha1-over-the-path name of the pre-rename cache, from strips.js -- the
+// same arithmetic, so there is one copy of it.
+const cacheKey = strips.legacyKey;
 
 /** Sources must live under a folder the user explicitly opened. */
 function isAuthorised(target) {
@@ -671,10 +773,9 @@ const spriteFrameCount = new Map(); // sprite path -> frames actually rendered
 // One definition per artefact so a route can ask "is this already built?"
 // without going through the generator.
 
-function tileDims() {
-  const tileW = Math.max(120, Math.min(640, Number(config.tileWidth) || 320));
-  return { tileW, tileH: 2 * Math.round((tileW * 9 / 16) / 2) };
-}
+// strips.js takes the settings as an argument, since it also runs outside this
+// process; here they are always the live config.
+const tileDims = () => strips.tileDims(config);
 
 /**
  * A cache name anything holding the file's size and modified time can work out.
@@ -690,15 +791,10 @@ function tileDims() {
  * stays in the name so changing the tile width still invalidates what it should.
  * Old names are renamed across as they are met -- see legacyCachePath.
  */
-function cacheName(stat, salt) {
-  return `${stat.size}_${Math.round(stat.mtimeMs)}-${salt}.jpg`;
-}
+const { cacheName } = strips;
 
-function spriteSalt() {
-  const frames = Math.max(2, Math.min(24, Number(config.frames) || 10));
-  // "s" = even-division spacing; the midpoint-spaced sprites were "sprite-v2".
-  return `s${frames}x${tileDims().tileW}`;
-}
+// "s" = even-division spacing; the midpoint-spaced sprites were "sprite-v2".
+const spriteSalt = () => strips.spriteSalt(config);
 
 const thumbSalt = () => `t${tileDims().tileW}`;
 
@@ -750,11 +846,17 @@ function legacyCachePath(file, stat, which) {
  */
 async function adoptLegacyCache(file, stat, which) {
   const now = which === 'sprite' ? spriteCachePath(file, stat) : thumbCachePath(file, stat);
+  // Once tidyCache has run, nothing under the old names is left -- it adopted
+  // what it could and recycled the rest -- so looking for one is two sha1s and
+  // two filesystem round trips spent finding nothing, on every strip and
+  // poster asked for.
+  if (config.cacheTidyV3) return now;
   if (await exists(now)) return now;
   const was = legacyCachePath(file, stat, which);
   if (!(await exists(was))) return now;
   try {
     await fsp.rename(was, now);
+    forgetStripNames();
     // The sidecar carries how many frames actually rendered, which is not always
     // what was asked for -- a very short video yields fewer.
     if (which === 'sprite' && await exists(was + '.json')) {
@@ -806,6 +908,11 @@ const metaKey = (stat) => `${stat.size}:${Math.round(stat.mtimeMs)}`;
 function cachedMeta(file, stat) {
   const key = metaKey(stat);
   if (metaIndex[key]) return metaIndex[key];
+  // The tidy rekeyed every live entry and dropped every other old-style key, so
+  // after it there is nothing to find -- and a listing asks this for every video
+  // with no metadata, which at the library root is a sha1 each for most of
+  // 28,000 files.
+  if (config.cacheTidyV3) return null;
   const legacy = cacheKey(file, stat, 'meta');
   const held = metaIndex[legacy];
   if (!held) return null;
@@ -815,12 +922,8 @@ function cachedMeta(file, stat) {
   return held;
 }
 
-/** Must stay in lockstep with segmentTime() in public/app.js. */
-function segmentSeek(duration, index, count) {
-  if (!(duration > 0)) return 0;
-  const at = (duration * (index + 1)) / count;
-  return Math.min(at, Math.max(0, duration - 1));
-}
+/** Must stay in lockstep with segmentTime() in public/app.js. One copy, in strips.js. */
+const { segmentSeek } = strips;
 
 // How many cloud frames are fetched at once, ACROSS THE WHOLE APP. Four,
 // measured: the CDN began refusing connections at six and above, and two left
@@ -1005,6 +1108,7 @@ async function ensureSprite(file, stat, { background = false } = {}) {
 
       spriteFrameCount.set(out, extracted.length);
       await fsp.writeFile(sidecar, JSON.stringify({ frames: extracted.length, tileW, tileH })).catch(() => {});
+      noteStrip(out);
       return { file: out, frames: extracted.length };
     } finally {
       await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
@@ -1173,13 +1277,37 @@ async function collectVideos(dir) {
  * Strips built under the old naming were renamed across once (`cacheNamesV2`),
  * and any that were missed are adopted the next time one is actually drawn.
  */
-async function cachedStripNames() {
-  try {
-    const names = await fsp.readdir(CACHE_DIR);
-    return new Set(names);
-  } catch {
-    return new Set();
-  }
+// Half a minute. The listing is 30,000 names, and every scan, every filtered
+// count and every file the framing walk passes asked for it afresh. What this
+// app writes is added to the held set as it is written (noteStrip), so the only
+// thing the age can hide is a strip another process built -- the command-line
+// sweep, or another machine syncing one in -- and for those half a minute late
+// is nothing.
+const STRIP_NAMES_TTL_MS = 30 * 1000;
+let stripNames = null;   // { at, names: Promise<Set> }
+
+function cachedStripNames() {
+  if (stripNames && Date.now() - stripNames.at < STRIP_NAMES_TTL_MS) return stripNames.names;
+  const names = fsp.readdir(CACHE_DIR).then((list) => new Set(list), () => new Set());
+  stripNames = { at: Date.now(), names };
+  return names;
+}
+
+/**
+ * A strip just written goes into the held set, rather than throwing the set
+ * away: a sweep writes one every second or two, and each would otherwise cost
+ * the next scan a fresh read of the whole directory. Added to the promise, so
+ * a read still in flight gets it too.
+ */
+function noteStrip(file) {
+  if (!stripNames) return;
+  const name = path.basename(file);
+  stripNames.names.then((set) => { set.add(name); set.add(`${name}.json`); });
+}
+
+/** For anything that renames or removes cache files: read the folder again. */
+function forgetStripNames() {
+  stripNames = null;
 }
 
 /**
@@ -1509,18 +1637,46 @@ function knownMeta(video) {
   return Object.keys(out).length ? out : null;
 }
 
-function describeVideo(video, dir, strips = null) {
+/**
+ * One suggestion as the listing sends it: the fields the page reads, and no
+ * others.
+ *
+ * Every entry carries every name the faces put at 20% or more, so this is
+ * most of the listing's weight at the library root. `rank` is the ranking's
+ * own bookkeeping and nothing on the page reads it -- `band` already says
+ * which are the faint ones. Scores are rounded to three places where they are
+ * made; rounded again here so a ranking adopted from an older file cannot
+ * carry seventeen digits into every listing.
+ */
+const round3 = (x) => (typeof x === 'number' ? Math.round(x * 1000) / 1000 : x);
+function listedSuggestion(s) {
+  return {
+    name: s.name,
+    score: round3(s.score),
+    band: s.band,
+    margin: round3(s.margin),
+    runnerUp: s.runnerUp,
+    videos: s.videos,
+    person: s.person,
+  };
+}
+
+function describeVideo(video, dir, stripSet = null) {
   // Every listing teaches the face index where its profiled videos are, which
   // is what lets "more of her" offer a thumbnail you can click. Free: the scan
   // is already holding this stat.
   faces.notePath(video, video.path);
   const meta = knownMeta(video);
+  const entry = filterView(video, stripSet);
+  if (entry.suggested && entry.suggested.length) {
+    entry.suggested = entry.suggested.map(listedSuggestion);
+  }
+  // No `ext`: the page never read it, and the name it came from is right here.
   return slim({
     name: path.basename(video.path),
     folder: path.dirname(video.path),
     relFolder: dir ? (path.relative(dir, path.dirname(video.path)) || '.') : '',
-    ext: path.extname(video.path).toLowerCase(),
-    ...filterView(video, strips),
+    ...entry,
     ...(meta ? { meta } : {}),
   });
 }
@@ -1538,6 +1694,9 @@ function countUnderFolders(dir, videos, subs, adv, strips = null) {
   const raceOf = new Map(Object.entries(library.performerRaces()));
   const traitsOf = new Map(Object.entries(library.performerTraits()));
   const favTiers = new Map(Object.entries(library.favouriteTiers()));
+  const ctx = { favSet, raceOf, traitsOf, favTiers };
+  // Compiled once, not once per video.
+  const compiled = filter.compileAdvanced(adv);
   const counts = {};
   for (const sub of subs) counts[sub.path] = 0;
   for (const video of videos) {
@@ -1549,7 +1708,7 @@ function countUnderFolders(dir, videos, subs, adv, strips = null) {
       if (lower.startsWith(sub.prefix)) { hit = sub; break; }
     }
     if (!hit) continue;
-    if (!filter.matchesAdvanced(filterView(video, strips), adv, { favSet, raceOf, traitsOf, favTiers })) continue;
+    if (!filter.matchesAdvanced(filterView(video, strips), compiled, ctx)) continue;
     counts[hit.path] += 1;
   }
   return counts;
@@ -1575,11 +1734,13 @@ let lastWalk = { key: '', videos: [] };
  * it. A walk that comes back different bumps `walkVersion`, which the page
  * notices on its next status poll and quietly re-lists.
  *
- * Deliberately not a cache with a long life: half a minute old is fine to show
- * for the instant it takes to confirm, and anything older than WALK_KEEP_MS is
- * not worth showing at all.
+ * Deliberately not a cache with a long life: a minute old is fine to show for
+ * the instant it takes to confirm, and anything older than WALK_KEEP_MS is not
+ * worth showing at all. A minute rather than ten seconds because every
+ * navigation older than this re-walks behind the answer, and at the library
+ * root that is 27,000 stats competing with the sweeps for the disk.
  */
-const WALK_FRESH_MS = 10 * 1000;
+const WALK_FRESH_MS = 60 * 1000;
 const WALK_KEEP_MS = 30 * 60 * 1000;
 const walks = new Map();
 let walkVersion = 0;
@@ -1598,8 +1759,15 @@ function walkShape(videos) {
   return `${videos.length}:${(h >>> 0).toString(36)}`;
 }
 
-async function walkNow(dir) {
-  const giveBack = priority.hold('scan ' + path.basename(dir));
+/**
+ * One walk of `dir`. A walk somebody is waiting on takes the priority hold,
+ * so the sweeps stand aside for it; a background refresh does not. Nobody is
+ * waiting on that one -- the page already has its answer -- and taking the
+ * hold for it paused every sweep on nearly every navigation, for work whose
+ * only output is "nothing changed".
+ */
+async function walkNow(dir, { background = false } = {}) {
+  const giveBack = background ? () => {} : priority.hold('scan ' + path.basename(dir));
   try {
     return await collectVideos(dir);
   } finally {
@@ -1613,7 +1781,7 @@ function refreshWalk(dir) {
   if (!held || held.refreshing) return;
   held.refreshing = true;
   // Deliberately unawaited: whoever asked already has an answer.
-  walkNow(dir).then((videos) => {
+  walkNow(dir, { background: true }).then((videos) => {
     const shape = walkShape(videos);
     const changed = shape !== held.shape;
     walks.set(key, { videos, shape, at: Date.now(), refreshing: false });
@@ -1694,6 +1862,7 @@ async function scanDirectory(dir, recursive, includeCloud, fresh = false) {
  * difference between a free operation and re-encoding the file's previews.
  */
 async function migrateCache(file, oldStat, newStat) {
+  forgetStripNames();
   for (const build of [thumbCachePath, spriteCachePath]) {
     try {
       await fsp.rename(build(file, oldStat), build(file, newStat));
@@ -1983,14 +2152,49 @@ function rememberDest(dir) {
 
 // ------------------------------------------------------------------- server
 
+/**
+ * JSON out, compressed when it is big enough to be worth it.
+ *
+ * A listing of the library root is tens of megabytes of the same few keys over
+ * and over, which is what gzip is best at: it comes down to a few megabytes.
+ * Even over loopback the page has to receive and buffer every byte, and the
+ * WebView does that in another process. Below 64KB the compression costs more
+ * than it saves, so small answers go as they are. The work is on the thread
+ * pool, so a big listing being compressed does not hold up the requests behind
+ * it, and level 4 because past that the time grows much faster than the file
+ * shrinks.
+ *
+ * Whether the page said it accepts gzip is read in the dispatcher and left on
+ * `res`, so none of the hundred-odd callers has to pass the request in.
+ */
+const GZIP_OVER = 64 * 1024;
+
 function sendJson(res, status, body) {
   const payload = JSON.stringify(body);
-  res.writeHead(status, {
+  const headers = {
     'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(payload),
     'Cache-Control': 'no-store',
+  };
+  if (!res.acceptsGzip || payload.length <= GZIP_OVER) {
+    headers['Content-Length'] = Buffer.byteLength(payload);
+    res.writeHead(status, headers);
+    res.end(payload);
+    return;
+  }
+  zlib.gzip(payload, { level: 4 }, (err, zipped) => {
+    if (res.headersSent || res.destroyed) return;
+    headers.Vary = 'Accept-Encoding';
+    if (err) {
+      headers['Content-Length'] = Buffer.byteLength(payload);
+      res.writeHead(status, headers);
+      res.end(payload);
+      return;
+    }
+    headers['Content-Encoding'] = 'gzip';
+    headers['Content-Length'] = zipped.length;
+    res.writeHead(status, headers);
+    res.end(zipped);
   });
-  res.end(payload);
 }
 
 const MIME = {
@@ -2045,7 +2249,9 @@ function readBody(req) {
     req.on('data', (chunk) => {
       total += chunk.length;
       if (total > 4 * 1024 * 1024) {
-        reject(new Error('Request body too large'));
+        const err = new Error('Request body too large');
+        err.statusCode = 413;
+        reject(err);
         req.destroy();
         return;
       }
@@ -2054,7 +2260,13 @@ function readBody(req) {
     req.on('end', () => {
       const raw = Buffer.concat(chunks).toString('utf8');
       if (!raw) return resolve({});
-      try { resolve(JSON.parse(raw)); } catch (err) { reject(new Error('Invalid JSON body')); }
+      // A body that is not JSON is the sender's mistake, and a 400 says so --
+      // as a 500 it read as the server having broken, and went in the log as one.
+      try { resolve(JSON.parse(raw)); } catch {
+        const err = new Error('Invalid JSON body');
+        err.statusCode = 400;
+        reject(err);
+      }
     });
     req.on('error', reject);
   });
@@ -2204,6 +2416,8 @@ function foreignRequest(req) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${HOST}:${PORT}`);
   const route = url.pathname;
+  // Read once here so sendJson can decide without being handed the request.
+  res.acceptsGzip = /\bgzip\b/i.test(String(req.headers['accept-encoding'] || ''));
 
   const foreign = foreignRequest(req);
   if (foreign) {
@@ -2598,7 +2812,13 @@ const server = http.createServer(async (req, res) => {
       if (!want) return sendJson(res, 400, { error: 'want must be download or cloud' });
       const flags = want === 'download' ? ['+P', '-U'] : ['-P', '+U'];
       const results = {};
-      for (const raw of Array.isArray(body.paths) ? body.paths : []) {
+      // attrib takes one path per call -- a second one is "Parameter format
+      // not correct" -- so a selection of a hundred was a hundred processes in
+      // series. Four at a time: each is a short process start and an
+      // attribute flip, and OneDrive does the actual work later on its own.
+      const paths = Array.isArray(body.paths) ? body.paths : [];
+      const attribLimit = createLimiter(4);
+      await Promise.all(paths.map((raw) => attribLimit(async () => {
         try {
           const target = authoriseOrThrow(raw);
           await run('attrib', [...flags, target]);
@@ -2606,7 +2826,7 @@ const server = http.createServer(async (req, res) => {
         } catch (err) {
           results[raw] = { error: err.message || String(err) };
         }
-      }
+      })));
       forgetWalks();
       return sendJson(res, 200, { want, results });
     }
@@ -2967,13 +3187,14 @@ const server = http.createServer(async (req, res) => {
       await fsp.mkdir(CACHE_DIR, { recursive: true });
       metaIndex = {};
       spriteFrameCount.clear();
+      forgetStripNames();
       return sendJson(res, 200, { ok: true });
     }
 
     return sendJson(res, 404, { error: 'Unknown endpoint: ' + route });
   } catch (err) {
     const status = err.statusCode || 500;
-    if (status >= 500) log('ERROR', route, err.message);
+    if (status >= 500) logFailure(`ERROR ${req.method} ${route}`, err);
     if (!res.headersSent) sendJson(res, status, { error: err.message || String(err) });
     else res.end();
   }
@@ -3021,6 +3242,7 @@ async function checkFfmpeg() {
 }
 
 async function main() {
+  pruneLogs();
   // Where a launch spends its time, on the record: every step below says when
   // it finished, so a slow start names its own culprit.
   const booted = Date.now();
@@ -3142,9 +3364,15 @@ async function loadCore(mark) {
     // two sweeps stand aside.
     build: (file, stat) => ensureSprite(file, stat, { background: true }),
     hasStrip: async (file, stat) => {
-      // adoptLegacyCache moves a strip built under the old naming across, so
-      // ask through it rather than for the new name alone: otherwise every
-      // pre-rename strip counts as missing and gets rebuilt.
+      // One lookup in the folder's names, which the scan holds anyway, rather
+      // than one or two filesystem round trips per downloaded video.
+      const names = await cachedStripNames();
+      if (names.has(cacheName(stat, spriteSalt()))) return true;
+      // Missing under its own name. Before the tidy has run it may still be
+      // under the old one, so ask through adoptLegacyCache, which moves it
+      // across -- otherwise every pre-rename strip would count as missing and
+      // get rebuilt. After the tidy there are no old names left to find.
+      if (config.cacheTidyV3) return false;
       const at = await adoptLegacyCache(file, stat, 'sprite');
       return exists(at);
     },
@@ -3209,14 +3437,31 @@ server.on('error', (err) => {
     log(`Port ${PORT} is already in use. Start with a different one:  set PORT=4400 && node server.js`);
     process.exit(1);
   }
-  throw err;
+  // Anything else is logged, not thrown: a throw here takes the whole app down
+  // over something a single connection did.
+  logFailure('server error:', err);
 });
+
+/**
+ * The last line of defence: logged, with the stack, and the server keeps
+ * serving.
+ *
+ * Without these one stray throw in a timer or one forgotten .catch() ended the
+ * process -- the window went blank, and with no console the reason went with
+ * it. Carrying on after an uncaught exception is not guaranteed to be safe in
+ * general, but everything durable here is written whole through a rename, and
+ * an app that stays up and says what went wrong is a better failure than one
+ * that silently vanishes mid-sweep.
+ */
+process.on('uncaughtException', (err) => logFailure('UNCAUGHT', err));
+process.on('unhandledRejection', (reason) => logFailure('UNHANDLED REJECTION', reason));
 
 // The face index is written lazily; a close would otherwise cost whatever the
 // sweep managed since the last save.
 async function flushAll() {
   flushMeta();
   await Promise.all([
+    flushConfig(),
     library.flush().catch((err) => log('library flush failed:', err.message)),
     faces.flush(),
   ]);

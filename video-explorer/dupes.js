@@ -993,9 +993,17 @@ function setEnabled(on) {
  * nothing is known, and "I cannot find it" must not be mistaken for "it is
  * gone" -- that would dissolve the whole index on a slow start.
  */
+const PRUNE_STAT_BATCH = 32;
+
 async function prune() {
   if (!state.counted || !state.pathByKey.size) return 0;
   const gone = [];
+  // Stat'd in batches rather than one at a time: every member of every set is
+  // a round trip into the filesystem, and in series that wait dominated the
+  // prune. Bounded, so a library of thousands of sets does not open thousands
+  // of handles at once. A stat never reads the file's contents, so a cloud
+  // placeholder here is as harmless as it was before.
+  const toStat = [];
   for (const group of state.groups) {
     for (const key of group) {
       const where = state.pathByKey.get(key) || (state.light.get(key) || {}).path;
@@ -1011,13 +1019,15 @@ async function prune() {
         gone.push(key);
         continue;
       }
-      try {
-        const stat = await fsp.stat(where);
-        if (keyFor(stat) !== key) gone.push(key);
-      } catch {
-        gone.push(key);
-      }
+      toStat.push({ key, where });
     }
+  }
+  for (let i = 0; i < toStat.length; i += PRUNE_STAT_BATCH) {
+    const batch = toStat.slice(i, i + PRUNE_STAT_BATCH);
+    const stats = await Promise.all(batch.map((m) => fsp.stat(m.where).catch(() => null)));
+    stats.forEach((stat, j) => {
+      if (!stat || keyFor(stat) !== batch[j].key) gone.push(batch[j].key);
+    });
   }
   for (const key of gone) forget(key);
   if (gone.length) log(`${gone.length} copies no longer exist, sets updated`);

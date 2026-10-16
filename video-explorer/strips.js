@@ -181,6 +181,7 @@ module.exports = {
   frameCount,
   spriteSalt,
   cacheName,
+  legacyKey,
   spritePath,
   legacySpritePath,
   adopt,

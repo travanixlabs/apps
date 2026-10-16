@@ -53,10 +53,13 @@ button, input, select { font: inherit; color: inherit; }
   position: sticky;
   top: 0;
   z-index: 40;
-  background: linear-gradient(var(--bg-elev), var(--bg-elev) 88%, rgba(22, 27, 34, .92));
+  /* Opaque, and no backdrop blur: a blurred sticky bar has to re-read and
+     re-blur whatever scrolls under it on every frame of every scroll, which
+     was the grid's most expensive paint. Its last few pixels were 92% opaque,
+     too little to show anything through. */
+  background: var(--bg-elev);
   border-bottom: 1px solid var(--border);
   padding: 10px 16px;
-  backdrop-filter: blur(6px);
 }
 
 .topbar-row {
@@ -1472,6 +1475,9 @@ body.dragging .card { cursor: grabbing; }
   backdrop-filter: blur(3px);
 }
 .modal[hidden] { display: none; }
+/* Never blurred behind the player: the blur is redone for every frame the
+   video paints over it, and the scrim is dark enough without it. */
+#playerModal { backdrop-filter: none; }
 /* The folder picker is a secondary dialog — it must sit above the player. */
 #pickerModal { z-index: 100; }
 
