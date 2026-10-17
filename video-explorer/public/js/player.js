@@ -147,8 +147,23 @@ async function confirmDelete(paths) {
   if (!window.confirm(`Send ${label} to the Recycle Bin?\n\nYou can restore from the Recycle Bin if this was a mistake.`)) {
     return false;
   }
-  const results = await doAction('delete', paths);
-  return results.some((r) => r.ok);
+  // Gone from the grid the moment it is confirmed -- every copy of the card,
+  // since grouped by performer a video sits under each of hers. The Recycle
+  // Bin goes through a PowerShell that takes a second or more to start, and
+  // the card sat there for all of it. Anything the delete refuses comes back.
+  const hidden = paths.flatMap((p) => [...cardsFor(p)]);
+  for (const card of hidden) card.style.display = 'none';
+  let results = [];
+  try {
+    results = await doAction('delete', paths);
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+  const gone = new Set(results.filter((r) => r.ok).map((r) => r.path));
+  for (const card of hidden) {
+    if (card.isConnected && !gone.has(card.dataset.path)) card.style.display = '';
+  }
+  return gone.size > 0;
 }
 
 function pickFolder(title, onConfirm) {
