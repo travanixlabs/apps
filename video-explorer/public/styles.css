@@ -196,15 +196,14 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 }
 .avail-mark.is-cloud { color: #9fd0ff; }
 /* Grouped by performer: how like this section's performer the faces are.
-   Beside the cloud mark when that is showing, in its place when not. */
+   Bottom left, opposite the duration; the frame counter takes the spot on hover. */
 .match-mark {
-  position: absolute; top: 6px; right: 6px; z-index: 3;
-  height: 24px; padding: 0 7px; display: grid; place-content: center;
+  position: absolute; left: 6px; bottom: 10px; z-index: 3;
+  height: 20px; padding: 0 7px; display: grid; place-content: center;
   border-radius: 6px; background: rgba(0, 0, 0, .62); color: #fff;
   font-size: 12px; font-weight: 620; font-variant-numeric: tabular-nums;
   pointer-events: none; transition: opacity .14s;
 }
-#grid.avail-mixed .match-mark { right: 36px; }
 .card:hover .match-mark { opacity: 0; }
 .card:hover .avail-mark { opacity: 0; }
 .avail-btn { color: #9fe0b0; }
