@@ -351,18 +351,37 @@ async function settleGroupSuggestions(group) {
   if (!window.confirm(`Turn down every suggested name on ${group.name}'s videos?\n\n`
     + `${pairs} suggestion${pairs === 1 ? '' : 's'} across ${touched.size} video${touched.size === 1 ? '' : 's'}`
     + ` (${byName.size} name${byName.size === 1 ? '' : 's'}). Credited names are left as they are.`)) return;
-  // One edit per video, carrying every name it turns down, sent as one
-  // request (in slices, so a body stays a sensible size).
-  const perVideo = new Map();
-  for (const [name, paths] of byName) {
-    for (const p of paths) {
-      if (!perVideo.has(p)) perVideo.set(p, []);
-      perVideo.get(p).push(name);
+  // Round after round until nothing is left: a video only offers names when
+  // its best match clearly beats the next, so turning the runner-up down can
+  // widen that gap and bring a fresh set through. Each reply carries the new
+  // ranking, so the next round is read straight from it. Every round turns
+  // at least one name down for good, so this ends; a round that changes
+  // nothing stops it regardless.
+  let round = byName;
+  let total = 0;
+  const videos = new Set();
+  let last = '';
+  for (let n = 1; round.size; n += 1) {
+    // One edit per video, carrying every name it turns down, sent as one
+    // request (in slices, so a body stays a sensible size).
+    const perVideo = new Map();
+    for (const [name, paths] of round) {
+      for (const p of paths) {
+        if (!perVideo.has(p)) perVideo.set(p, []);
+        perVideo.get(p).push(name);
+        total += 1;
+        videos.add(p);
+      }
     }
+    const items = [...perVideo].map(([p, names]) => ({ path: p, addNotModels: names }));
+    const sig = JSON.stringify(items);
+    if (sig === last) break;
+    last = sig;
+    if (n > 1) toast(`${group.name}: ${items.length} more video${items.length === 1 ? '' : 's'} came up with new names — turning those down too`, 'info');
+    for (let i = 0; i < items.length; i += 500) await editRecordsEach(items.slice(i, i + 500));
+    round = pendingOnPerformer(group.name).byName;
   }
-  const items = [...perVideo].map(([p, names]) => ({ path: p, addNotModels: names }));
-  for (let i = 0; i < items.length; i += 500) await editRecordsEach(items.slice(i, i + 500));
-  toast(`${pairs} suggestion${pairs === 1 ? '' : 's'} turned down on ${touched.size} of ${group.name}'s videos`, 'ok');
+  toast(`${total.toLocaleString()} suggestion${total === 1 ? '' : 's'} turned down on ${videos.size} of ${group.name}'s videos`, 'ok');
   render();
 }
 
