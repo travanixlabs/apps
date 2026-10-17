@@ -1230,6 +1230,19 @@ async function sendRecordEdits(body) {
     });
     state.tagVocab = data.tags || state.tagVocab;
     state.modelVocab = data.models || state.modelVocab;
+    // Which sections each edited video sits in, before the edit lands: taking
+    // a name off it has to take its card out of her section (and adding one
+    // put it in another), which refreshing the card in place cannot do.
+    const sectionsOf = (file) => (state.grouped === 'models' ? (file.models || [])
+      : state.grouped === 'suggested' ? suggestedNames(file) : [])
+      .map((n) => String(n).trim().toLowerCase()).filter(Boolean).sort().join('\n');
+    const before = new Map();
+    if (state.grouped === 'models' || state.grouped === 'suggested') {
+      for (const filePath of Object.keys(data.records || {})) {
+        const file = fileAt(filePath);
+        if (file) before.set(filePath, sectionsOf(file));
+      }
+    }
     for (const [filePath, record] of Object.entries(data.records || {})) {
       if (record.error) { toast(record.error, 'err'); continue; }
       // The open video first, and before the listing lookup: it is watchable
@@ -1262,6 +1275,10 @@ async function sendRecordEdits(body) {
       refreshCardRecord(file);
     }
     pruneFiltered(Object.keys(data.records || {}));
+    // Redrawn where it was: the sections keep their order (holdGroupOrder) and
+    // the page its place (render's anchor); only the moved cards change.
+    const moved = [...before].some(([p, was]) => fileAt(p) && sectionsOf(fileAt(p)) !== was);
+    if (moved) render();
   } catch (err) {
     toast(err.message, 'err');
   }
