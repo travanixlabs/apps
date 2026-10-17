@@ -1028,7 +1028,22 @@ function renderActiveFilters() {
 
 // -------------------------------------------------------------------- init
 
+/**
+ * How much of the scroller the sticky Videos bar covers, so the section
+ * headings pin just beneath it rather than under it.
+ */
+function syncFilesHeadHeight() {
+  const head = document.querySelector('#filesSection > .section-head');
+  if (!head) return;
+  // The bar sits at top: -16px with 16px of padding above its content.
+  const covered = Math.max(0, head.offsetHeight - 16);
+  document.documentElement.style.setProperty('--files-head-h', `${covered}px`);
+}
+
 async function init() {
+  syncFilesHeadHeight();
+  const filesHead = document.querySelector('#filesSection > .section-head');
+  if (filesHead) new ResizeObserver(syncFilesHeadHeight).observe(filesHead);
   wireEvents();
   attachGridHandlers();
   try {

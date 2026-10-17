@@ -276,18 +276,28 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === 'POST') {
         const body = await readBody(req);
-        const { paths: listed, ...patch } = body;
-        const paths = Array.isArray(listed) ? listed : [];
+        const { paths: listed, items: listedItems, ...patch } = body;
+        // Either one patch for many videos (`paths` + the patch), or a patch of
+        // its own for each (`items`: [{ path, ...patch }]) -- the shape a bulk
+        // answer like "All profiled" takes, sent once instead of a request per
+        // name.
+        const items = Array.isArray(listedItems)
+          ? listedItems.filter((it) => it && typeof it.path === 'string')
+            .map(({ path: p, ...own }) => ({ raw: p, patch: own }))
+          : (Array.isArray(listed) ? listed : []).map((raw) => ({ raw, patch }));
+        const paths = items.map((it) => it.raw);
         const records = {};
+        const stats = new Map();
         let namesMoved = false;
-        for (const raw of paths) {
+        for (const { raw, patch: own } of items) {
           try {
             const target = authoriseOrThrow(raw);
             const stat = await fsp.stat(target);
+            stats.set(raw, stat);
             const before = (library.decorate(stat).models || []).join('\n');
             // Without `paths`: apply() reads the patch's keys to tell a resume
             // save from a real edit.
-            records[raw] = library.apply(stat, path.basename(target), patch);
+            records[raw] = library.apply(stat, path.basename(target), own);
             if ((records[raw].models || []).join('\n') !== before) namesMoved = true;
           } catch (err) {
             records[raw] = { error: err.message || String(err) };
@@ -303,12 +313,13 @@ const server = http.createServer(async (req, res) => {
         // says what the ranking became. Without that the client would keep
         // drawing the suggestion it has just refused, since its copy of the
         // listing is only as current as the last reply.
-        if (body.notModels !== undefined || body.addNotModels !== undefined
-            || body.removeNotModels !== undefined) {
-          for (const raw of paths) {
-            if (records[raw] && records[raw].error) continue;
+        const refusing = (p) => p.notModels !== undefined || p.addNotModels !== undefined
+          || p.removeNotModels !== undefined;
+        if (items.some((it) => refusing(it.patch))) {
+          for (const { raw, patch: own } of items) {
+            if (!refusing(own) || (records[raw] && records[raw].error)) continue;
             try {
-              const stat = await fsp.stat(authoriseOrThrow(raw));
+              const stat = stats.get(raw) || await fsp.stat(authoriseOrThrow(raw));
               faces.rescoreOne(stat);
               records[raw] = { ...records[raw], ...faces.decorate(stat) };
             } catch { /* the record answered above; a missing file is its problem */ }

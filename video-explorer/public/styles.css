@@ -1057,6 +1057,14 @@ a.qbtn:hover { color: #dbe6f0; }
   margin: 18px 0 2px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
+  /* Pinned under the Videos bar while its section scrolls by; the next
+     section's heading slides up over it. Opaque, so cards pass beneath. */
+  position: sticky;
+  top: var(--files-head-h, 40px);
+  z-index: 20;
+  background: var(--bg);
+  padding-top: 6px;
+  scroll-margin-top: calc(var(--files-head-h, 40px) + 4px);
 }
 /* Line one: who this is. One row whatever the width -- the name gives way
    (ellipsis) before anything else does. */
@@ -3056,3 +3064,6 @@ body.dragging .card { cursor: grabbing; }
 }
 .face-hover-name { color: var(--text); font-size: 13px; font-weight: 600; }
 .face-hover-count { color: var(--text-faint); font-size: 11.5px; }
+
+/* A menu choice with nothing to do: shown, so the reason is visible, but inert. */
+.menu-row:disabled { opacity: .5; cursor: default; }

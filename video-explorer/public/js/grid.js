@@ -9,14 +9,21 @@
 function pageAnchor() {
   if (!scrollRoot) return null;
   const top = scrollRoot.getBoundingClientRect().top;
+  // Cards first: a heading pinned at the top reports where it is pinned, not
+  // where it sits in the page, and putting the page back on it would jump to
+  // the start of its section. A heading only when no card is in view (every
+  // section folded).
+  let head = null;
   for (const el of $('#grid').children) {
     const box = el.getBoundingClientRect();
     if (box.bottom <= top) continue;
-    const id = el.classList.contains('group-head') ? 'h' + el.dataset.group
-      : el.dataset.path ? 'c' + el.dataset.path + '\u0000' + (el.dataset.group || '') : null;
-    if (id) return { id, offset: box.top - top };
+    if (el.classList.contains('group-head')) {
+      if (!head) head = { id: 'h' + el.dataset.group, offset: box.top - top };
+      continue;
+    }
+    if (el.dataset.path) return { id: 'c' + el.dataset.path + '\u0000' + (el.dataset.group || ''), offset: box.top - top };
   }
-  return null;
+  return head;
 }
 
 function findAnchor(id) {
@@ -482,7 +489,16 @@ function openGroupMenu(anchor, group) {
     ['Not a performer', `"${group.name}" is not a person: take the name off every video`, () => notAPerformer(group.name)],
     // Her videos are settled: whoever else the faces point to on them is not
     // in them. Every pending suggestion on every one is turned down.
-    ['All profiled', `Turn down every suggested name on ${group.name}'s videos`, () => settleGroupSuggestions(group)],
+    // Says how many it would turn down, so a press that has nothing to do is
+    // visible before it is made rather than a toast after.
+    (() => {
+      const { pairs, touched } = pendingOnPerformer(group.name);
+      return pairs
+        ? [`All profiled · ${pairs.toLocaleString()} pending`,
+          `Turn down ${pairs} suggestion${pairs === 1 ? '' : 's'} on ${touched.size} of ${group.name}'s videos`,
+          () => settleGroupSuggestions(group)]
+        : ['All profiled · nothing pending', `No suggestions are waiting on ${group.name}'s videos`, null];
+    })(),
   ];
   // Grouped by suggestion: every video here only looks like her. Turn the
   // name down on all of them at once.
@@ -498,8 +514,10 @@ function openGroupMenu(anchor, group) {
     btn.setAttribute('role', 'menuitem');
     btn.textContent = label;
     btn.title = hint;
+    btn.disabled = !run;
     btn.addEventListener('click', (ev) => {
       ev.stopPropagation();
+      if (!run) return;
       closeFavouritePopup();
       run();
     });

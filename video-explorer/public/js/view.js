@@ -1208,11 +1208,25 @@ function syncAdvBadge() {
  */
 async function editRecords(paths, patch) {
   if (!paths.length) return;
+  return sendRecordEdits({ paths, ...patch });
+}
+
+/**
+ * A different edit for each video, in one request: `items` is
+ * [{ path, ...patch }]. A bulk answer that would otherwise be hundreds of
+ * calls -- one per name, each re-reading the labels -- is a single one.
+ */
+async function editRecordsEach(items) {
+  if (!items.length) return;
+  return sendRecordEdits({ items });
+}
+
+async function sendRecordEdits(body) {
   try {
     const data = await api('/api/library', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paths, ...patch }),
+      body: JSON.stringify(body),
     });
     state.tagVocab = data.tags || state.tagVocab;
     state.modelVocab = data.models || state.modelVocab;

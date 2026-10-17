@@ -124,6 +124,25 @@ test('the server starts, answers, and serves from the split modules', { timeout:
     assert.ok(after.json.roots.some((r) => path.resolve(r).toLowerCase() === path.resolve(home).toLowerCase()
       || path.resolve(r).toLowerCase() === path.resolve(empty).toLowerCase()), JSON.stringify(after.json.roots));
 
+    // A different edit per video in one request: the bulk "All profiled" shape.
+    const clips = path.join(home, 'Clips');
+    fs.mkdirSync(clips, { recursive: true });
+    const one = path.join(clips, 'one.mp4');
+    const two = path.join(clips, 'two.mp4');
+    fs.writeFileSync(one, 'not really a video, one');
+    fs.writeFileSync(two, 'not really a video, the second');
+    assert.strictEqual((await request(port, 'GET', `/api/scan?dir=${encodeURIComponent(clips)}`)).status, 200);
+    const bulk = await request(port, 'POST', '/api/library', {
+      items: [{ path: one, addNotModels: ['Ann', 'Bea'] }, { path: two, addNotModels: ['Cat'] }],
+    });
+    assert.strictEqual(bulk.status, 200, bulk.text);
+    assert.deepStrictEqual(bulk.json.records[one].notModels, ['Ann', 'Bea']);
+    assert.deepStrictEqual(bulk.json.records[two].notModels, ['Cat']);
+    // The one-patch-for-many shape still works beside it.
+    const same = await request(port, 'POST', '/api/library', { paths: [one, two], rating: 6 });
+    assert.strictEqual(same.json.records[one].rating, 6);
+    assert.strictEqual(same.json.records[two].rating, 6);
+
     const missing = await request(port, 'GET', '/api/nothing-here');
     assert.strictEqual(missing.status, 404);
 

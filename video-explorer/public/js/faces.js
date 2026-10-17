@@ -316,10 +316,19 @@ async function refuseSuggestedGroup(group) {
  * "All profiled": on every video in the section, each suggested name that is
  * neither credited nor already turned down is turned down. Credits stay.
  */
-async function settleGroupSuggestions(group) {
+/**
+ * What "All profiled" would turn down: on every video credited to her -- in
+ * any grouping, so the suggested view's section (videos that only look like
+ * her) is not what it acts on -- each suggested name that is neither credited
+ * nor already turned down.
+ */
+function pendingOnPerformer(name) {
+  const want = String(name).toLowerCase();
   const byName = new Map();
   const touched = new Set();
-  for (const file of new Set(group.files)) {
+  let pairs = 0;
+  for (const file of state.files) {
+    if (!(file.models || []).some((m) => m.toLowerCase() === want)) continue;
     const done = new Set([...(file.models || []), ...(file.notModels || [])].map((n) => n.toLowerCase()));
     for (const s of file.suggested || []) {
       const key = String(s.name).toLowerCase();
@@ -328,19 +337,31 @@ async function settleGroupSuggestions(group) {
       if (!byName.has(s.name)) byName.set(s.name, []);
       byName.get(s.name).push(file.path);
       touched.add(file.path);
+      pairs += 1;
     }
   }
+  return { byName, touched, pairs };
+}
+
+async function settleGroupSuggestions(group) {
+  const { byName, touched } = pendingOnPerformer(group.name);
   if (!touched.size) { toast(`Nothing suggested is waiting on ${group.name}'s videos`, 'info'); return; }
   let pairs = 0;
   for (const paths of byName.values()) pairs += paths.length;
   if (!window.confirm(`Turn down every suggested name on ${group.name}'s videos?\n\n`
     + `${pairs} suggestion${pairs === 1 ? '' : 's'} across ${touched.size} video${touched.size === 1 ? '' : 's'}`
     + ` (${byName.size} name${byName.size === 1 ? '' : 's'}). Credited names are left as they are.`)) return;
+  // One edit per video, carrying every name it turns down, sent as one
+  // request (in slices, so a body stays a sensible size).
+  const perVideo = new Map();
   for (const [name, paths] of byName) {
-    for (let i = 0; i < paths.length; i += 200) {
-      await editRecords(paths.slice(i, i + 200), { addNotModels: [name] });
+    for (const p of paths) {
+      if (!perVideo.has(p)) perVideo.set(p, []);
+      perVideo.get(p).push(name);
     }
   }
+  const items = [...perVideo].map(([p, names]) => ({ path: p, addNotModels: names }));
+  for (let i = 0; i < items.length; i += 500) await editRecordsEach(items.slice(i, i + 500));
   toast(`${pairs} suggestion${pairs === 1 ? '' : 's'} turned down on ${touched.size} of ${group.name}'s videos`, 'ok');
   render();
 }
