@@ -2194,6 +2194,14 @@ body.dragging .card { cursor: grabbing; }
   color: #f0c060;
 }
 .chip.chip-model:hover { border-color: #f5b52b; color: #ffd479; }
+/* The performer this card is filed under, grouped by credited performer. */
+.chip.chip-model.is-group {
+  background: #f5b52b;
+  border-color: #f5b52b;
+  color: #1a1206;
+  font-weight: 620;
+}
+.chip.chip-model.is-group:hover { background: #ffc94d; color: #1a1206; }
 .record-row .chips + .chips { margin-left: 2px; }
 
 .picker-list {

@@ -875,7 +875,19 @@ function buildCard(file, index, group = null, seq = null) {
 
   card.appendChild(details);
   card.draggable = true;
+  markGroupChip(card);
   return card;
+}
+
+/**
+ * Grouped by credited performer, the name the card is filed under stands out
+ * among the names on it -- a video credited to three is under each of them.
+ */
+function markGroupChip(card) {
+  if (state.grouped !== 'models' || !card.dataset.group) return;
+  for (const chip of card.querySelectorAll('.record-row [data-chip-field="models"]')) {
+    chip.classList.toggle('is-group', chip.dataset.chipValue === card.dataset.group);
+  }
 }
 
 /**

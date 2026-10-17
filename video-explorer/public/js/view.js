@@ -1458,6 +1458,7 @@ function refreshCardRecord(file) {
   for (const card of cardsFor(file.path)) {
     const row = card.querySelector('.record-row');
     if (row) row.replaceWith(buildRecordRow(file, { edit: false }));
+    markGroupChip(card);
     // The rating is a badge on the picture now, and the row above does not
     // touch it -- so a rating set in the player would leave the tile showing
     // the old one until the listing was rebuilt.
