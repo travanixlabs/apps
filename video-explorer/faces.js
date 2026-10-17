@@ -795,6 +795,7 @@ function hashText(text) {
  * entirely, which no incremental update can absorb.
  */
 function rebuildCentroids() {
+  centroidsBuilt += 1;
   const before = new Map([...state.centroids].map(([name, acc]) => [name, acc.sig]));
   state.centroids.clear();
   const records = state.library ? state.library.all() : {};
@@ -1689,11 +1690,46 @@ function decorate(stat) {
   // faceless is a different fact from read and unrecognised -- there is nothing
   // to credit on the first and something to credit on the second -- and only
   // the listing can tell them apart across a whole folder.
+  const suggested = state.suggestions.get(key) || [];
+  const credit = creditScores(key, entry, suggested);
   return {
-    suggested: state.suggestions.get(key) || [],
+    suggested,
     profiled: true,
     people: (entry.people || []).length,
+    ...(credit ? { credit } : {}),
   };
+}
+
+/**
+ * How like each credited performer this video is, for the names the ranking
+ * left out -- below the floor, it is not a suggestion, but on her own section
+ * of the page it is still the number that says how sure the credit looks.
+ * { name: score }, the best of the video's faces against her average (without
+ * this video in it). Cached per video until the averages or its credits move.
+ */
+let centroidsBuilt = 0;
+const creditCache = new Map();
+
+function creditScores(key, entry, suggested) {
+  const record = state.library ? state.library.all()[key] : null;
+  const models = record && Array.isArray(record.models) ? record.models : [];
+  if (!models.length || !(entry.people || []).length) return null;
+  const sig = `${centroidsBuilt}\u0000${models.join('\u0000')}`;
+  const hit = creditCache.get(key);
+  if (hit && hit.sig === sig) return hit.out;
+  const ranked = new Set(suggested.map((s) => s.name.toLowerCase()));
+  let out = null;
+  for (const name of models) {
+    if (ranked.has(name.toLowerCase())) continue;
+    const acc = state.centroids.get(name);
+    const against = acc ? centroidWithout(acc, key) : null;
+    if (!against) continue;
+    let best = -1;
+    for (const person of entry.people) best = Math.max(best, engine.cosine(unpackVector(person.vec), against));
+    (out || (out = {}))[name] = Math.round(best * 1000) / 1000;
+  }
+  creditCache.set(key, { sig, out });
+  return out;
 }
 
 /**

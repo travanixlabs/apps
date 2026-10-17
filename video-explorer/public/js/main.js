@@ -1115,6 +1115,11 @@ async function init() {
   if (state.config.sort && !SORT_FIELDS.some((s) => s.value === state.config.sort)) {
     state.config.sort = 'name';
   }
+  // Match % belongs to the performer groupings; saved under another, it is Name.
+  if (state.config.sort === 'match' && !MATCH_GROUPINGS.includes(state.grouped)) {
+    state.config.sort = 'name';
+    state.config.sortDir = 'asc';
+  }
   $('#sortSelect').value = state.config.sort || 'name';
   syncSortButton();
   setCardWidth(state.config.cardWidth || CARD_MIN);

@@ -283,6 +283,9 @@ function applyFilterSort() {
 
   list = list.slice().sort((a, b) => {
     let cmp;
+    // Match % orders within each section (buildSlots); across the listing
+    // the names, A to Z whichever way the arrow points, break its ties.
+    if (key === 'match') return BY_NAME_EXACT(a.name, b.name);
     if (key === 'name' || key === 'relFolder') {
       cmp = BY_NAME(String(a[key]), String(b[key]));
       if (cmp === 0 && key === 'relFolder') {
@@ -592,6 +595,57 @@ function holdGroupOrder() {
   heldGroups = { sig, order: new Map(state.groups.map((g, i) => [g.key, i])) };
 }
 
+const MATCH_GROUPINGS = ['models', 'suggested'];
+
+/**
+ * Each performer's section, most like her first (the arrow reverses it).
+ * Videos with no score at all go last either way; ties keep the name order
+ * the listing was already in.
+ */
+function sortByMatch() {
+  const dir = state.config.sortDir === 'asc' ? 1 : -1;
+  for (const group of state.groups) {
+    if (group.unnamed) continue;
+    const score = new Map(group.files.map((f) => [f, matchScore(f, group.name)]));
+    group.files = group.files
+      .map((f, i) => [f, i])
+      .sort(([a, i], [b, j]) => {
+        const x = score.get(a);
+        const y = score.get(b);
+        if (x === null && y === null) return i - j;
+        if (x === null) return 1;
+        if (y === null) return -1;
+        return (x - y) * dir || i - j;
+      })
+      .map(([f]) => f);
+  }
+}
+
+/**
+ * Grouping by performer brings its own sort with it: Match %, highest first.
+ * Leaving for a grouping without it puts back what was in force before.
+ */
+let sortBeforeMatch = null;
+
+function syncSortToGrouping() {
+  const current = $('#sortSelect').value;
+  const patch = {};
+  if (MATCH_GROUPINGS.includes(state.grouped)) {
+    if (current !== 'match') {
+      sortBeforeMatch = { sort: current, sortDir: state.config.sortDir };
+      Object.assign(patch, { sort: 'match', sortDir: 'desc' });
+    }
+  } else if (current === 'match') {
+    Object.assign(patch, sortBeforeMatch || { sort: 'name', sortDir: 'asc' });
+    sortBeforeMatch = null;
+  }
+  if (!Object.keys(patch).length) return null;
+  $('#sortSelect').value = patch.sort;
+  Object.assign(state.config, patch);
+  syncSortButton();
+  return patch;
+}
+
 function buildSlots() {
   // Which copy of the open video the arrows were walking from, before every
   // card is renumbered. Rating a video from the player re-sorts the sections,
@@ -608,6 +662,7 @@ function buildSlots() {
   // "Nobody suggested", "No copy found" -- is exactly what that leaves out.
   if (groupOnly[state.grouped]) state.groups = state.groups.filter((g) => !g.unnamed);
   holdGroupOrder();
+  if ($('#sortSelect').value === 'match' && MATCH_GROUPINGS.includes(state.grouped)) sortByMatch();
   state.slots = [];
   state.cards = [];
   state.headSlots = [];
@@ -735,6 +790,8 @@ function firstAlphabetically(values) {
 }
 
 const SORT_FIELDS = [
+  // Only grouped by performer: each section by how like her its videos are.
+  { value: 'match', label: 'Match %', groups: ['models', 'suggested'] },
   { value: 'name', label: 'Name' },
   { value: 'mtimeMs', label: 'Date modified' },
   { value: 'size', label: 'File size' },
@@ -758,6 +815,7 @@ function renderSortMenu() {
   menu.innerHTML = '';
 
   for (const field of SORT_FIELDS) {
+    if (field.groups && !field.groups.includes(state.grouped)) continue;
     const on = field.value === current;
     const row = document.createElement('button');
     row.className = 'menu-row' + (on ? ' on' : '');

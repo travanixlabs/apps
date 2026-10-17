@@ -140,6 +140,24 @@ function creditedSuggestion(file, name) {
   return found || { name, person: null, score: null, credited: true };
 }
 
+/**
+ * How like `name` this video's faces are, 0..1, or null when nothing says:
+ * the ranking's own score when she is in it, else the listing's `credit`
+ * (her score on a video credited to her that the ranking left below the floor).
+ */
+function matchScore(file, name) {
+  const want = String(name).toLowerCase();
+  let best = null;
+  for (const s of file.suggested || []) {
+    if (s.name.toLowerCase() === want && (best === null || s.score > best)) best = s.score;
+  }
+  if (best !== null) return best;
+  for (const [credited, score] of Object.entries(file.credit || {})) {
+    if (credited.toLowerCase() === want) return score;
+  }
+  return null;
+}
+
 const hover = { in: 0, out: 0, token: null, held: null };
 
 function attachFaceHover(chip, file, sug) {

@@ -769,6 +769,18 @@ function buildCard(file, index, group = null, seq = null) {
   if (file.rating) corner.appendChild(buildCornerRating(file.rating));
   preview.appendChild(corner);
 
+  // Grouped by performer, how like this section's performer the faces are.
+  if (group && !group.unnamed && (state.grouped === 'models' || state.grouped === 'suggested')) {
+    const score = matchScore(file, group.name);
+    if (score !== null) {
+      const match = document.createElement('span');
+      match.className = 'match-mark';
+      match.textContent = `${Math.round(score * 100)}%`;
+      match.title = `${Math.round(score * 100)}% like ${group.name}'s average face`;
+      preview.appendChild(match);
+    }
+  }
+
   // Where the file lives, top right, on every tile.
   const avail = document.createElement('span');
   avail.className = 'avail-mark' + (file.cloudOnly ? ' is-cloud' : '');
@@ -1301,6 +1313,8 @@ async function setGrouped(mode) {
   state.grouped = mode;
   foldedGroups.clear();
   syncGroupButton();
+  const sorted = syncSortToGrouping();
+  if (sorted) saveConfig(sorted);
   // The whole set, not the part of it in this folder.
   if (state.grouped === 'dupes') await fetchOtherCopies();
   else forgetOtherCopies();
