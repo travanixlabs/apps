@@ -231,6 +231,16 @@ async function renameFile(src, newName) {
 }
 
 async function handleAction(body) {
+  try {
+    return await actOn(body);
+  } finally {
+    // And again once it is done: a listing asked for while the Recycle Bin
+    // was still working read the folder as it was.
+    forgetWalks();
+  }
+}
+
+async function actOn(body) {
   const op = String(body.op || '');
   const paths = Array.isArray(body.paths) ? body.paths : [];
   const results = [];

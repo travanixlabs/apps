@@ -366,13 +366,24 @@ async function walkNow(dir, { background = false } = {}) {
   }
 }
 
+/**
+ * Bumped by forgetWalks. A walk that was already reading the disk when this
+ * app changed it -- a delete, a move -- finishes with the old answer, and
+ * storing it would put a deleted video straight back in every listing until
+ * the next refresh happened to notice. So a walk only lands if no forget came
+ * in while it ran.
+ */
+let walkEpoch = 0;
+
 function refreshWalk(dir) {
   const key = walkKey(dir);
   const held = walks.get(key);
   if (!held || held.refreshing) return;
   held.refreshing = true;
+  const epoch = walkEpoch;
   // Deliberately unawaited: whoever asked already has an answer.
   walkNow(dir, { background: true }).then((videos) => {
+    if (epoch !== walkEpoch) return; // the disk moved under it; forgotten anyway
     const shape = walkShape(videos);
     const changed = shape !== held.shape;
     walks.set(key, { videos, shape, at: Date.now(), refreshing: false });
@@ -394,8 +405,18 @@ async function walkOf(dir, fresh) {
     if (age > WALK_FRESH_MS) refreshWalk(dir);
     return { videos: held.videos, age };
   }
-  const videos = await walkNow(dir);
-  walks.set(key, { videos, shape: walkShape(videos), at: Date.now(), refreshing: false });
+  // Walked again when this app changed the disk while it ran (see walkEpoch):
+  // the answer would list what was just deleted or moved away.
+  let videos;
+  for (let tries = 0; ; tries += 1) {
+    const epoch = walkEpoch;
+    videos = await walkNow(dir);
+    if (epoch === walkEpoch) {
+      walks.set(key, { videos, shape: walkShape(videos), at: Date.now(), refreshing: false });
+      break;
+    }
+    if (tries >= 2) break; // answered, not stored; the next listing walks again
+  }
   return { videos, age: 0 };
 }
 
@@ -409,6 +430,7 @@ async function walkOf(dir, fresh) {
 function forgetWalks() {
   walks.clear();
   walkVersion += 1;
+  walkEpoch += 1;
 }
 
 async function scanDirectory(dir, recursive, includeCloud, fresh = false) {
