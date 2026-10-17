@@ -35,7 +35,7 @@ const {
 // a different shape of fact from "any number of these apply".
 const EMPTY = {
   rating: 0, tags: [], models: [], studio: '', production: '', url: '', notModels: [],
-  marks: [],
+  marks: [], settled: 0,
 };
 
 // A bookmark is a second and an icon. Kept here rather than in a file of its
@@ -429,6 +429,9 @@ function decorate(stat) {
     // When the labels last changed. Travels with the listing so "date modified"
     // can mean the video *or* what is known about it, whichever happened later.
     updated: record.updated || 0,
+    // When it was marked all profiled: its credits are the whole answer, and
+    // the faces suggest nobody else on it from then on.
+    settled: record.settled || 0,
   };
 }
 
@@ -606,6 +609,12 @@ function apply(stat, name, patch) {
       .trim().replace(/\s+/g, ' ').slice(0, 60).toUpperCase();
   }
 
+  // All profiled: true stamps it, false lets suggestions back.
+  if (patch.settled !== undefined) {
+    if (patch.settled) next.settled = Date.now();
+    else delete next.settled;
+  }
+
   if (patch.url !== undefined) {
     const url = String(patch.url || '').trim();
     // Only http(s), and nothing with a scheme the shell would act on: this ends
@@ -653,7 +662,7 @@ function apply(stat, name, patch) {
   // somebody chose to remember.
   if (!next.rating && !(next.tags || []).length && !(next.models || []).length
     && !(next.notModels || []).length && !(next.marks || []).length
-    && !next.studio && !next.production && !next.url && !next.resume) {
+    && !next.studio && !next.production && !next.url && !next.resume && !next.settled) {
     delete data.records[key];
     save();
     return { ...EMPTY };
@@ -672,6 +681,7 @@ function apply(stat, name, patch) {
     marks: next.marks || [],
     resume: next.resume || 0,
     updated: next.updated,
+    settled: next.settled || 0,
   };
 }
 

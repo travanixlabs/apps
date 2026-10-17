@@ -487,19 +487,26 @@ function openGroupMenu(anchor, group) {
   pop.appendChild(title);
   const acts = [
     ['Not a performer', `"${group.name}" is not a person: take the name off every video`, () => notAPerformer(group.name)],
-    // Her videos are settled: whoever else the faces point to on them is not
-    // in them. Every pending suggestion on every one is turned down.
-    // Says how many it would turn down, so a press that has nothing to do is
-    // visible before it is made rather than a toast after.
+    // Her videos are labelled right as they stand: each is marked, and
+    // suggests nobody else from then on. Says what it would do, so a press
+    // that has nothing to do is visible before it is made.
     (() => {
-      const { pairs, touched } = pendingOnPerformer(group.name);
-      return pairs
-        ? [`All profiled · ${pairs.toLocaleString()} pending`,
-          `Turn down ${pairs} suggestion${pairs === 1 ? '' : 's'} on ${touched.size} of ${group.name}'s videos`,
-          () => settleGroupSuggestions(group)]
-        : ['All profiled · nothing pending', `No suggestions are waiting on ${group.name}'s videos`, null];
+      const { open, pairs } = pendingOnPerformer(group.name);
+      if (!open.length) return ['All profiled ✓', `Every one of ${group.name}'s videos is marked all profiled`, null];
+      const say = `${open.length.toLocaleString()} video${open.length === 1 ? '' : 's'}`;
+      return [pairs ? `All profiled · ${pairs.toLocaleString()} pending` : `All profiled · ${say}`,
+        `Mark ${say} of ${group.name}'s as all profiled: no suggestions on them from now on`,
+        () => settleGroupSuggestions(group)];
     })(),
   ];
+  {
+    const { settled } = pendingOnPerformer(group.name);
+    if (settled) {
+      acts.push([`Suggest again · ${settled.toLocaleString()}`,
+        `Undo All profiled on ${group.name}'s ${settled} marked videos`,
+        () => settleGroupSuggestions(group, false)]);
+    }
+  }
   // Grouped by suggestion: every video here only looks like her. Turn the
   // name down on all of them at once.
   if (state.grouped === 'suggested') {

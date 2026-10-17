@@ -634,7 +634,7 @@ async function writeDigestNow() {
     // came from -- that last one is how the crop behind the suggestion is
     // addressed. The margin and the runner-up stay here, where the bands that
     // were computed from them are all anyone else needs.
-    videos[key] = (state.suggestions.get(key) || [])
+    videos[key] = suggestionsFor(key)
       .map((s) => ({ name: s.name, score: s.score, band: s.band, person: s.person || 0 }));
     if (!((state.index.videos[key].people || []).length)) faceless.push(key);
   }
@@ -708,6 +708,7 @@ let sweepRebuildTimer = null;
 function autoCredit(next, suggested) {
   if (!state.library || !suggested || !suggested.length) return;
   const record = state.library.all()[next.key] || {};
+  if (record.settled) return; // all profiled: its credits are the answer
   const have = new Set((record.models || []).map((n) => n.toLowerCase()));
   const refused = new Set(state.library.notModelsByKey(next.key));
   const picks = suggested.filter((s) => s.score >= AUTO_CREDIT && !s.rank
@@ -1682,6 +1683,19 @@ const EMPTY = Object.freeze({ suggested: [], profiled: false, people: 0 });
  * that have one without a second round trip — including videos already credited,
  * where a suggestion is a confirmation, or a disagreement worth looking at.
  */
+/**
+ * What a video suggests, as anyone outside the scorer sees it. A video marked
+ * all profiled keeps only the names credited on it -- their scores are what
+ * its match % reads -- and offers nobody else, however the averages move.
+ */
+function suggestionsFor(key) {
+  const list = state.suggestions.get(key) || [];
+  const record = state.library ? state.library.all()[key] : null;
+  if (!record || !record.settled || !list.length) return list;
+  const credited = new Set((record.models || []).map((n) => String(n).toLowerCase()));
+  return list.filter((s) => credited.has(String(s.name).toLowerCase()));
+}
+
 function decorate(stat) {
   const key = keyFor(stat);
   const entry = state.index.videos[key];
@@ -1690,7 +1704,7 @@ function decorate(stat) {
   // faceless is a different fact from read and unrecognised -- there is nothing
   // to credit on the first and something to credit on the second -- and only
   // the listing can tell them apart across a whole folder.
-  const suggested = state.suggestions.get(key) || [];
+  const suggested = suggestionsFor(key);
   const credit = creditScores(key, entry, suggested);
   return {
     suggested,
@@ -1796,7 +1810,7 @@ function standing(stat) {
   const key = keyFor(stat);
   const entry = state.index.videos[key];
   if (!entry) return { profiled: false };
-  const suggested = state.suggestions.get(key) || [];
+  const suggested = suggestionsFor(key);
   const out = {
     profiled: true,
     faces: entry.faces || 0,

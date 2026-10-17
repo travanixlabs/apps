@@ -314,7 +314,7 @@ const server = http.createServer(async (req, res) => {
         // drawing the suggestion it has just refused, since its copy of the
         // listing is only as current as the last reply.
         const refusing = (p) => p.notModels !== undefined || p.addNotModels !== undefined
-          || p.removeNotModels !== undefined;
+          || p.removeNotModels !== undefined || p.settled !== undefined;
         if (items.some((it) => refusing(it.patch))) {
           for (const { raw, patch: own } of items) {
             if (!refusing(own) || (records[raw] && records[raw].error)) continue;

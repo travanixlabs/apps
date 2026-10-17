@@ -1320,6 +1320,7 @@ async function sendRecordEdits(body) {
       // be stored and invisible: the strip reads this to list what it is not
       // suggesting, and to offer each one back.
       if (record.notModels !== undefined) file.notModels = record.notModels;
+      if (record.settled !== undefined) file.settled = record.settled;
       // And the ranking, when the reply carried a new one -- refusing a name
       // changes what this video suggests, and the chip would otherwise stay.
       if (record.suggested !== undefined) file.suggested = record.suggested;

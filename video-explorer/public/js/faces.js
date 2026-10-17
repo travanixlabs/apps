@@ -335,71 +335,49 @@ async function refuseSuggestedGroup(group) {
  * neither credited nor already turned down is turned down. Credits stay.
  */
 /**
- * What "All profiled" would turn down: on every video credited to her -- in
- * any grouping, so the suggested view's section (videos that only look like
- * her) is not what it acts on -- each suggested name that is neither credited
- * nor already turned down.
+ * Where "All profiled" stands for her: every video credited to her -- in any
+ * grouping, so the suggested view's section (videos that only look like her)
+ * is not what it acts on -- split into those already marked and those not,
+ * and how many suggestions are still showing on the unmarked ones.
  */
 function pendingOnPerformer(name) {
   const want = String(name).toLowerCase();
-  const byName = new Map();
-  const touched = new Set();
+  const open = [];
+  let settled = 0;
   let pairs = 0;
   for (const file of state.files) {
     if (!(file.models || []).some((m) => m.toLowerCase() === want)) continue;
+    if (file.settled) { settled += 1; continue; }
+    open.push(file.path);
     const done = new Set([...(file.models || []), ...(file.notModels || [])].map((n) => n.toLowerCase()));
     for (const s of file.suggested || []) {
       const key = String(s.name).toLowerCase();
       if (s.score < FACE_FLOOR || done.has(key)) continue;
       done.add(key);
-      if (!byName.has(s.name)) byName.set(s.name, []);
-      byName.get(s.name).push(file.path);
-      touched.add(file.path);
       pairs += 1;
     }
   }
-  return { byName, touched, pairs };
+  return { open, settled, pairs };
 }
 
-async function settleGroupSuggestions(group) {
-  const { byName, touched } = pendingOnPerformer(group.name);
-  if (!touched.size) { toast(`Nothing suggested is waiting on ${group.name}'s videos`, 'info'); return; }
-  let pairs = 0;
-  for (const paths of byName.values()) pairs += paths.length;
-  if (!window.confirm(`Turn down every suggested name on ${group.name}'s videos?\n\n`
-    + `${pairs} suggestion${pairs === 1 ? '' : 's'} across ${touched.size} video${touched.size === 1 ? '' : 's'}`
-    + ` (${byName.size} name${byName.size === 1 ? '' : 's'}). Credited names are left as they are.`)) return;
-  // Round after round until nothing is left: a video only offers names when
-  // its best match clearly beats the next, so turning the runner-up down can
-  // widen that gap and bring a fresh set through. Each reply carries the new
-  // ranking, so the next round is read straight from it. Every round turns
-  // at least one name down for good, so this ends; a round that changes
-  // nothing stops it regardless.
-  let round = byName;
-  let total = 0;
-  const videos = new Set();
-  let last = '';
-  for (let n = 1; round.size; n += 1) {
-    // One edit per video, carrying every name it turns down, sent as one
-    // request (in slices, so a body stays a sensible size).
-    const perVideo = new Map();
-    for (const [name, paths] of round) {
-      for (const p of paths) {
-        if (!perVideo.has(p)) perVideo.set(p, []);
-        perVideo.get(p).push(name);
-        total += 1;
-        videos.add(p);
-      }
-    }
-    const items = [...perVideo].map(([p, names]) => ({ path: p, addNotModels: names }));
-    const sig = JSON.stringify(items);
-    if (sig === last) break;
-    last = sig;
-    if (n > 1) toast(`${group.name}: ${items.length} more video${items.length === 1 ? '' : 's'} came up with new names — turning those down too`, 'info');
-    for (let i = 0; i < items.length; i += 500) await editRecordsEach(items.slice(i, i + 500));
-    round = pendingOnPerformer(group.name).byName;
-  }
-  toast(`${total.toLocaleString()} suggestion${total === 1 ? '' : 's'} turned down on ${videos.size} of ${group.name}'s videos`, 'ok');
+/**
+ * All profiled: her videos, as they stand now, are labelled right. Each one is
+ * marked so, and from then on it suggests nobody but the names credited on it
+ * -- not the ones showing now, not ones a later sweep would bring up. Videos
+ * credited to her later are not marked; pressing it again takes those in.
+ */
+async function settleGroupSuggestions(group, settle = true) {
+  const want = String(group.name).toLowerCase();
+  const paths = settle ? pendingOnPerformer(group.name).open
+    : state.files.filter((f) => f.settled && (f.models || []).some((m) => m.toLowerCase() === want)).map((f) => f.path);
+  if (!paths.length) return;
+  const n = `${paths.length.toLocaleString()} video${paths.length === 1 ? '' : 's'}`;
+  if (!settle && !window.confirm(`Let ${group.name}'s ${n} be suggested other names again?`)) return;
+  const items = paths.map((p) => ({ path: p, settled: settle }));
+  for (let i = 0; i < items.length; i += 500) await editRecordsEach(items.slice(i, i + 500));
+  toast(settle
+    ? `${group.name}: ${n} marked all profiled — no more suggestions on them`
+    : `${group.name}: ${n} can be suggested other names again`, 'ok');
   render();
 }
 
@@ -416,18 +394,39 @@ async function unrefuseSuggestion(file, name) {
  * appearing looks exactly like a recogniser with nothing to say, and there
  * would be no way back from one made by mistake. Clicking a name restores it.
  */
+// Open or folded, for the session: the strip is redrawn on every edit and
+// every video, and the list should stay how it was last left.
+let refusedOpen = false;
+
 function appendRefused(host, file, refused) {
   if (!refused.length) return;
   const row = document.createElement('span');
   row.className = 'face-refused';
-  const lead = document.createElement('span');
-  lead.textContent = 'not';
-  row.appendChild(lead);
+  // Folded to a count: a video with dozens turned down drew a wall of names
+  // under the player. Click to see them, and to put one back.
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'face-refused-toggle';
+  toggle.setAttribute('aria-expanded', String(refusedOpen));
+  const paint = () => {
+    toggle.textContent = `${refusedOpen ? '▾' : '▸'} not · ${refused.length}`;
+    toggle.title = refusedOpen ? 'Hide the names turned down here' : `Show the ${refused.length} names turned down here`;
+    toggle.setAttribute('aria-expanded', String(refusedOpen));
+    for (const el of row.querySelectorAll('.face-refused-name')) el.hidden = !refusedOpen;
+  };
+  toggle.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    refusedOpen = !refusedOpen;
+    paint();
+  });
+  row.appendChild(toggle);
   for (const name of refused) {
     const back = document.createElement('button');
     back.type = 'button';
+    back.className = 'face-refused-name';
     back.textContent = name;
-    back.title = `Turned down here \u2014 click to let ${name} be suggested again`;
+    back.title = `Turned down here — click to let ${name} be suggested again`;
     back.addEventListener('click', (ev) => {
       ev.stopPropagation();
       ev.preventDefault();
@@ -435,6 +434,7 @@ function appendRefused(host, file, refused) {
     });
     row.appendChild(back);
   }
+  paint();
   host.appendChild(row);
 }
 

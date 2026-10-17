@@ -102,6 +102,19 @@ test('apply: ratings are clamped to the shared scale', async () => {
   await library.flush();
 });
 
+test('apply: settled (All profiled) stamps, keeps the record alive, and clears', async () => {
+  await fresh();
+  library.apply(stat(8), 'h.mp4', { models: ['Ai Qiu'] });
+  const marked = library.apply(stat(8), 'h.mp4', { settled: true });
+  assert.ok(marked.settled > 0);
+  assert.ok(library.decorate(stat(8)).settled > 0);
+  // A mark alone is still a decision worth keeping.
+  library.apply(stat(8), 'h.mp4', { models: [] });
+  assert.ok(library.get(stat(8)) && library.get(stat(8)).settled > 0);
+  assert.strictEqual(library.apply(stat(8), 'h.mp4', { settled: false }).settled, 0);
+  await library.flush();
+});
+
 test('rekey: the record moves, and the old key is kept as an alias', async () => {
   const { file } = await fresh();
   library.apply(stat(7, 100), 'g.mp4', { rating: 5 });

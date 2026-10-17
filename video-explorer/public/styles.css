@@ -2410,6 +2410,12 @@ body.dragging .card { cursor: grabbing; }
   cursor: pointer;
   text-decoration: line-through;
 }
+.face-refused .face-refused-toggle {
+  border: none;
+  padding: 1px 4px;
+  cursor: pointer;
+}
+.face-refused button[hidden] { display: none; }
 .face-refused button:hover {
   color: var(--text);
   border-color: var(--accent);

@@ -181,7 +181,7 @@ function filterView(video, strips = null) {
  */
 const LISTING_DEFAULTS = {
   rating: 0, tags: [], models: [], notModels: [], studio: '', production: '',
-  url: '', marks: [], resume: 0, updated: 0, suggested: [], people: 0,
+  url: '', marks: [], resume: 0, updated: 0, settled: 0, suggested: [], people: 0,
   profiled: false, cloudOnly: false, duplicate: false, copies: 0, dupeKinds: null,
 };
 
