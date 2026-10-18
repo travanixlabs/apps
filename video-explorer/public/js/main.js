@@ -956,7 +956,7 @@ const FACET_NAMES = {
   tags: 'Tags', ratings: 'Rating', models: 'Models', height: 'Height', bust: 'Bust',
   body: 'Body', race: 'Race', favourites: 'Favourites', framing: 'Framing',
   fingerprint: 'Fingerprints', profiling: 'Profiling', suggestions: 'Suggested',
-  storage: 'Storage',
+  storage: 'Storage', suggestedPct: 'Suggested %', labelledPct: 'Labelled %',
 };
 const NONE_NAMES = {
   tags: 'no tags', models: 'no models', height: 'no height', bust: 'no bust',
@@ -966,6 +966,7 @@ const NONE_NAMES = {
 function facetValueText(facet, value) {
   if (value === NOTHING) return NONE_NAMES[facet] || 'none';
   if (facet === 'ratings') return value === 0 ? 'unrated' : `${starsNumber(value)}★`;
+  if (RANGE_FACETS.includes(facet)) return `${String(value).replace('-', '–')}%`;
   const row = CHOICE_ROWS.find(([, f]) => f === facet);
   if (row) {
     const found = row[2].find(([v]) => v === value);

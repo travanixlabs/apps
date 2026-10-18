@@ -579,6 +579,22 @@
         <div class="sync-row"><span class="sync-name">Models suggested</span>
           <div id="advSuggestions" class="chip-row"></div>
           <button class="linkish" data-clear="suggestions">Clear</button></div>
+        <div class="sync-row"><span class="sync-name">Models suggested %</span>
+          <div class="chip-row range-row" data-range="suggestedPct"
+               title="Videos with at least one suggestion still waiting whose match is in this range">
+            <input type="number" min="20" max="100" step="1" placeholder="20" aria-label="Lowest suggested match %">
+            <span>–</span>
+            <input type="number" min="20" max="100" step="1" placeholder="100" aria-label="Highest suggested match %">
+            <span>%</span></div>
+          <button class="linkish" data-clear="suggestedPct">Clear</button></div>
+        <div class="sync-row"><span class="sync-name">Models labelled %</span>
+          <div class="chip-row range-row" data-range="labelledPct"
+               title="Videos with at least one credited performer whose match is in this range">
+            <input type="number" min="20" max="100" step="1" placeholder="20" aria-label="Lowest labelled match %">
+            <span>–</span>
+            <input type="number" min="20" max="100" step="1" placeholder="100" aria-label="Highest labelled match %">
+            <span>%</span></div>
+          <button class="linkish" data-clear="labelledPct">Clear</button></div>
         <div class="sync-row"><span class="sync-name">Downloaded / cloud</span>
           <div id="advStorage" class="chip-row"></div>
           <button class="linkish" data-clear="storage">Clear</button></div>

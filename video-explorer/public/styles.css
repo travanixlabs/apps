@@ -217,6 +217,14 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .adv-sync .sync-row { display: flex; align-items: center; gap: 10px; margin: 4px 0; }
 .adv-sync .sync-name { width: 140px; flex: none; font-size: 12px; color: var(--text-dim); }
 .adv-sync .chip-row { flex: 1 1 auto; }
+.adv-sync .range-row { display: flex; align-items: center; gap: 6px; color: var(--text-dim); font-size: 12px; }
+.adv-sync .range-row input {
+  width: 64px; height: 28px; padding: 0 8px;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: 999px;
+  font: inherit; font-size: 13px; text-align: center;
+}
+.adv-sync .range-row input:focus { outline: none; border-color: var(--accent); }
 .sel-count { font-weight: 620; margin-right: 4px; }
 
 .shortcut-hints {
@@ -2193,14 +2201,24 @@ body.dragging .card { cursor: grabbing; }
   color: #f0c060;
 }
 .chip.chip-model:hover { border-color: #f5b52b; color: #ffd479; }
-/* The performer this card is filed under, grouped by credited performer. */
-.chip.chip-model.is-group {
-  background: #f5b52b;
-  border-color: #f5b52b;
-  color: #1a1206;
-  font-weight: 620;
+/* The performer this card is filed under, grouped by credited performer:
+   filled solid in her own colour (gold when she has none), dark bold text and
+   a light ring. !important and the attribute selector both, because the
+   per-performer colour rule above is !important and would flatten it back to
+   looking like every other name on the card. */
+.chip.chip-model.is-group,
+.chip.chip-model.is-group[style*="--chip-colour"] {
+  background: var(--chip-colour, #f5b52b) !important;
+  border-color: var(--chip-colour, #f5b52b) !important;
+  color: #0d1117 !important;
+  font-weight: 700;
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .85);
 }
-.chip.chip-model.is-group:hover { background: #ffc94d; color: #1a1206; }
+.chip.chip-model.is-group:hover,
+.chip.chip-model.is-group[style*="--chip-colour"]:hover {
+  background: color-mix(in srgb, var(--chip-colour, #f5b52b) 80%, white) !important;
+  color: #0d1117 !important;
+}
 .record-row .chips + .chips { margin-left: 2px; }
 
 .picker-list {

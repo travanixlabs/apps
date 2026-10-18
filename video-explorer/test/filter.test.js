@@ -143,3 +143,31 @@ test('in a page with shared/facets.js loaded first, the filter uses it', () => {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'filter.js'), 'utf8'), page);
   assert.strictEqual(page.PERSON_FACETS, theirs);
 });
+
+test('match % ranges: a waiting suggestion, or a credited name, inside the range', () => {
+  const vid = {
+    models: ['Ann'], notModels: ['Cat'],
+    suggested: [{ name: 'Ann', score: 0.9 }, { name: 'Bea', score: 0.55 }, { name: 'Cat', score: 0.8 }],
+  };
+  const below = { models: ['Dee'], credit: { Dee: 0.2 }, suggested: [] };
+  const adv = (facet, value) => { const a = newAdvFilter(); a[facet].set(value, 'in'); return a; };
+  // Waiting: Bea at 55 (Ann is credited, Cat turned down -- neither counts).
+  assert.strictEqual(matchesAdvanced(vid, adv('suggestedPct', '50-60'), ctx), true);
+  assert.strictEqual(matchesAdvanced(vid, adv('suggestedPct', '70-100'), ctx), false);
+  // Credited: Ann from the ranking, Dee from the listing's credit scores.
+  assert.strictEqual(matchesAdvanced(vid, adv('labelledPct', '85-95'), ctx), true);
+  assert.strictEqual(matchesAdvanced(vid, adv('labelledPct', '0-50'), ctx), false);
+  assert.strictEqual(matchesAdvanced(below, adv('labelledPct', '0-20'), ctx), true); // read as 20-20
+  // Over the wire, reversed bounds put right and nonsense dropped.
+  const back = unpackFilter(JSON.parse(JSON.stringify({ suggestedPct: [['60-50', 'in']], labelledPct: [['x-200', 'in']] })));
+  assert.deepStrictEqual([...back.suggestedPct.keys()], ['50-60']);
+  assert.strictEqual(back.labelledPct.size, 0);
+  assert.strictEqual(filterActive(back), true);
+});
+
+test('match % ranges start at 20: anything lower is raised to it', () => {
+  assert.deepStrictEqual(filter.parseRange('5-30'), [20, 30]);
+  assert.deepStrictEqual(filter.parseRange('0-10'), [20, 20]);
+  const back = unpackFilter({ labelledPct: [['0-60', 'in']] });
+  assert.deepStrictEqual([...back.labelledPct.keys()], ['20-60']);
+});

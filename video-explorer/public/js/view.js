@@ -980,7 +980,7 @@ function openAdvanced() {
     }
   }
   // Additional options start folded, and open only when one of them is in use.
-  $('#advMore').open = ['framing', 'fingerprint', 'profiling', 'suggestions', 'storage']
+  $('#advMore').open = ['framing', 'fingerprint', 'profiling', 'suggestions', 'storage', ...RANGE_FACETS]
     .some((f) => advDraft[f] && advDraft[f].size);
   $('#advModal').hidden = false;
   renderAdvanced();
@@ -1032,6 +1032,29 @@ function renderAdvanced() {
       });
       if (hint) chip.title = `${chip.title}\n${hint}`;
       row.appendChild(chip);
+    }
+  }
+  // The match % ranges: two boxes each, written straight into the draft as
+  // they are typed in (not redrawn, which would take the caret away). Either
+  // box alone is a range: from 40 means 40-100, up to 60 means 20-60 --
+  // nothing below RANGE_MIN, the suggestion floor.
+  for (const row of document.querySelectorAll('#advModal [data-range]')) {
+    const facet = row.dataset.range;
+    const [lo, hi] = row.querySelectorAll('input');
+    const held = parseRange([...advDraft[facet].keys()][0] || '');
+    lo.value = held ? String(held[0]) : '';
+    hi.value = held ? String(held[1]) : '';
+    if (!row.dataset.wired) {
+      row.dataset.wired = '1';
+      const take = () => {
+        advDraft[facet].clear();
+        if (lo.value.trim() === '' && hi.value.trim() === '') return;
+        const clamp = (v, d) => Math.max(RANGE_MIN, Math.min(100, Math.round(Number(v === '' ? d : v) || 0)));
+        const range = parseRange(`${clamp(lo.value.trim(), RANGE_MIN)}-${clamp(hi.value.trim(), 100)}`);
+        if (range) advDraft[facet].set(range.join('-'), 'in');
+      };
+      lo.addEventListener('input', take);
+      hi.addEventListener('input', take);
     }
   }
   // How many there are to find, since only the picked ones are listed until
@@ -1124,6 +1147,9 @@ function updateAdvMatch() {
       if (mode === 'in') bits.push(label);
       if (mode === 'out') bits.push(`not ${label}`);
     }
+  }
+  for (const facet of RANGE_FACETS) {
+    for (const value of advDraft[facet].keys()) bits.push(`${FACET_NAMES[facet]} ${facetValueText(facet, value)}`);
   }
   el.textContent = bits.join(' · ');
 }
