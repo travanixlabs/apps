@@ -88,9 +88,10 @@ function buildLabelChips(file, field, { add: withAdd = true, edit = true } = {})
   chips.className = 'chips';
 
   let values = field === 'models' ? orderedModels(spec.values(file)) : spec.values(file);
-  // In the player, the credited names go most alike first, each led by how
-  // alike: "(90%) Li Rongrong". Names with no score keep their order, last.
-  const scoreOf = edit && field === 'models' && state.playing
+  // Credited names go most alike first, each led by how alike: "(90%) Li
+  // Rongrong" -- in the player and on the cards alike. Names with no score
+  // keep their order, last.
+  const scoreOf = field === 'models'
     ? new Map(values.map((v) => [v, matchScore(file, v)])) : null;
   if (scoreOf) {
     values = values.map((v, i) => [v, i])
@@ -129,7 +130,8 @@ function buildLabelChips(file, field, { add: withAdd = true, edit = true } = {})
     // not edit" is meant to stop -- so it is drawn where editing is allowed,
     // which is the player.
     if (!edit) {
-      chip.textContent = value;
+      const score = scoreOf ? scoreOf.get(value) : null;
+      chip.textContent = score === null || score === undefined ? value : `(${Math.round(score * 100)}%) ${value}`;
     } else {
       // The label is its own element now, because the cross has to sit beside
       // it rather than inside the run of text the ellipsis trims.

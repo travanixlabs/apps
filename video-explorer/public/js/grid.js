@@ -776,8 +776,10 @@ function buildCard(file, index, group = null, seq = null) {
   if (file.rating) corner.appendChild(buildCornerRating(file.rating));
   preview.appendChild(corner);
 
-  // Grouped by performer, how like this section's performer the faces are.
-  if (group && !group.unnamed && (state.grouped === 'models' || state.grouped === 'suggested')) {
+  // Grouped by suggested performer, how like her the faces are. Only there:
+  // grouped by credited performer her name is a pill on the card, and the pill
+  // carries the number -- "(90%) Qin Kexin" -- the way the player's does.
+  if (group && !group.unnamed && state.grouped === 'suggested') {
     const score = matchScore(file, group.name);
     if (score !== null) {
       const match = document.createElement('span');
