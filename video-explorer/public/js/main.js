@@ -1096,6 +1096,7 @@ async function init() {
     try {
       sessionStorage.setItem(VIEW_KEY, JSON.stringify({
         adv: packFilter(state.adv), search: $('#searchInput').value,
+        recursive: $('#recursiveToggle').checked,
       }));
     } catch { /* storage refused: the reload simply starts clean */ }
   });
@@ -1104,6 +1105,12 @@ async function init() {
     || state.config.homeDir || state.config.lastDir || '';
   $('#dirInput').value = start;
   $('#recursiveToggle').checked = state.config.recursive === true;
+  // Flatten subfolders is part of the view an F5 keeps. It is never saved to
+  // the config -- a launch starts with it off -- so it rides the reload with
+  // the filters.
+  if (reloaded && !toHome && !hard && kept && typeof kept.recursive === 'boolean') {
+    $('#recursiveToggle').checked = kept.recursive;
+  }
   // `true` is what this was before there were two groupings.
   state.grouped = state.config.grouped === true ? 'models'
     : (GROUP_MODES.includes(state.config.grouped) ? state.config.grouped : '');
