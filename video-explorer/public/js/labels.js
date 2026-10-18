@@ -87,7 +87,23 @@ function buildLabelChips(file, field, { add: withAdd = true, edit = true } = {})
   const chips = document.createElement('span');
   chips.className = 'chips';
 
-  const values = field === 'models' ? orderedModels(spec.values(file)) : spec.values(file);
+  let values = field === 'models' ? orderedModels(spec.values(file)) : spec.values(file);
+  // In the player, the credited names go most alike first, each led by how
+  // alike: "(90%) Li Rongrong". Names with no score keep their order, last.
+  const scoreOf = edit && field === 'models' && state.playing
+    ? new Map(values.map((v) => [v, matchScore(file, v)])) : null;
+  if (scoreOf) {
+    values = values.map((v, i) => [v, i])
+      .sort(([a, i], [b, j]) => {
+        const x = scoreOf.get(a);
+        const y = scoreOf.get(b);
+        if (x === null && y === null) return i - j;
+        if (x === null) return 1;
+        if (y === null) return -1;
+        return y - x || i - j;
+      })
+      .map(([v]) => v);
+  }
   for (const value of values) {
     const chip = document.createElement('button');
     chip.type = 'button';
@@ -119,7 +135,8 @@ function buildLabelChips(file, field, { add: withAdd = true, edit = true } = {})
       // it rather than inside the run of text the ellipsis trims.
       const text = document.createElement('span');
       text.className = 'chip-text';
-      text.textContent = value;
+      const score = scoreOf ? scoreOf.get(value) : null;
+      text.textContent = score === null || score === undefined ? value : `(${Math.round(score * 100)}%) ${value}`;
       chip.appendChild(text);
 
       // A span, not a button: a button inside a button is invalid HTML, and
