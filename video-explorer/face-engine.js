@@ -376,11 +376,23 @@ function meanOf(vectors) {
 /**
  * Every Nth second of a video, as aligned crops with their embeddings.
  *
- * One ffmpeg reading straight through at a low frame rate rather than one seek
- * per sample: seeking cost 150-450ms a frame, and this content needs a lot of
- * frames to turn up a handful of faces. Frames arrive as one continuous rawvideo
- * stream, so they are cut out of the pipe by length rather than by any process
- * boundary.
+ * One ffmpeg reading straight through rather than one seek per sample: seeking
+ * cost 150-450ms a frame, and this content needs a lot of frames to turn up a
+ * handful of faces. Frames arrive as one continuous rawvideo stream, so they
+ * are cut out of the pipe by length rather than by any process boundary.
+ *
+ * Keyframes only (-skip_frame nokey, before -i). Decoding every frame to keep
+ * one in 125 was the whole cost of a harvest -- measured at 8x the keyframe
+ * read -- and a keyframe is as good a sample as any: encoders put one at
+ * every cut. The select filter keeps the first keyframe at least everySeconds
+ * after the last one kept, so a short GOP samples every N seconds as before
+ * and a long one samples every keyframe; either way the same frame budget now
+ * reaches further into the film. Two decoder threads, so it does not fight
+ * the four ONNX runs with.
+ *
+ * Frames are handed to onFrame as they arrive, with the pipe paused while a
+ * few wait, so decoding and inference overlap and a long film holds a handful
+ * of frames in memory rather than a hundred and twenty (147MB).
  *
  * Three faces a frame, not one. Two performers and a co-star is an ordinary
  * scene here, and a face never cropped is a name that can never be suggested;
@@ -391,27 +403,68 @@ function frames(file, opts, onFrame) {
   return new Promise((resolve, reject) => {
     const proc = spawn('ffmpeg', [
       '-hide_banner', '-loglevel', 'error',
+      '-skip_frame', 'nokey', '-threads', '2',
       '-i', file,
-      '-vf', `fps=1/${everySeconds},scale=${W}:${H}:force_original_aspect_ratio=decrease,`
+      '-vf', `select='isnan(prev_selected_t)+gte(t-prev_selected_t\\,${everySeconds})',`
+        + `scale=${W}:${H}:force_original_aspect_ratio=decrease,`
         + `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2`,
+      '-fps_mode', 'vfr',
       '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1',
     ], { windowsHide: true });
 
     // Long enough to decode a long film at the sampling rate; a stuck read
     // is killed and treated as a video with what it gave by then.
     const watchdog = setTimeout(() => proc.kill(), 15 * 60 * 1000);
-    proc.on('close', () => clearTimeout(watchdog));
 
     const frameBytes = W * H * 3;
+    // How many whole frames may wait for inference before the pipe is paused.
+    const HOLD = 4;
     const chunks = [];
     let pending = 0;
-    const held = [];
-    let stopped = false;
+    const queue = [];
+    let taken = 0;      // frames cut from the pipe
+    let done = false;   // nothing more wanted: onFrame said stop, or it threw
+    let closed = false; // ffmpeg has exited
+    let draining = false;
+    let settled = false;
+
+    const finish = () => { if (!settled) { settled = true; resolve(); } };
+    const fail = (err) => { if (!settled) { settled = true; reject(err); } };
+    const stop = () => {
+      if (done) return;
+      done = true;
+      chunks.length = 0;
+      pending = 0;
+      queue.length = 0;
+      proc.kill();
+    };
+
+    // Inference, one frame at a time, in the order they came.
+    const drain = async () => {
+      if (draining) return;
+      draining = true;
+      while (queue.length && !done) {
+        const frame = queue.shift();
+        if (!closed && queue.length < HOLD) proc.stdout.resume();
+        let more = true;
+        try {
+          more = (await onFrame(frame)) !== false;
+        } catch (err) {
+          stop();
+          fail(err);
+          return;
+        }
+        if (!more) stop();
+      }
+      draining = false;
+      if (closed && (done || !queue.length)) finish();
+    };
+
     proc.stdout.on('data', (chunk) => {
-      if (stopped) return;
+      if (done) return;
       chunks.push(chunk);
       pending += chunk.length;
-      while (pending >= frameBytes && held.length < maxFrames) {
+      while (pending >= frameBytes && taken < maxFrames) {
         // Splice exactly one frame out of the queue, so nothing is repeatedly
         // concatenated into an ever-growing buffer.
         const buf = Buffer.allocUnsafe(frameBytes);
@@ -425,30 +478,34 @@ function frames(file, opts, onFrame) {
           else chunks[0] = head.subarray(take);
         }
         pending -= frameBytes;
-        held.push(buf);
+        taken += 1;
+        queue.push(buf);
       }
-      if (held.length >= maxFrames) {
-        stopped = true;
+      if (taken >= maxFrames) {
+        // Enough sampled: stop decoding the rest of the film. What is already
+        // cut is still looked at.
         chunks.length = 0;
         pending = 0;
-        proc.kill(); // enough sampled; stop decoding the rest of the film
+        proc.kill();
+      } else if (queue.length >= HOLD) {
+        proc.stdout.pause();
       }
+      drain();
     });
     // A child that could not start is not a film with no faces in it: said
     // so, rather than filed as faceless and never looked at again.
     proc.on('error', (err) => {
       const out = new Error(`ffmpeg could not be started (${err && err.code ? err.code : err}) -- is it on PATH?`);
       out.code = 'FFMPEG_MISSING';
-      reject(out);
+      stop();
+      fail(out);
     });
-    proc.on('close', async () => {
-      for (let i = 0; i < held.length; i += 1) {
-        const frame = held[i];
-        held[i] = null; // 1.2MB released now rather than at the end of the video
-        if ((await onFrame(frame)) === false) break;
-      }
-      held.length = 0;
-      resolve();
+    proc.on('close', () => {
+      clearTimeout(watchdog);
+      closed = true;
+      if (draining) return; // drain finishes, then resolves
+      if (done || !queue.length) finish();
+      else drain();
     });
   });
 }
