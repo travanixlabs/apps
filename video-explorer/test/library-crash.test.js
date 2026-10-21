@@ -1,5 +1,10 @@
 'use strict';
 
+// The modules under test now log to the daily file; here that goes to a temp
+// folder rather than into the real log on this machine.
+process.env.VIDEO_EXPLORER_LOG_DIR = process.env.VIDEO_EXPLORER_LOG_DIR
+  || require('node:path').join(require('node:os').tmpdir(), 've-test-logs');
+
 // writeNow's crash safety: when the rename that makes a write land is refused,
 // the old file is left whole, the temporary file is cleaned up, and the write is
 // tried again shortly -- never written in place.

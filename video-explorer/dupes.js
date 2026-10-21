@@ -39,7 +39,10 @@ const { keyFor } = require('./shared/facets.js');
 // Written whole or not at all: the digest and the prints live in the sync root.
 const { writeWhole, writeWholeSync } = require('./write-whole');
 
-const log = (msg) => console.log(`[video-explorer] duplicates: ${msg}`);
+// Through the file log: the app runs in a window with no console anyone can
+// see, and these are the lines that say why a sweep stopped.
+const { log: logLine } = require('./server/util');
+const log = (msg) => logLine(`duplicates: ${msg}`);
 
 const VERSION = 1;
 
@@ -960,7 +963,10 @@ async function worker() {
         state.blocked = '';
         state.sinceMatch += 1;
       } catch (err) {
-        if (!err || err.code !== 'NOT_LOCAL') state.failures.add(next.key);
+        if (!err || err.code !== 'NOT_LOCAL') {
+          state.failures.add(next.key);
+          log(`could not fingerprint ${state.current}: ${err && err.message ? err.message : err}`);
+        }
         if (err && (err.code === 'FFMPEG_MISSING' || err.code === 'ENOENT')) {
           // Not this video's fault, and not the next one's either: stop, and
           // say so where the pill can read it. The pill starts it again.

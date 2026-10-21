@@ -1,5 +1,10 @@
 'use strict';
 
+// The modules under test now log to the daily file; here that goes to a temp
+// folder rather than into the real log on this machine.
+process.env.VIDEO_EXPLORER_LOG_DIR = process.env.VIDEO_EXPLORER_LOG_DIR
+  || require('node:path').join(require('node:os').tmpdir(), 've-test-logs');
+
 // The label store: what an edit does to a record, and the guards around the
 // file -- the rekey history, the big-drop snapshot, backup pruning, and the
 // stale temp files a dead write leaves behind.

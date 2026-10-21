@@ -26,6 +26,9 @@ const os = require('os');
 const {
   RACES, TRAITS, TIERS, DEFAULT_TIER, RATING_MAX, keyFor,
 } = require('./shared/facets.js');
+// Through the file log: these are the lines that say the labels were merged,
+// refused, or left read-only, in an app with no console anyone can see.
+const { log } = require('./server/util');
 
 // Models are kept separate from tags rather than being a tag convention: they
 // are a different kind of fact, they want their own filter facet, and a
@@ -199,7 +202,7 @@ async function init(oneDriveRoot) {
     }
     data.ratingScale = RATING_MAX;
     save();
-    console.log(`ratings: moved ${moved} to the ten-star scale`);
+    log(`library: ratings moved ${moved} to the ten-star scale`);
   }
   return { file: FILE, count: lastWritten, readOnly };
 }
@@ -220,7 +223,7 @@ async function noteStaleTemps() {
   for (const name of names) {
     const lower = name.toLowerCase();
     if (lower.startsWith(base + '.') && lower.endsWith('.writing')) {
-      console.log(`[video-explorer] library: found ${name} from a write that did not finish -- left as it is`);
+      log(`library: found ${name} from a write that did not finish -- left as it is`);
     }
   }
 }
@@ -389,7 +392,7 @@ async function adoptDisk() {
   const dropped = before - after;
   if (before && dropped > 0 && (dropped >= BIG_DROP_RECORDS || dropped >= before * BIG_DROP)) {
     const kept = await snapshot(JSON.stringify(data));
-    console.log(`[video-explorer] library: the file on disk drops ${dropped} of ${before} records `
+    log(`library: the file on disk drops ${dropped} of ${before} records `
       + `(an older version restored?) -- ours ${kept ? 'backed up to backups/ first' : 'COULD NOT be backed up'}`);
   }
   for (const key of Object.keys(data.records)) if (!(key in merged.records)) delete data.records[key];
@@ -398,7 +401,7 @@ async function adoptDisk() {
   baseRaw = theirsRaw;
   diskStamp = now;
   lastWritten = Object.keys(data.records).length;
-  console.log(`[video-explorer] library: merged changes written by another device (${lastWritten} records)`);
+  log(`library: merged changes written by another device (${lastWritten} records)`);
   return true;
 }
 

@@ -1,5 +1,10 @@
 'use strict';
 
+// The modules under test now log to the daily file; here that goes to a temp
+// folder rather than into the real log on this machine.
+process.env.VIDEO_EXPLORER_LOG_DIR = process.env.VIDEO_EXPLORER_LOG_DIR
+  || require('node:path').join(require('node:os').tmpdir(), 've-test-logs');
+
 // ffmpeg that cannot be started is an error, not an empty answer: a sweep
 // that wrote "no sound, no faces" for every video while ffmpeg was off PATH
 // marked the whole library done, in the stores every machine shares.

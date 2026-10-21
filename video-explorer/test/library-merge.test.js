@@ -1,5 +1,10 @@
 'use strict';
 
+// The modules under test now log to the daily file; here that goes to a temp
+// folder rather than into the real log on this machine.
+process.env.VIDEO_EXPLORER_LOG_DIR = process.env.VIDEO_EXPLORER_LOG_DIR
+  || require('node:path').join(require('node:os').tmpdir(), 've-test-logs');
+
 // Merge-on-write: another writer's edits -- the phone, a second PC, OneDrive
 // restoring a version -- survive ours, by the three-way rules in mergeLibraries.
 

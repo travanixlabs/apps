@@ -37,7 +37,10 @@ const { keyFor, FACE_FLOOR } = require('./shared/facets.js');
 // Written whole or not at all; shared with the fingerprint store.
 const { writeWhole } = require('./write-whole');
 
-const log = (msg) => console.log(`[video-explorer] familiar faces: ${msg}`);
+// Through the file log: the app runs in a window with no console anyone can
+// see, and these are the lines that say why a sweep stopped.
+const { log: logLine } = require('./server/util');
+const log = (msg) => logLine(`familiar faces: ${msg}`);
 
 // 2: three faces a frame instead of two, and a clustering threshold that stops
 // splitting one woman into two people. Older entries are re-profiled rather than
@@ -1030,7 +1033,12 @@ function scorerSays(msg) {
   if (msg.type === 'ready') return;
   if (!waiting || msg.run !== waiting.run) return;
   scorerWaiting = null;
-  if (msg.type === 'failed') { waiting.resolve(null); return; }
+  if (msg.type === 'failed') {
+    // The thread's reason, not just the fact: the fallback is silent otherwise.
+    log(`scoring thread failed run ${msg.run}: ${msg.error || 'no reason given'}`);
+    waiting.resolve(null);
+    return;
+  }
   waiting.resolve(msg);
 }
 
@@ -2335,6 +2343,9 @@ async function worker() {
         // it for what it is.
         if (!err || err.code !== 'NOT_LOCAL') {
           state.failures.set(next.key, (state.failures.get(next.key) || 0) + 1);
+          // Said, not just counted: a rising count with no reason is what a
+          // failing ffmpeg or model looked like from the log.
+          log(`could not profile ${state.current}: ${err && err.message ? err.message : err}`);
         }
         if (err && (err.code === 'FFMPEG_MISSING' || err.code === 'ENOENT')) {
           // Not this video's fault, and not the next one's either: stop, and

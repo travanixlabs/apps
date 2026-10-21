@@ -32,7 +32,10 @@ const { skipDir, statAll } = require('./walk-rules');
 // The key every store here agrees on.
 const { keyFor } = require('./shared/facets.js');
 
-const log = (msg) => console.log(`[video-explorer] framing: ${msg}`);
+// Through the file log: the app runs in a window with no console anyone can
+// see, and these are the lines that say why a sweep stopped.
+const { log: logLine } = require('./server/util');
+const log = (msg) => logLine(`framing: ${msg}`);
 
 const WALK_EVERY_MS = 10 * 60 * 1000;
 
