@@ -37,6 +37,7 @@ test('lists every video under the roots, in directory order, skipping what every
 });
 
 test('one walk serves everybody until it is too old or invalidated', async () => {
+  tree.invalidate(); // the first test's walk is still held
   const before = tree.status().walks;
   const first = await tree.videos({ home: root, roots: [root] });
   // As the server asks: the home folder among the roots, plus one inside it.
