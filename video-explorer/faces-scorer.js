@@ -46,6 +46,8 @@ let topScore = null;
  * costs nothing until refusals reach that far down, which is what `short` is.
  */
 let holes = null;
+/** The first row appended since the last pass, still to be scored; null when none. */
+let pendingFrom = null;
 
 function normalise(vec) {
   let sum = 0;
@@ -165,15 +167,22 @@ function offer(r, score, c) {
  * the list.
  */
 function fullPass() {
-  const { dim, nRows, mat } = V;
-  const nC = C.count;
+  const { nRows } = V;
   topIdx = new Int32Array(nRows * TOP_K).fill(-1);
   topScore = new Float32Array(nRows * TOP_K).fill(-Infinity);
   holes = new Uint8Array(nRows);
+  pendingFrom = null;
+  scoreRows(0, nRows);
+}
+
+/** Rows `from` up to `to` against every performer, into the best-K. */
+function scoreRows(from, to) {
+  const { dim, mat } = V;
+  const nC = C.count;
   if (!nC) return;
 
   const q = new Float32Array(dim);
-  for (let r = 0; r < nRows; r += 1) {
+  for (let r = from; r < to; r += 1) {
     const mine = r * dim;
     for (let i = 0; i < dim; i += 1) q[i] = mat[mine + i];
 
@@ -361,6 +370,33 @@ function handle(msg) {
     return;
   }
 
+  if (msg.type === 'append') {
+    // Rows added in place to the shared matrix: the memory is already here,
+    // only the count was missing. The best-K grows to match, and the new rows
+    // are scored at the next run -- just those, unless the cast changed.
+    if (!V) return;
+    const from = V.nRows;
+    V.nRows = msg.nRows;
+    V.nOwners = msg.nOwners;
+    V.mat = new Float32Array(V.mat.buffer, V.mat.byteOffset, V.nRows * V.dim);
+    V.owner = new Int32Array(V.owner.buffer, V.owner.byteOffset, V.nRows);
+    V.person = new Int32Array(V.person.buffer, V.person.byteOffset, V.nRows);
+    indexOwners();
+    if (topIdx) {
+      const idx = new Int32Array(V.nRows * TOP_K).fill(-1);
+      idx.set(topIdx);
+      const score = new Float32Array(V.nRows * TOP_K).fill(-Infinity);
+      score.set(topScore);
+      const h = new Uint8Array(V.nRows);
+      h.set(holes);
+      topIdx = idx;
+      topScore = score;
+      holes = h;
+      pendingFrom = pendingFrom === null ? from : Math.min(pendingFrom, from);
+    }
+    return;
+  }
+
   if (msg.type !== 'score') return;
   if (!V) {
     parentPort.postMessage({ type: 'scored', run: msg.run, out: [], short: [], unusable: true });
@@ -385,8 +421,12 @@ function handle(msg) {
     && previous.count === C.count
     && previous.names.every((n, i) => n === C.names[i]));
   const started = Date.now();
-  if (sameCast) updateColumns(msg.changed);
-  else fullPass();
+  if (sameCast) {
+    if (pendingFrom !== null) { scoreRows(pendingFrom, V.nRows); pendingFrom = null; }
+    updateColumns(msg.changed);
+  } else {
+    fullPass();
+  }
 
   const { out, short } = pick(msg.refusals || {}, msg.bands);
   parentPort.postMessage({

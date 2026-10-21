@@ -1032,6 +1032,7 @@ let rescoreRun = 0;
 let scorer = null;
 let scorerOff = false;
 let scorerMatrix = -1;   // which build of the matrix the worker is holding
+let scorerRows = 0;      // and how many rows of it the worker has been told about
 let scorerWaiting = null; // { run, resolve }
 
 function scorerSays(msg) {
@@ -1136,8 +1137,8 @@ async function rescoreInThread(run, cast) {
   if (!v.count) return { out: [], short: [] };
 
   if (scorerMatrix !== matrixBuild) {
-    // A copy, not a transfer: this thread goes on using the same matrix to
-    // answer "more of her".
+    // Shared, not copied: the views are over SharedArrayBuffers, so the thread
+    // reads the same memory this one goes on using for "more of her".
     worker.postMessage({
       type: 'vectors',
       version: matrixBuild,
@@ -1149,8 +1150,16 @@ async function rescoreInThread(run, cast) {
       person: v.person,
     });
     scorerMatrix = matrixBuild;
+    scorerRows = v.count;
     // The matrix is new, so nothing the thread remembers applies to it.
     cast = { ...cast, cast: false };
+  } else if (scorerRows !== v.count) {
+    // Rows appended in place since the last run -- a sweep's new videos. The
+    // thread already sees them; it scores just those, and then only the
+    // averages that moved. This used to re-post the whole matrix and force a
+    // full twenty-second pass every five minutes of a sweep.
+    worker.postMessage({ type: 'append', nRows: v.count, nOwners: v.keys.length });
+    scorerRows = v.count;
   }
 
   const payload = centroidPayload(cast.names, owners);
@@ -1432,9 +1441,12 @@ function buildVectors() {
     keys: [],
     index: new Map(),      // key -> owner
     firstRow: [],          // owner -> the row of its first person
-    store: new Float32Array(cap * dim),
-    ownerStore: new Int32Array(cap),
-    personStore: new Int32Array(cap),
+    // Shared memory, so handing the matrix to the scoring thread shares it
+    // rather than copying it (74MB, every five minutes of a sweep), and a row
+    // appended here is there as well -- the thread is only told how many.
+    store: new Float32Array(new SharedArrayBuffer(cap * dim * 4)),
+    ownerStore: new Int32Array(new SharedArrayBuffer(cap * 4)),
+    personStore: new Int32Array(new SharedArrayBuffer(cap * 4)),
     cap,
     dim,
     count: 0,
@@ -1462,15 +1474,19 @@ function placeVideo(v, key, people) {
   }
 }
 
-/** The matrix as its readers see it: exactly `count` rows, and a new build. */
-function publishVectors(v) {
+/**
+ * The matrix as its readers see it: exactly `count` rows. A rebuild, or a
+ * grow into fresh buffers, is a new build and anything holding the old
+ * memory -- the scoring thread, the owner index -- now holds the wrong one.
+ * Rows appended in place are not: the buffers are the same, shared, and the
+ * thread only has to be told the new count (see rescoreInThread).
+ */
+function publishVectors(v, { rebuilt = true } = {}) {
   v.mat = v.store.subarray(0, v.count * v.dim);
   v.owner = v.ownerStore.subarray(0, v.count);
   v.person = v.personStore.subarray(0, v.count);
   vectors = v;
-  // Anything holding a copy of the old matrix -- the scoring thread, the owner
-  // index -- is now holding the wrong one.
-  matrixBuild += 1;
+  if (rebuilt) matrixBuild += 1;
   return vectors;
 }
 
@@ -1499,18 +1515,19 @@ function appendVectors() {
   if (!adding.length) return v;
 
   const need = v.count + adding.reduce((n, [, people]) => n + people.length, 0);
-  if (need > v.cap) {
+  const grew = need > v.cap;
+  if (grew) {
     const cap = need + VECTOR_GROW_ROWS;
-    const store = new Float32Array(cap * v.dim);
+    const store = new Float32Array(new SharedArrayBuffer(cap * v.dim * 4));
     store.set(v.store.subarray(0, v.count * v.dim));
-    const ownerStore = new Int32Array(cap);
+    const ownerStore = new Int32Array(new SharedArrayBuffer(cap * 4));
     ownerStore.set(v.ownerStore.subarray(0, v.count));
-    const personStore = new Int32Array(cap);
+    const personStore = new Int32Array(new SharedArrayBuffer(cap * 4));
     personStore.set(v.personStore.subarray(0, v.count));
     Object.assign(v, { store, ownerStore, personStore, cap });
   }
   for (const [key, people] of adding) placeVideo(v, key, people);
-  return publishVectors(v);
+  return publishVectors(v, { rebuilt: grew });
 }
 
 /** The matrix, brought up to date the cheapest way that is still correct. */
