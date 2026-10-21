@@ -2,7 +2,7 @@
 
 /**
  * Video Explorer — local hover-preview file browser for MP4 libraries.
- * Zero npm dependencies: Node stdlib + ffmpeg/ffprobe on PATH.
+ * One npm dependency (onnxruntime-node, for familiar faces) + ffmpeg/ffprobe on PATH.
  * Binds to loopback only.
  *
  * This file is the entry point: startup, the store loading behind the open

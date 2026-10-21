@@ -11,11 +11,20 @@ Double-click `start.cmd`, or from a terminal:
 node server.js
 ```
 
-It opens `http://127.0.0.1:4321` in your browser automatically. Set `NO_OPEN=1`
-to suppress that, or `PORT=4400` to move it off the default port.
+It opens `http://127.0.0.1:4321` in an app window automatically (the packaged
+app is the same page in a WebView2 window). Set `NO_OPEN=1` to suppress that, or
+`PORT=4400` to move it off the default port.
 
-No `npm install` — the server uses only the Node standard library plus the
-`ffmpeg` / `ffprobe` binaries already on your PATH.
+What it needs:
+
+- **Node 20 or later** (`.nvmrc` says 24; the packaged app bundles its own).
+- **`ffmpeg` and `ffprobe` on PATH** — `winget install Gyan.FFmpeg`. Without
+  them no previews are made and the three sweeps hold, and the page says so.
+- **`npm install`**, only for familiar faces: the one dependency is
+  `onnxruntime-node`. Everything else is the Node standard library. The face
+  models are a separate, manual download — see *Familiar faces → Setup*.
+
+Tests: `npm test` (node:test, temp folders only, no running app needed).
 
 ## First use
 
@@ -36,15 +45,16 @@ Three ways in, differing only in where you land:
 | | Folder | View |
 | --- | --- | --- |
 | Cold launch | default folder | defaults — a launch carries nothing over |
-| `F5` | the folder you were in | filters, search and sort back to defaults |
-| `Ctrl`+`Shift`+`R` | default folder | filters, search and sort back to defaults |
+| `F5` | the folder you were in | as you left it: filters, search, sort, grouping, flatten |
+| `Ctrl`+`F5` | the folder you were in | back to defaults |
+| `Ctrl`+`Shift`+`R` | default folder | back to defaults |
 
 A cold launch should be predictable, but `F5` is what you press when you're
-already somewhere and only want the page rebuilt — losing your place there is
-pure cost, while a view that has got away from you is exactly what you were
-trying to clear. Cold launch and refresh are told apart by the navigation type
-the browser already reports; `Ctrl`+`Shift`+`R` needs only a flag on top of
-that, since the folder is the sole difference.
+already somewhere and only want the page rebuilt — losing your place or your
+filters there is pure cost. A view that has got away from you is what
+`Ctrl`+`F5` clears. Cold launch and refresh are told apart by the navigation
+type the browser already reports; the other two need only a flag on top of
+that.
 
 "View" means the listing: filters, search text, sort field and direction, and
 flatten. Card size, hover engine, page size and the default folder are
@@ -94,6 +104,14 @@ check first.
 Detection is free: the scan already calls `stat` on every file, and
 `stat.blocks === 0` identifies a placeholder exactly as reliably as the Windows
 `RECALL_ON_DATA_ACCESS` attribute.
+
+**Signing in (optional).** Cloud posters and streaming use Microsoft Graph.
+Run `node graph-login.js` once: it prints a code to enter at
+microsoft.com/devicelogin and caches the token in
+`%LOCALAPPDATA%\video-explorer\graph-token.json` (`GRAPH_TOKEN_FILE`
+overrides; `GRAPH_CLIENT_ID` and `GRAPH_TENANT` pick a different app
+registration). Signed out, cloud-only videos show without posters and are
+refused rather than downloaded.
 
 **A scan lists everything that is in the folder**, cloud items included — they
 are 92% of the library here, and a grid that hid them would be showing a rounding
@@ -229,9 +247,9 @@ playthrough: sound on, controls back, from the top. Nothing autoplays.
 **‹ and ›** step to the previous or next video without going back to the grid,
 following `state.view` — the listing as filtered and sorted, not the folder on
 disk — and wrapping at both ends so neither button is ever dead. A counter in the
-bottom-right corner says where you are. The bare arrow keys do the same while the
-preview is showing; once playback has started they belong to the video element,
-which seeks with them, so from then on stepping needs `Shift`.
+bottom-right corner says where you are. `←` and `→` do the same, previewing or
+playing alike; seeking is `↑` and `↓` (five seconds, or a frame while the
+preview is showing).
 
 The card's action bar appears in the footer, driven by one shared definition so
 the two can't drift apart, with the **rating and label row** to its left — a video
@@ -648,12 +666,35 @@ npm install                                  # onnxruntime-node
 
 The models live outside the repo and outside the build on purpose: 174MB of
 weights are not source, and they survive a rebuild where a bundled copy would be
-re-copied every time. `VIDEO_EXPLORER_FACE_MODELS` overrides the location.
+re-copied every time. `VIDEO_EXPLORER_FACE_MODELS` overrides the location. They
+are `yunet.onnx` (the detector, from OpenCV's model zoo) and `arcface.onnx`
+(the w600k_r50 ArcFace recogniser from InsightFace, exported to ONNX); put the
+two files in that folder and restart. Nothing downloads them for you.
 
 The index records which recogniser built it. Swap the model and the old vectors
 are **discarded rather than mixed** — two models' vectors are not comparable, and
 re-profiling is hours of background work where a silently wrong suggestion is
 forever.
+
+## The three sweeps
+
+Three background jobs read the downloaded videos, each with a pill in the top
+bar that shows its progress and pauses it on a click, and each only ever reads
+a file that is on this PC — a placeholder is never opened. They share one walk
+of the library (`tree.js`, every ten minutes) and stand aside whenever a person
+is waiting on something (`priority.js`).
+
+- **Frames** (`framing.js`) builds the hover-scrub strips ahead of time, into
+  the preview cache, so a tile you reach has its pictures already.
+- **Prints** (`dupes.js`) fingerprints each video — a loudness trace and a
+  grid of picture hashes — and matches them to find copies, which the
+  *Duplicates* grouping shows side by side.
+- **Faces** (`faces.js`) is familiar faces, below: it reads faces, keeps a
+  profile per video, and ranks every video against every named performer.
+
+If ffmpeg cannot be started, none of them run, the page says so once, and
+nothing is written down as an answer: a read that never happened is not a
+silent, faceless film.
 
 ## Details under each preview
 
@@ -665,10 +706,10 @@ the full path.
 
 - **Flatten subfolders** — collapse everything below into one grid (junction-loop safe, 12 levels deep)
 - **Filter** — matches video names, their subfolder, folder names, **tags** and **models**; space-separated terms must all match. **A search covers the whole subtree**: typing in a folder whose videos live in subfolders switches the scan to recursive and ticks **Flatten**, because filtering can only ever see what has been scanned — and a cloud library is exactly the one that sits in subfolders rather than in front of you. Clearing the search leaves the flatten on, rather than spending another scan to put you back where you could not find anything. Prefix a term with `#` or `tag:` to match tags only — `#hd` finds what you tagged, `hd` also finds what's named that way. Clicking a tag chip fills in the `#` form.
-- **Sort** — an icon in the top row, left of the filter funnel: name, date modified, size, duration, rating, studio, production, model, tag, or folder. The label sorts read the first value — one studio and one production code per video, the alphabetically first performer or tag where there are several — and the unlabelled go last whichever way the arrow points, so reversing brings the labelled tail up rather than a wall of blanks. Picking the field you are already on reverses it, and the icon flips so the direction reads without opening the menu. **Every launch starts on rating, highest first**, with everything unrated below it in name order — a session can sort however it likes and that choice is still written down, it just does not decide what you see when you next open the app (the same treatment `recursive` gets)
+- **Sort** — an icon in the top row, left of the filter funnel: name, date modified, size, duration, rating, model, tag, or folder — and, grouped by performer, **Match %** (how like her each video's faces are, highest first; it is the default sort in those groupings and the previous sort comes back on leaving them). The label sorts read the first value — the alphabetically first performer or tag where there are several — and the unlabelled go last whichever way the arrow points, so reversing brings the labelled tail up rather than a wall of blanks. Picking the field you are already on reverses it, and the icon flips so the direction reads without opening the menu. **Every launch starts on rating, highest first**, with everything unrated below it in name order — a session can sort however it likes and that choice is still written down, it just does not decide what you see when you next open the app (the same treatment `recursive` gets)
 - **Volume** — an icon right of the filter funnel, opening a slider: one master level every video opens at. The player's own slider writes back to it, so there is one number rather than a toolbar setting and a per-video one drifting apart. The icon carries the level — crossed out at zero, one wave up to half, two above it — and it is a preference, so a refresh does not reset it
 - **Card size** — grid tile width, 200–520px (defaults to the smallest)
-- **Frame dwell** — hover advance interval, 1–5s (defaults to 1s)
+- **Frame dwell** — hover advance interval, 1–5s (defaults to 2s)
 
 ### Advanced filters (the funnel)
 
@@ -713,25 +754,57 @@ slot it vacated — forward lands on whatever slid into that slot.
 
 ## Keyboard
 
+Press `?` in the app for this sheet.
+
+**Grid**
+
 | Key | Action |
 | --- | ------ |
-| `F5` | Rebuild the page, same folder, view back to defaults |
-| `Ctrl`+`Shift`+`R` | Start over: default folder, view back to defaults |
-| `Alt`+`←` / `Alt`+`→` | Back / forward through visited folders |
-| `←` / `→` | Previous / next video, while the player's preview is showing |
-| `Shift`+`←` / `Shift`+`→` | Previous / next video once playback has started, when the bare arrows seek |
-| `Backspace` | Up one folder |
+| `Tab` | Move between cards; `Enter` plays the focused card, `Space` selects it |
 | `/` | Focus the filter box |
-| `Ctrl`+`A` | Select every video in the current listing |
-| `0`–`5` | Rate the selection |
-| `T` | Edit tags and models on the selection |
-| `Delete` | Recycle the selection |
-| `M` | Move the selection to a folder |
-| `Esc` | Unwind one layer: picker → player → settings → text field → selection |
+| `Backspace` | Up one folder |
+| `Alt`+`←` / `Alt`+`→` | Back / forward through visited folders |
+| `Ctrl`+wheel | Card size |
+| `F5` | Rebuild the page, same folder, view as you left it |
+| `Ctrl`+`F5` | Rebuild the page, same folder, view back to defaults |
+| `Ctrl`+`Shift`+`R` | Start over: default folder, view back to defaults |
+| `?` | The shortcuts sheet |
 
-Shortcuts are suppressed while a text field has focus or a dialog is open, so
-typing `m` in the filter box never moves anything. The selection bar lists the
-available keys so they're discoverable.
+**Selection**
+
+| Key | Action |
+| --- | ------ |
+| `Shift`+click | Select a range |
+| `Ctrl`+`A` | Select every video in the current listing |
+| `0`–`5` | Rate the selection; `0` clears; `Shift`+digit for a half star |
+| `T` | Edit tags and models on the selection |
+| `M` | Move the selection to a folder |
+| `Delete` | Recycle the selection |
+| `Esc` | Clear the selection |
+
+**Player**
+
+| Key | Action |
+| --- | ------ |
+| `←` / `→` | Previous / next video |
+| `↑` / `↓` | Seek 5 seconds; a frame on the preview |
+| `Space` / `K` | Play, pause; `Space` on the preview starts it |
+| `J` | Back 10 seconds |
+| `,` / `.` | Step a frame, while paused |
+| `<` / `>` | Slower, faster |
+| `L` | Loop this video |
+| `[` / `]` | Loop from A, to B |
+| `M` | Sound on, off |
+| `F` | Fullscreen |
+| `0`–`5` | Rate this video; hold `Shift` for a half |
+| Right-click the timeline | Bookmark that moment |
+| `Esc` | Close, one layer at a time |
+
+Star rows take the keyboard too: `Enter` on a star rates it whole, `←`/`→`
+step by half a star. Menus (sort, group by, a heading's `…`) open with the
+current row focused and walk with `↑`/`↓`. Shortcuts are suppressed while a
+text field has focus or a dialog is open, so typing `m` in the filter box never
+moves anything.
 
 ## Settings (⚙)
 
@@ -747,6 +820,9 @@ everything rebuilds on demand.
 
 ```
 server.js            entry point: startup, store loading, shutdown
+tree.js              the one walk of the library the sweeps and carry-over read
+walk-rules.js        what every walk skips, the batched stat, what a placeholder is
+priority.js          the hold that makes the sweeps stand aside for a person
 server/              the server, one file per concern:
   util.js            log, limiters, running ffmpeg and friends
   config.js          settings, home folder, authorised folders, shared state
@@ -760,15 +836,26 @@ server/              the server, one file per concern:
 shared/facets.js     races, traits, tiers, rating scale, suggestion floor, the
                      size+mtime key -- loaded by the server, the page and (as a
                      copy made by tools/sync-shared.js) the phone
-write-whole.js       temp-file-and-rename writes for the face and print stores
+shared/merge.js      the three-way library merge, shared the same way
+write-whole.js       temp-file-and-rename writes, used by every store
 test/                npm test -- node:test, no dependencies, temp files only
+tools/               sync-shared, sweep (run the sweeps from a terminal),
+                     find-dupes, make-icons, and the cast scrapers
 graph.js             Microsoft Graph: cloud thumbnails and streaming URLs
+graph-login.js       one-off device-code sign-in for Graph
 library.js           ratings and tags, keyed by size + modified time
 faces.js             familiar faces: the index, the sweep, the suggestions
 face-engine.js       frames -> detect -> align -> embed (optional, needs onnxruntime)
+faces-scorer.js      the ranking, in a worker thread over the shared matrix
+dupes.js             duplicates: the fingerprint store, the sweep, the matching
+dupe-engine.js       sound envelope + picture hashes, via ffmpeg
+framing.js           the framing sweep: preview strips built ahead of time
+strips.js            strip and poster builders shared with the cache
 mobile/              the phone app — see mobile/README.md
 public/index.html    layout
-public/app.js        grid, hover scrubbing, actions
+public/js/           the page, one file per concern: core, nav, view, faces,
+                     labels, previews, player, grid, main (loaded in that order)
+public/filter.js     the advanced filter's matcher, shared with the server
 public/styles.css    dark theme
 config.json          dev runs only; the packaged app keeps its settings in
                      %APPDATA%\Video Explorer\config.json (the native host sets
@@ -802,7 +889,7 @@ preview strip decodes the video again, and for one since freed up to the cloud,
 downloads it first.
 
 The ONNX models stay on the machine, in `%LOCALAPPDATA%\video-explorer\face-models`
-— 200MB of weights are a download, not your data.
+— 174MB of weights are a download, not your data.
 
 Face profiles are **one small file per video** rather than one index. The index
 was rewritten whole after every video: about 25GB of writing across a full sweep
