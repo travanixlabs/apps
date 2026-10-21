@@ -240,14 +240,15 @@ function knownMeta(video) {
  * carry seventeen digits into every listing.
  */
 const round3 = (x) => (typeof x === 'number' ? Math.round(x * 1000) / 1000 : x);
+// Only what the grid, the filters and the grouping read. The margin, the
+// runner-up and her video count are read when a face is actually opened --
+// a hover card, a strip tile, the face dialog -- and come from
+// /api/faces/suggested then. They were a third of a 36MB root listing.
 function listedSuggestion(s) {
   return {
     name: s.name,
     score: round3(s.score),
     band: s.band,
-    margin: round3(s.margin),
-    runnerUp: s.runnerUp,
-    videos: s.videos,
     person: s.person,
   };
 }
@@ -473,6 +474,6 @@ const getLastWalk = () => lastWalk;
 const getWalkVersion = () => walkVersion;
 
 module.exports = {
-  subfolderEntries, describeVideo, countUnderFolders, walkOf, forgetWalks,
+  subfolderEntries, describeVideo, countUnderFolders, walkOf, forgetWalks, listedSuggestion,
   scanDirectory, getLastWalk, getWalkVersion,
 };

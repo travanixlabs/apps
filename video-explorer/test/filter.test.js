@@ -165,6 +165,12 @@ test('match % ranges: a waiting suggestion, or a credited name, inside the range
   assert.strictEqual(filterActive(back), true);
 });
 
+test('the listing carries only what the grid reads of a suggestion', () => {
+  const { listedSuggestion } = require('../server/walk.js');
+  const full = { name: 'Ann', score: 0.73456, band: 'strong', margin: 0.2, runnerUp: 'Bea', videos: 57, person: 1, rank: 0 };
+  assert.deepStrictEqual(listedSuggestion(full), { name: 'Ann', score: 0.735, band: 'strong', person: 1 });
+});
+
 test('match % ranges start at 20: anything lower is raised to it', () => {
   assert.deepStrictEqual(filter.parseRange('5-30'), [20, 30]);
   assert.deepStrictEqual(filter.parseRange('0-10'), [20, 20]);

@@ -76,14 +76,9 @@ function buildFaceChip(file, sug, { onPick, showFace = true } = {}) {
   mark.textContent = already ? '\u2713' : '+';
   chip.appendChild(mark);
 
-  chip.title = [
-    `${Math.round(sug.score * 100)}% like ${sug.name}'s average face, `
-      + `across the ${sug.videos} videos she is named in`,
-    'Hover to compare her other faces',
-    `${Math.round(sug.margin * 100)} points clear of the next name (${sug.runnerUp}) `
-      + `\u2014 ${BAND_LABEL[sug.band]}`,
-    already ? 'Already credited on this video' : 'Click to add her',
-  ].filter(Boolean).join('\n');
+  chip.title = chipTitle(sug, already);
+  // The detail lands when the index has answered; the chip stands meanwhile.
+  fullSuggestion(file, sug).then((full) => { if (full !== sug) chip.title = chipTitle(full, already); });
   chip.addEventListener('click', (ev) => {
     ev.stopPropagation();
     ev.preventDefault();
@@ -158,6 +153,41 @@ function matchScore(file, name) {
   return null;
 }
 
+/**
+ * A suggestion as the index holds it, with the margin, the runner-up and her
+ * video count. The listing leaves those out (they were a third of its weight
+ * at the root), so they are fetched the first time a face on a video is
+ * actually opened, and kept for the session.
+ */
+const fullSuggestions = new Map(); // path -> Promise<Map<lower name, suggestion>>
+
+async function fullSuggestion(file, sug) {
+  if (!sug || sug.score === null || sug.margin !== undefined) return sug;
+  if (!fullSuggestions.has(file.path)) {
+    if (fullSuggestions.size > 500) fullSuggestions.clear();
+    fullSuggestions.set(file.path, api(`/api/faces/suggested?path=${encodeURIComponent(file.path)}`)
+      .then((data) => new Map((data.suggested || []).map((s) => [String(s.name).toLowerCase(), s])))
+      .catch(() => new Map()));
+  }
+  const found = (await fullSuggestions.get(file.path)).get(String(sug.name).toLowerCase());
+  return found ? { ...sug, ...found } : sug;
+}
+
+/** The chip's tooltip, with or without the index's detail. */
+function chipTitle(sug, already) {
+  const pct = Math.round(sug.score * 100);
+  return [
+    sug.videos
+      ? `${pct}% like ${sug.name}'s average face, across the ${sug.videos} videos she is named in`
+      : `${pct}% like ${sug.name}'s average face`,
+    'Hover to compare her other faces',
+    sug.margin !== undefined
+      ? `${Math.round(sug.margin * 100)} points clear of the next name (${sug.runnerUp}) \u2014 ${BAND_LABEL[sug.band]}`
+      : BAND_LABEL[sug.band],
+    already ? 'Already credited on this video' : 'Click to add her',
+  ].filter(Boolean).join('\n');
+}
+
 const hover = { in: 0, out: 0, token: null, held: null };
 
 function attachFaceHover(chip, file, sug) {
@@ -187,6 +217,9 @@ async function openFaceHover(anchor, file, sug) {
   const token = {};
   hover.token = token;
   hover.held = { file, sug };
+  // The margin and the runner-up are not in the listing; asked for here.
+  sug = await fullSuggestion(file, sug);
+  if (hover.token !== token) return;
 
   const own = (person) => `/api/faces/face?path=${encodeURIComponent(file.path)}&person=${person || 0}`;
   $('#faceHoverThis').src = own(sug.person);
@@ -751,22 +784,26 @@ function buildFaceTile(file, sug, { onPick, best }) {
   name.textContent = sug.name;
   tile.appendChild(name);
 
-  tile.title = [
-    sug.videos
-      ? `${Math.round(sug.score * 100)}% like ${sug.name}'s average face, `
-        + `across the ${sug.videos} videos she is named in`
-      : `${Math.round(sug.score * 100)}% like ${sug.name} \u2014 below the bar, `
-        + 'so not suggested',
-    sug.margin
-      ? `${Math.abs(Math.round(sug.margin * 100))} point${Math.abs(Math.round(sug.margin * 100)) === 1 ? '' : 's'} `
-        + `${sug.margin < 0 ? 'behind' : 'clear of'} the next name`
-        + (sug.runnerUp ? ` (${sug.runnerUp})` : '')
-        + (sug.band ? ` \u2014 ${BAND_LABEL[sug.band]}` : '')
+  const tileTitle = (s) => [
+    s.videos
+      ? `${Math.round(s.score * 100)}% like ${s.name}'s average face, `
+        + `across the ${s.videos} videos she is named in`
+      : s.band === 'near'
+        ? `${Math.round(s.score * 100)}% like ${s.name} \u2014 below the bar, so not suggested`
+        : `${Math.round(s.score * 100)}% like ${s.name}'s average face`,
+    s.margin
+      ? `${Math.abs(Math.round(s.margin * 100))} point${Math.abs(Math.round(s.margin * 100)) === 1 ? '' : 's'} `
+        + `${s.margin < 0 ? 'behind' : 'clear of'} the next name`
+        + (s.runnerUp ? ` (${s.runnerUp})` : '')
+        + (s.band ? ` \u2014 ${BAND_LABEL[s.band]}` : '')
       : null,
     best && best.path ? `Pictured: ${best.name}, her video most like this one` : null,
     'Hover to compare the faces',
     'Click to add her',
   ].filter(Boolean).join('\n');
+  tile.title = tileTitle(sug);
+  // The detail lands when the index has answered; the tile stands meanwhile.
+  fullSuggestion(file, sug).then((full) => { if (full !== sug) tile.title = tileTitle(full); });
 
   tile.addEventListener('click', (ev) => {
     ev.stopPropagation();
@@ -1296,6 +1333,8 @@ function renderDialogSuggestions(files) {
 let lineupFor = null;
 
 async function openFaceLineup(file, sug, onPick) {
+  // The margin and the runner-up are not in the listing; asked for here.
+  sug = await fullSuggestion(file, sug);
   lineupFor = { file, sug, onPick };
   const already = (file.models || []).some((m) => m.toLowerCase() === sug.name.toLowerCase());
 

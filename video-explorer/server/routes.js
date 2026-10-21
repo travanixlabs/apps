@@ -652,6 +652,14 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, faces.standing(stat));
     }
 
+    // One video's suggestions in full -- margin, runner-up, her video count --
+    // which the listing leaves out (see listedSuggestion in walk.js).
+    if (req.method === 'GET' && route === '/api/faces/suggested') {
+      const target = authoriseOrThrow(url.searchParams.get('path') || '');
+      const stat = await fsp.stat(target);
+      return sendJson(res, 200, { suggested: faces.decorate(stat).suggested || [] });
+    }
+
     // Other videos holding the same face. Not a name -- the same face -- so
     // it answers for the uncredited majority of the library as well.
     if (req.method === 'GET' && route === '/api/faces/similar') {
