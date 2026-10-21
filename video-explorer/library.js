@@ -377,6 +377,21 @@ async function adoptDisk() {
   let base = { records: {} };
   try { if (baseRaw) base = JSON.parse(baseRaw); } catch { /* treat as empty */ }
   const merged = mergeLibraries(base, data, theirs);
+  // The same collapse guard the write has, applied before another device's
+  // version is let in. To the merge, a record we hold that theirs lacks is one
+  // they deleted -- which is also exactly what an older file looks like: a
+  // version OneDrive restored, or a PC that was offline for a week writing its
+  // stale copy. The merge cannot tell the two apart, so a big drop is backed up
+  // (ours, as it stands) before it lands, and said out loud. Without this the
+  // count below was reset before the write's guard could see the drop.
+  const before = Object.keys(data.records).length;
+  const after = Object.keys(merged.records).length;
+  const dropped = before - after;
+  if (before && dropped > 0 && (dropped >= BIG_DROP_RECORDS || dropped >= before * BIG_DROP)) {
+    const kept = await snapshot(JSON.stringify(data));
+    console.log(`[video-explorer] library: the file on disk drops ${dropped} of ${before} records `
+      + `(an older version restored?) -- ours ${kept ? 'backed up to backups/ first' : 'COULD NOT be backed up'}`);
+  }
   for (const key of Object.keys(data.records)) if (!(key in merged.records)) delete data.records[key];
   Object.assign(data.records, merged.records);
   for (const [k, v] of Object.entries(merged)) if (k !== 'records') data[k] = v;

@@ -222,3 +222,33 @@ test('a stale temp file from a dead write is reported and left alone', async () 
   assert.strictEqual(Object.keys(library.all()).length, 2, 'not adopted');
   await library.flush();
 });
+
+test('a merge from disk that drops the records is snapshotted before it is adopted', async () => {
+  // Ours: 300 records, all on disk and all known as the base.
+  const { dir, file } = await fresh({ ratingScale: 10, records: bulk(300) });
+  const daily = autoBackups(dir).length; // init's own daily backup
+  // OneDrive restores last week's file: 50 of them, nothing newer. To the merge
+  // every other record is "deleted by them".
+  await sleep(20);
+  fs.writeFileSync(file, JSON.stringify({ ratingScale: 10, records: bulk(50) }));
+  assert.ok(await library.refreshFromDisk(), 'the restore was noticed');
+  const kept = autoBackups(dir);
+  assert.strictEqual(kept.length, daily + 1, 'ours was backed up before the drop landed');
+  const before = JSON.parse(fs.readFileSync(path.join(dir, 'backups', kept[kept.length - 1]), 'utf8'));
+  assert.strictEqual(Object.keys(before.records).length, 300);
+  assert.strictEqual(Object.keys(library.all()).length, 50, 'the merge itself is unchanged');
+  // And the next write does not snapshot a second time for the same drop.
+  library.apply(stat(1, 1), 'x.mp4', { rating: 1 });
+  await library.flush();
+  assert.strictEqual(autoBackups(dir).length, daily + 1);
+});
+
+test('a merge from disk that drops a few records is not snapshotted', async () => {
+  const { dir, file } = await fresh({ ratingScale: 10, records: bulk(300) });
+  const daily = autoBackups(dir).length;
+  await sleep(20);
+  fs.writeFileSync(file, JSON.stringify({ ratingScale: 10, records: bulk(290) }));
+  assert.ok(await library.refreshFromDisk());
+  assert.strictEqual(autoBackups(dir).length, daily);
+  assert.strictEqual(Object.keys(library.all()).length, 290);
+});
