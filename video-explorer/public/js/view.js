@@ -820,6 +820,13 @@ function renderSortMenu() {
     const row = document.createElement('button');
     row.className = 'menu-row' + (on ? ' on' : '');
     row.type = 'button';
+    // A menu of one-of-these, and the current one says which way it points:
+    // the arrow glyph alone was not in the row's name.
+    row.setAttribute('role', 'menuitemradio');
+    row.setAttribute('aria-checked', String(on));
+    row.setAttribute('aria-label', on
+      ? `${field.label}, ${descending ? 'descending' : 'ascending'} — press to reverse`
+      : `Sort by ${field.label}`);
 
     const label = document.createElement('span');
     label.textContent = field.label;
@@ -828,6 +835,7 @@ function renderSortMenu() {
     const arrow = document.createElement('span');
     arrow.className = 'menu-arrow';
     arrow.textContent = on ? (descending ? '↓' : '↑') : '';
+    arrow.setAttribute('aria-hidden', 'true');
     row.appendChild(arrow);
 
     row.title = on
@@ -863,6 +871,13 @@ function toggleSortMenu(open) {
   if (show) { toggleVolumeMenu(false); toggleGroupMenu(false); renderSortMenu(); }
   menu.hidden = !show;
   $('#sortBtn').classList.toggle('on', show);
+  $('#sortBtn').setAttribute('aria-expanded', String(show));
+  // Opened from the keyboard, the current row takes the focus, as the group
+  // menu's does; Up and Down walk from there (see the menu keys in main.js).
+  if (show) {
+    const current = menu.querySelector('.menu-row.on') || menu.querySelector('.menu-row');
+    if (current) current.focus({ preventScroll: true });
+  }
 }
 
 // -------------------------------------------------------------------- volume

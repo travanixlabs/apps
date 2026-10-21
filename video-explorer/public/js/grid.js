@@ -532,6 +532,12 @@ function openGroupMenu(anchor, group) {
     pop.appendChild(btn);
   }
   pop.addEventListener('click', (ev) => ev.stopPropagation());
+  // Tabbing out of the popup closes it, as clicking away does. Only when the
+  // focus is known to have landed somewhere else: a null relatedTarget is a
+  // click on a disabled row, which must not close what it sits in.
+  pop.addEventListener('focusout', (ev) => {
+    if (ev.relatedTarget instanceof Element && !pop.contains(ev.relatedTarget)) closeFavouritePopup();
+  });
   document.body.appendChild(pop);
 
   const box = anchor.getBoundingClientRect();

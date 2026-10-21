@@ -886,6 +886,26 @@ function onKeyDown(ev) {
  * not put the focus somewhere inside itself (the label box, say), the card
  * takes it, so Tab starts from the dialog and not the grid beneath it.
  */
+/**
+ * Arrow keys walk any open menu -- sort, group by, a heading's "…" -- from
+ * whichever row has the focus: Up and Down between rows, wrapping, Home and
+ * End to the ends. Escape is handled where each menu is opened. Delegated,
+ * since the "…" popup is made afresh each time.
+ */
+document.addEventListener('keydown', (ev) => {
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(ev.key)) return;
+  const menu = ev.target instanceof Element ? ev.target.closest('.menu:not([hidden]), .group-menu') : null;
+  if (!menu) return;
+  const rows = [...menu.querySelectorAll('.menu-row:not([disabled])')];
+  if (!rows.length) return;
+  const at = rows.indexOf(document.activeElement);
+  const next = ev.key === 'Home' ? 0 : ev.key === 'End' ? rows.length - 1
+    : ev.key === 'ArrowDown' ? (at + 1) % rows.length : (at - 1 + rows.length) % rows.length;
+  ev.preventDefault();
+  ev.stopImmediatePropagation();
+  rows[next].focus({ preventScroll: true });
+}, true);
+
 function watchModalFocus() {
   const openers = new Map();
   // Open dialogs, oldest first. Everything but the newest is inert, and so is

@@ -268,13 +268,22 @@ function paintStarRow(wrap, value) {
  * Five stars, each worth two steps: the left half of a star is the half, the
  * right half the whole. Hovering previews where a click would land; clicking
  * the rating already held clears it.
+ *
+ * From the keyboard: Enter or Space on a star is the whole star (a keyboard
+ * click has no position, and it used to land on the half every time), and
+ * Left/Right step the rating by half a star. The row is a radiogroup that
+ * says what it holds; each star is a radio that says whether it is lit.
  */
 function buildStarRow(current, onPick, className = 'stars') {
   const wrap = document.createElement('span');
   wrap.className = className;
+  wrap.setAttribute('role', 'radiogroup');
+  wrap.setAttribute('aria-label', current ? `Rating: ${starsNumber(current)} of 5` : 'Rating: none');
   const at = (star, ev) => {
-    const box = star.getBoundingClientRect();
     const i = Number(star.dataset.n);
+    // detail is 0 for a click the keyboard made: no pointer, so the whole star.
+    if (!ev.detail && !ev.clientX && !ev.clientY) return i * 2;
+    const box = star.getBoundingClientRect();
     return ev.clientX - box.left < box.width / 2 ? i * 2 - 1 : i * 2;
   };
   for (let i = 1; i <= RATING_MAX / 2; i += 1) {
@@ -282,6 +291,9 @@ function buildStarRow(current, onPick, className = 'stars') {
     star.type = 'button';
     star.className = 'star';
     star.dataset.n = String(i);
+    star.setAttribute('role', 'radio');
+    star.setAttribute('aria-label', `Rate ${i} star${i === 1 ? '' : 's'}`);
+    star.setAttribute('aria-checked', String(current >= i * 2 - 1));
     star.addEventListener('pointermove', (ev) => {
       const v = at(star, ev);
       paintStarRow(wrap, v);
@@ -295,6 +307,16 @@ function buildStarRow(current, onPick, className = 'stars') {
     });
     wrap.appendChild(star);
   }
+  wrap.addEventListener('keydown', (ev) => {
+    const step = ev.key === 'ArrowRight' || ev.key === 'ArrowUp' ? 1
+      : ev.key === 'ArrowLeft' || ev.key === 'ArrowDown' ? -1 : 0;
+    if (!step && ev.key !== 'Home' && ev.key !== 'End') return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const next = ev.key === 'Home' ? 0 : ev.key === 'End' ? RATING_MAX
+      : Math.max(0, Math.min(RATING_MAX, current + step));
+    if (next !== current) onPick(next);
+  });
   wrap.addEventListener('pointerleave', () => paintStarRow(wrap, current));
   paintStarRow(wrap, current);
   return wrap;
