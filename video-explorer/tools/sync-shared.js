@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Copies shared/facets.js into the phone's folder, as mobile/shared/facets.js.
+ * Copies shared/*.js into the phone's folder, as mobile/shared/*.js.
  *
  * The phone is served from somewhere else and cannot reach this folder, so it
  * carries a copy -- and a copy is only as good as the last time somebody made
@@ -18,41 +18,47 @@ const fs = require('fs');
 const path = require('path');
 
 const APP = path.resolve(__dirname, '..');
-const SOURCE = path.join(APP, 'shared', 'facets.js');
-const TARGET = path.join(APP, 'mobile', 'shared', 'facets.js');
+// Every file the phone carries a copy of. Add to this list, never to mobile/.
+const FILES = ['facets.js', 'merge.js'];
+const sourceOf = (name) => path.join(APP, 'shared', name);
+const targetOf = (name) => path.join(APP, 'mobile', 'shared', name);
+// Kept for anything still naming the first of them.
+const SOURCE = sourceOf('facets.js');
+const TARGET = targetOf('facets.js');
 
-const HEADER = [
-  '// GENERATED -- a copy of ../shared/facets.js in the desktop app, made by',
+const header = (name) => [
+  `// GENERATED -- a copy of ../shared/${name} in the desktop app, made by`,
   '// tools/sync-shared.js there. Edit that file and run the tool; an edit made',
   '// here is overwritten, and the desktop tests fail until the two agree.',
 ];
+const HEADER = header('facets.js');
 
 /** What the copy should hold, byte for byte: the header, then the source. */
-function render(source) {
+function render(source, name = 'facets.js') {
   const eol = source.includes('\r\n') ? '\r\n' : '\n';
-  return HEADER.join(eol) + eol + eol + source;
+  return header(name).join(eol) + eol + eol + source;
 }
 
 function main() {
-  const want = render(fs.readFileSync(SOURCE, 'utf8'));
   if (!fs.existsSync(path.join(APP, 'mobile'))) {
     console.log('no mobile/ folder here: nothing to copy into');
     return 0;
   }
-  let have = null;
-  try { have = fs.readFileSync(TARGET, 'utf8'); } catch { /* not made yet */ }
-  if (process.argv.includes('--check')) {
-    if (have === want) { console.log('mobile/shared/facets.js is current'); return 0; }
-    console.log('mobile/shared/facets.js is out of date: run node tools/sync-shared.js');
-    return 1;
+  const check = process.argv.includes('--check');
+  let stale = 0;
+  for (const name of FILES) {
+    const want = render(fs.readFileSync(sourceOf(name), 'utf8'), name);
+    let have = null;
+    try { have = fs.readFileSync(targetOf(name), 'utf8'); } catch { /* not made yet */ }
+    if (have === want) { console.log(`mobile/shared/${name} is current`); continue; }
+    if (check) { console.log(`mobile/shared/${name} is out of date: run node tools/sync-shared.js`); stale += 1; continue; }
+    fs.mkdirSync(path.dirname(targetOf(name)), { recursive: true });
+    fs.writeFileSync(targetOf(name), want);
+    console.log(`wrote mobile/shared/${name}`);
   }
-  if (have === want) { console.log('mobile/shared/facets.js already current'); return 0; }
-  fs.mkdirSync(path.dirname(TARGET), { recursive: true });
-  fs.writeFileSync(TARGET, want);
-  console.log(`wrote ${path.relative(APP, TARGET)}`);
-  return 0;
+  return stale ? 1 : 0;
 }
 
-module.exports = { SOURCE, TARGET, HEADER, render };
+module.exports = { FILES, sourceOf, targetOf, SOURCE, TARGET, HEADER, render };
 
 if (require.main === module) process.exitCode = main();

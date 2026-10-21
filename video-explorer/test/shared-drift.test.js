@@ -8,13 +8,33 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { SOURCE, TARGET, render } = require('../tools/sync-shared.js');
+const { FILES, sourceOf, targetOf, render } = require('../tools/sync-shared.js');
 const mobile = path.join(__dirname, '..', 'mobile');
+const skip = !fs.existsSync(mobile) && 'no mobile/ folder';
 
-test('mobile/shared/facets.js matches shared/facets.js', { skip: !fs.existsSync(mobile) && 'no mobile/ folder' }, () => {
-  assert.ok(fs.existsSync(TARGET), 'mobile/shared/facets.js is missing: run node tools/sync-shared.js');
-  assert.strictEqual(fs.readFileSync(TARGET, 'utf8'), render(fs.readFileSync(SOURCE, 'utf8')),
-    'mobile/shared/facets.js is out of date: run node tools/sync-shared.js');
+for (const name of FILES) {
+  test(`mobile/shared/${name} matches shared/${name}`, { skip }, () => {
+    assert.ok(fs.existsSync(targetOf(name)), `mobile/shared/${name} is missing: run node tools/sync-shared.js`);
+    assert.strictEqual(fs.readFileSync(targetOf(name), 'utf8'), render(fs.readFileSync(sourceOf(name), 'utf8'), name),
+      `mobile/shared/${name} is out of date: run node tools/sync-shared.js`);
+  });
+}
+
+test('the phone reads the shared files rather than carrying its own copies', { skip }, () => {
+  const app = fs.readFileSync(path.join(mobile, 'app.js'), 'utf8');
+  const graph = fs.readFileSync(path.join(mobile, 'graph.js'), 'utf8');
+  const html = fs.readFileSync(path.join(mobile, 'index.html'), 'utf8');
+  for (const name of ['RATING_MAX', 'FACE_FLOOR', 'STAR_POINTS', 'TIERS', 'RACES', 'PERSON_FACETS']) {
+    assert.ok(!new RegExp(`^const ${name} = [\\[{0-9'"]`, 'm').test(app), `mobile/app.js declares its own ${name}`);
+  }
+  assert.ok(!/^export function mergeLibraries/m.test(graph), 'mobile/graph.js carries its own mergeLibraries');
+  for (const name of FILES) assert.ok(html.includes(`./shared/${name}`), `mobile/index.html does not load shared/${name}`);
+});
+
+test('the shared merge is what the label store uses', () => {
+  const library = require('../library.js');
+  const shared = require('../shared/merge.js');
+  assert.strictEqual(library.mergeLibraries, shared.mergeLibraries);
 });
 
 test('the shared vocabularies are what the label store accepts', () => {
