@@ -9,6 +9,7 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const zlib = require('zlib');
+const { pipeline } = require('stream');
 
 const { PUBLIC_DIR, SHARED_DIR, PORT } = require('./config');
 
@@ -158,7 +159,12 @@ async function streamVideo(req, res, file) {
       'Content-Length': stat.size,
       'Accept-Ranges': 'bytes',
     });
-    fs.createReadStream(file).pipe(res);
+    // pipeline, not pipe: when the browser drops the request -- every seek
+    // does -- the read stream is destroyed with it, and the file handle goes.
+    // pipe() left it open, which kept OneDrive from freeing the file and made
+    // a move or delete of the video just played fail as "in use". A read error
+    // ends the response instead of landing on the uncaught-exception handler.
+    pipeline(fs.createReadStream(file), res, () => {});
     return;
   }
 
@@ -177,7 +183,7 @@ async function streamVideo(req, res, file) {
     'Content-Length': end - start + 1,
     'Accept-Ranges': 'bytes',
   });
-  fs.createReadStream(file, { start, end }).pipe(res);
+  pipeline(fs.createReadStream(file, { start, end }), res, () => {});
 }
 
 /**

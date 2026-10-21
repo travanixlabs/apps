@@ -120,6 +120,19 @@ test('apply: settled (All profiled) stamps, keeps the record alive, and clears',
   await library.flush();
 });
 
+test('apply: a lazy edit waits, and a prompt one afterwards carries it along', async () => {
+  const { file } = await fresh();
+  library.apply(stat(21), 'lazy.mp4', { addModels: ['Ann'] }, { lazy: true });
+  await sleep(700);
+  assert.ok(!fs.existsSync(file), 'a lazy edit is not on disk after a prompt delay');
+  library.apply(stat(22), 'click.mp4', { rating: 4 });
+  await sleep(700);
+  const out = onDisk(file).records;
+  assert.deepStrictEqual(out['21:1000'].models, ['Ann'], 'the lazy edit rode with the click');
+  assert.strictEqual(out['22:1000'].rating, 4);
+  await library.flush();
+});
+
 test('rekey: the record moves, and the old key is kept as an alias', async () => {
   const { file } = await fresh();
   library.apply(stat(7, 100), 'g.mp4', { rating: 5 });

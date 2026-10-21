@@ -15,6 +15,7 @@ const faces = require('../faces');
 const dupes = require('../dupes');
 const framing = require('../framing');
 const priority = require('../priority');
+const { writeWhole } = require('../write-whole');
 // The same file the page loads as a script. What "matches the advanced
 // filter" means is one definition, not two that would have to agree.
 const filter = require('../public/filter');
@@ -447,7 +448,7 @@ const server = http.createServer(async (req, res) => {
         if (!held.names.some((n) => String(n.name || '').toLowerCase() === name.toLowerCase())) {
           held.names.push({ name, why: 'marked not a performer in the app', when: new Date().toISOString().slice(0, 10) });
           held.updated = new Date().toISOString();
-          await fsp.writeFile(file, JSON.stringify(held, null, 2));
+          await writeWhole(file, JSON.stringify(held, null, 2));
         }
       } catch (err) {
         log(`not-a-performer: could not note "${name}" for the suggester: ${err.message}`);

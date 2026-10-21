@@ -521,13 +521,27 @@ function writeSerial() {
   return writing;
 }
 
-function save() {
+// A burst of clicks lands as one write, this long after the first of them.
+const SAVE_MS = 400;
+// A write nobody is waiting on -- the face sweep crediting a name -- waits far
+// longer: every write re-uploads the whole file to OneDrive, and a night's
+// sweep was a thousand of them. What is pending still lands at shutdown.
+const LAZY_SAVE_MS = 45000;
+let timerDue = 0;
+
+function save(delayMs = SAVE_MS) {
+  const due = Date.now() + delayMs;
+  // Something sooner is already on its way: this rides with it. A click
+  // during a lazy wait pulls the write forward to the click's own delay.
+  if (timer && timerDue <= due) return;
   clearTimeout(timer);
+  timerDue = due;
   timer = setTimeout(() => {
     timer = null;
+    timerDue = 0;
     // A read-only or offline sync folder must not break editing.
     writeSerial().catch(() => {});
-  }, 400);
+  }, delayMs);
 }
 
 /**
@@ -584,7 +598,7 @@ function normaliseTags(tags) {
  * multi-select edit needs — tagging 10 files must not wipe the tags each
  * already has.
  */
-function apply(stat, name, patch) {
+function apply(stat, name, patch, { lazy = false } = {}) {
   refuseIfReadOnly();
   const key = keyFor(stat);
   const current = data.records[key] || { rating: 0, tags: [], models: [], name };
@@ -682,12 +696,12 @@ function apply(stat, name, patch) {
     && !(next.notModels || []).length && !(next.marks || []).length
     && !next.studio && !next.production && !next.url && !next.resume && !next.settled) {
     delete data.records[key];
-    save();
+    save(lazy ? LAZY_SAVE_MS : SAVE_MS);
     return { ...EMPTY };
   }
 
   data.records[key] = next;
-  save();
+  save(lazy ? LAZY_SAVE_MS : SAVE_MS);
   return {
     rating: next.rating || 0,
     tags: next.tags || [],

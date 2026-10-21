@@ -15,6 +15,7 @@ const library = require('../library');
 // The cache-name arithmetic, shared with the headless strip builder so the two
 // cannot drift apart. See strips.js.
 const strips = require('../strips');
+const { writeWhole, writeWholeSync } = require('../write-whole');
 
 const {
   log, exists, loadJsonSync, createLimiter, ffLimit, graphLimit, run,
@@ -39,13 +40,19 @@ let metaDirty = false;
  * session into one write, and the close flushes whatever is left. The cost of
  * losing twenty seconds of it to a hard kill is a few ffprobe calls.
  */
+// One write at a time, and each through a temporary file and a rename: this
+// lives in the sync root, and a kill mid-write left a torn file that OneDrive
+// uploaded and every machine then read as empty.
+let metaWriting = Promise.resolve();
+
 function saveMetaSoon() {
   metaDirty = true;
   if (metaTimer) return;
   metaTimer = setTimeout(() => {
     metaTimer = null;
     metaDirty = false;
-    fsp.writeFile(state.META_FILE, JSON.stringify(metaIndex)).catch(() => {});
+    const body = JSON.stringify(metaIndex);
+    metaWriting = metaWriting.then(() => writeWhole(state.META_FILE, body)).catch(() => {});
   }, 20000);
 }
 
@@ -54,7 +61,7 @@ function flushMeta() {
   clearTimeout(metaTimer);
   metaTimer = null;
   metaDirty = false;
-  try { fs.writeFileSync(state.META_FILE, JSON.stringify(metaIndex)); } catch { /* going down */ }
+  try { writeWholeSync(state.META_FILE, JSON.stringify(metaIndex)); } catch { /* going down */ }
 }
 
 // The sha1-over-the-path name of the pre-rename cache, from strips.js -- the

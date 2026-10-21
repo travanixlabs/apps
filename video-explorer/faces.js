@@ -376,10 +376,8 @@ async function writeSnapshot() {
     // than half of a new one. The vectors land first: a snapshot pointing into
     // a stale .bin is the one combination that must never exist, and the JSON
     // is what makes the pair readable at all.
-    await fsp.writeFile(`${vectorFile()}.tmp`, Buffer.from(flat.buffer, 0, flat.byteLength));
-    await fsp.rename(`${vectorFile()}.tmp`, vectorFile());
-    await fsp.writeFile(`${file}.tmp`, body);
-    await fsp.rename(`${file}.tmp`, file);
+    await writeWhole(vectorFile(), Buffer.from(flat.buffer, 0, flat.byteLength));
+    await writeWhole(file, body);
   } catch { state.snapshotDirty = true; /* a full disk: try again next flush */ }
 }
 
@@ -720,7 +718,7 @@ function autoCredit(next, suggested) {
   try {
     state.library.apply(next.stat, path.basename(next.file), {
       addModels: picks.map((s) => s.name),
-    });
+    }, { lazy: true });
   } catch (err) {
     log(`could not credit ${path.basename(next.file)}: ${err.message}`);
     return;
@@ -1267,12 +1265,17 @@ function castSignature() {
   return `${SCORES_FORMAT}:${state.centroids.size}:${(h >>> 0).toString(36)}`;
 }
 
+// A minute, not five seconds: the file is the whole ranking (28MB for 28k
+// videos), rewritten whole, and every "not her" click and every five-minute
+// rebuild during a sweep was a rewrite. What is pending lands at shutdown.
+const SCORES_WRITE_MS = 60000;
+
 function writeScoresSoon() {
   if (scoresTimer) return;
   scoresTimer = setTimeout(() => {
     scoresTimer = null;
     writeScores().catch(() => {});
-  }, 5000);
+  }, SCORES_WRITE_MS);
   if (scoresTimer.unref) scoresTimer.unref();
 }
 
@@ -1286,10 +1289,9 @@ async function writeScores() {
     await fsp.mkdir(path.dirname(file), { recursive: true });
     const videos = {};
     for (const [key, list] of state.suggestions) videos[key] = list;
-    await fsp.writeFile(`${file}.tmp`, JSON.stringify({
+    await writeWhole(file, JSON.stringify({
       version: VERSION, model: state.index.model, sig: scoredFor, videos,
     }));
-    await fsp.rename(`${file}.tmp`, file);
     return true;
   } catch {
     return false;
