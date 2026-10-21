@@ -2,7 +2,7 @@
   "name": "video-explorer",
   "version": "1.0.0",
   "description": "A local file explorer for MP4 libraries with hover-scrub previews, so you never have to open a video just to see what's in it.",
-  "main": "graph-login.js",
+  "main": "server.js",
   "scripts": {
     "test": "node --test test/*.test.js",
     "start": "node server.js"
@@ -11,6 +11,9 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "onnxruntime-node": "^1.29.0"
   }
