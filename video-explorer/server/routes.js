@@ -217,7 +217,12 @@ const server = http.createServer(async (req, res) => {
           && !(await exists(spriteCachePath(target, stat)))) {
         return sendJson(res, 409, { error: 'cloud-only', cloudOnly: true, size: stat.size });
       }
-      const { file, frames } = await ensureSprite(target, stat);
+      // background: the page building strips ahead of time for tiles that
+      // scrolled past. Nobody is waiting on those, so they must not take the
+      // priority hold -- which parked all three sweeps for every cloud tile
+      // on the way down the page. A hover or the player asks without it.
+      const background = url.searchParams.get('background') === '1';
+      const { file, frames } = await ensureSprite(target, stat, { background });
       const data = await fsp.readFile(file);
       res.writeHead(200, {
         'Content-Type': 'image/jpeg',

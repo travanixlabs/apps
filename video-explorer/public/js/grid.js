@@ -104,6 +104,7 @@ function renderListing() {
   // already in flight lands in the cache and costs the new grid nothing.
   posters.queue.length = 0;
   posters.queued.clear();
+  dropPrebuilds();
   if (gridTailWatcher) gridTailWatcher.disconnect();
   grid.innerHTML = '';
   // Every card it held has just left the page. cardsFor() drops them as it

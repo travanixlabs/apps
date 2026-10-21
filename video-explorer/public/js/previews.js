@@ -124,7 +124,7 @@ function clearSprites() {
  * Resolves to the sprite for a file, sharing a single request when several
  * callers (the observer and a hover) ask for the same file at once.
  */
-function loadSprite(filePath, previewEl) {
+function loadSprite(filePath, previewEl, { background = false } = {}) {
   if (!filePath) return Promise.resolve(null);
 
   const cached = state.sprites.get(filePath);
@@ -172,7 +172,9 @@ function loadSprite(filePath, previewEl) {
     try {
       // Cloud-only files are refused unless we say the user asked for this one.
       const allow = state.cloudOptIn.has(filePath) ? '&allowCloud=1' : '';
-      const res = await fetch(`/api/sprite?path=${encodeURIComponent(filePath)}${allow}`);
+      // A build nobody is waiting on says so, and the sweeps carry on.
+      const quiet = background ? '&background=1' : '';
+      const res = await fetch(`/api/sprite?path=${encodeURIComponent(filePath)}${allow}${quiet}`);
       if (res.status === 409) {
         // Cloud-only and nobody has asked for this one: a refusal, not a
         // failure. Recording it as a failure is what stopped the player ever
@@ -394,6 +396,16 @@ function queuePrebuild(file, urgent = false) {
   runPrebuild();
 }
 
+/**
+ * Leaving the folder: whatever was queued for it is not wanted here. The one
+ * in flight finishes (the server has it either way). What is dropped is
+ * forgotten as "seen" too, so a tile scrolled into view later is queued again.
+ */
+function dropPrebuilds() {
+  for (const file of prebuild.queue) prebuild.seen.delete(file.path);
+  prebuild.queue.length = 0;
+}
+
 async function runPrebuild() {
   if (prebuild.running) return;
   prebuild.running = true;
@@ -403,7 +415,7 @@ async function runPrebuild() {
       // Watching is not required to build it, and building downloads nothing.
       state.cloudOptIn.add(file.path);
       state.failed.delete(file.path);
-      try { await loadSprite(file.path, null); } catch { /* try the next one */ }
+      try { await loadSprite(file.path, null, { background: true }); } catch { /* try the next one */ }
     }
   } finally {
     prebuild.running = false;
