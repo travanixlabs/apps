@@ -14,6 +14,7 @@ const library = require('../library');
 const faces = require('../faces');
 const dupes = require('../dupes');
 const framing = require('../framing');
+const priority = require('../priority');
 // The same file the page loads as a script. What "matches the advanced
 // filter" means is one definition, not two that would have to agree.
 const filter = require('../public/filter');
@@ -114,6 +115,8 @@ const server = http.createServer(async (req, res) => {
         framing: framing.status(),
         // Whether ffmpeg could be started at launch; the page says so once.
         ffmpeg: state.ffmpeg,
+        // Who, if anyone, the sweeps are standing aside for right now.
+        priority: priority.status(),
         // Bumped when a folder is found to have changed underneath a listing
         // that was served from the last walk of it.
         walkVersion: getWalkVersion(),
