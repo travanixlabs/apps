@@ -132,6 +132,8 @@ const server = http.createServer(async (req, res) => {
       if (!dir) return sendJson(res, 200, { dir: '', parent: null, dirs: [], drives: await listDrives() });
       const resolved = path.resolve(dir);
       const parent = path.dirname(resolved);
+      // Browsed to, so it may be chosen as somewhere to move or copy to.
+      state.browsed.add(resolved.toLowerCase());
       return sendJson(res, 200, {
         dir: resolved,
         parent: parent === resolved ? null : parent,

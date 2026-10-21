@@ -120,9 +120,31 @@ function adoptEmbedded(file, stat, meta) {
   log(`adopted embedded tags from ${path.basename(file)}`);
 }
 
+/**
+ * Where a video's bytes are read from. A local file is read as itself. A
+ * cloud-only placeholder is read over HTTPS from its Graph stream and never
+ * opened: touching one byte of a placeholder makes Windows fetch the whole
+ * film. When OneDrive cannot be asked -- signed out, throttled, offline --
+ * that is a refusal, said as 409, and not a fall back to the placeholder: the
+ * fall back is exactly the download the rest of the app is built to avoid,
+ * and it was happening whenever the token had expired.
+ */
+async function cloudSource(file, stat) {
+  if (!isCloudOnly(stat)) return null;
+  const cloud = await graphStreamInfo(file).catch(() => null);
+  if (cloud && cloud.url) return cloud;
+  const err = new Error(`${path.basename(file)} is cloud-only and OneDrive could not be asked for it`
+    + ' -- sign in, or download it first');
+  err.statusCode = 409;
+  err.cloudOnly = true;
+  throw err;
+}
+
 async function getMeta(file, stat) {
   const known = cachedMeta(file, stat);
   if (known) return known;
+  // Outside the try: a refusal is not a probe failure to remember.
+  const cloud = await cloudSource(file, stat);
   let meta;
   try {
     // A cloud file is probed over HTTPS, never through its placeholder:
@@ -130,7 +152,7 @@ async function getMeta(file, stat) {
     // makes Windows fetch the entire video. ffprobe takes a URL exactly as it
     // takes a path. The cache key is still path + size + mtime, none of which
     // change when the file is dehydrated, so this is read once either way.
-    const cloud = isCloudOnly(stat) ? await graphStreamInfo(file).catch(() => null) : null;
+    //
     // Whichever queue matches what the work actually waits on: ffLimit is sized
     // from the core count for local decoding, graphLimit is the network one. A
     // probe over HTTPS in an ffLimit slot would block local thumbnails while it
@@ -417,7 +439,7 @@ async function ensureSprite(file, stat, { background = false } = {}) {
     // the placeholder is what makes Windows download the whole video, so the
     // old path cost a full hydration per preview -- ten times over, in series.
     // Range requests cost a few hundred KB a frame and hydrate nothing.
-    const cloud = isCloudOnly(stat) ? await graphStreamInfo(file).catch(() => null) : null;
+    const cloud = await cloudSource(file, stat);
 
     let duration = 0;
     if (cloud) {
@@ -509,13 +531,16 @@ async function ensureThumb(file, stat) {
 
   return ffLimit(async () => {
     if (await exists(out)) return out;
-    const meta = await getMeta(file, stat);
+    // A cloud file's one frame comes over HTTPS like the strip's ten do; the
+    // placeholder is never opened (see cloudSource).
+    const cloud = await cloudSource(file, stat);
+    const duration = cloud ? (Number(cloud.duration) || 0) : (await getMeta(file, stat)).duration;
     // A quarter in: past titles and fades, still representative.
-    const seek = meta.duration > 0 ? meta.duration * 0.25 : 0;
+    const seek = duration > 0 ? duration * 0.25 : 0;
     await run('ffmpeg', [
       '-hide_banner', '-loglevel', 'error',
       '-ss', seek.toFixed(3),
-      '-i', file,
+      '-i', cloud ? cloud.url : file,
       '-frames:v', '1',
       '-vf', [
         `scale=${tileW}:${tileH}:force_original_aspect_ratio=decrease:flags=fast_bilinear`,
@@ -750,7 +775,7 @@ async function loadMetaIndex() {
 }
 
 module.exports = {
-  flushMeta, adoptEmbedded, getMeta, cacheName, spriteSalt, thumbCachePath,
+  flushMeta, adoptEmbedded, getMeta, cloudSource, cacheName, spriteSalt, thumbCachePath,
   spriteCachePath, countStrips, adoptLegacyCache, writeCacheManifest,
   cachedMeta, ensureSprite, ensureThumb, cachedStripNames, migrateCacheNames,
   tidyCache, migrateCache, clearCache, loadMetaIndex,

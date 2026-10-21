@@ -133,6 +133,9 @@ const state = {
   ONEDRIVE_ROOT: ENV_HOME,
   // Which account's folder we settled on, for the UI to explain itself.
   homeAccount: { email: '', source: 'env', choices: [] },
+  // Folders the picker has opened this session, lower-cased: the one step a
+  // person takes before choosing one as a destination (see fileops).
+  browsed: new Set(),
   // Whether ffmpeg and ffprobe could be started at launch, and if not, why.
   // The sweeps are not started without them -- see server.js -- and the page
   // says what to install.

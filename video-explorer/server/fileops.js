@@ -198,6 +198,35 @@ async function uniqueDestination(dir, base) {
   return candidate;
 }
 
+/**
+ * Where a move or copy may land. The source is held to the opened folders;
+ * the destination to those, the home folder, a recent destination, or a
+ * folder the picker opened this session -- the one explicit step a person
+ * takes before choosing it. Anything else is a path nobody chose in the app.
+ */
+function authoriseDestination(dir) {
+  const resolved = path.resolve(String(dir || ''));
+  const lower = resolved.toLowerCase();
+  const under = (root) => {
+    const r = path.resolve(root).toLowerCase();
+    return lower === r || lower.startsWith(r + path.sep);
+  };
+  const ok = [...(state.config.roots || []), state.config.homeDir].filter(Boolean).some(under)
+    || (state.config.recentDests || []).some((d) => path.resolve(d).toLowerCase() === lower)
+    || (state.browsed && state.browsed.has(lower));
+  if (!ok) {
+    const err = new Error('Destination is not a folder chosen in the app: ' + resolved);
+    err.statusCode = 403;
+    throw err;
+  }
+  return resolved;
+}
+
+/** Different drive: a move is a copy and a delete, so a placeholder would be fetched whole. */
+function differentVolume(a, b) {
+  return path.parse(path.resolve(a)).root.toLowerCase() !== path.parse(path.resolve(b)).root.toLowerCase();
+}
+
 async function moveFile(src, destDir) {
   await fsp.mkdir(destDir, { recursive: true });
   const dest = await uniqueDestination(destDir, path.basename(src));
@@ -283,11 +312,15 @@ async function actOn(body) {
     try {
       if (op === 'move') {
         if (!body.dest) throw new Error('No destination folder given');
-        const destDir = path.resolve(body.dest);
+        const destDir = authoriseDestination(body.dest);
         // Moving into the current folder would mint a "name (2).mp4" duplicate
         // rather than doing nothing, so refuse it outright.
         if (path.dirname(src).toLowerCase() === destDir.toLowerCase()) {
           results.push({ path: src, ok: false, message: 'Already in that folder' });
+        } else if (differentVolume(src, destDir) && (await statWithCloud(src)).cloudOnly) {
+          // Across drives a move copies the bytes, and a placeholder has none
+          // here -- Windows would fetch the whole film first.
+          results.push({ path: src, ok: false, message: 'Cloud-only: it would be downloaded whole. Download it first.' });
         } else {
           const dest = await moveFile(src, destDir);
           rememberDest(path.dirname(dest));
@@ -295,7 +328,12 @@ async function actOn(body) {
         }
       } else if (op === 'copy') {
         if (!body.dest) throw new Error('No destination folder given');
-        const dest = await copyFileTo(src, path.resolve(body.dest));
+        const destDir = authoriseDestination(body.dest);
+        if ((await statWithCloud(src)).cloudOnly) {
+          results.push({ path: src, ok: false, message: 'Cloud-only: it would be downloaded whole. Download it first.' });
+          continue;
+        }
+        const dest = await copyFileTo(src, destDir);
         rememberDest(path.dirname(dest));
         results.push({ path: src, ok: true, dest, message: 'Copied' });
       } else if (op === 'rename') {
@@ -315,5 +353,5 @@ async function actOn(body) {
 }
 
 module.exports = {
-  embedTags, pairCarryOver, carryOver, handleAction,
+  embedTags, pairCarryOver, carryOver, handleAction, authoriseDestination, differentVolume,
 };
