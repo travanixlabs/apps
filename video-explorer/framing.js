@@ -28,7 +28,7 @@ const fsp = fs.promises;
 const path = require('path');
 
 const priority = require('./priority');
-const { skipDir, statAll } = require('./walk-rules');
+const tree = require('./tree');
 // The key every store here agrees on.
 const { keyFor } = require('./shared/facets.js');
 
@@ -137,42 +137,21 @@ async function walkForWork() {
   const found = [];
   let downloaded = 0;
   let framed = 0;
-  const roots = [...new Set([state.homeOf(), ...state.rootsOf()].filter(Boolean))]
-    .map((r) => path.resolve(r));
-
-  const isVideo = (entry) => entry.isFile()
-    && VIDEO_EXT.has(path.extname(entry.name).toLowerCase());
-
-  const walk = async (dir) => {
-    let entries;
-    try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
-    // This folder's videos in one go, then the entries in their own order.
-    const stats = await statAll(entries.filter(isVideo)
-      .map((entry) => path.join(dir, entry.name)));
-    for (const entry of entries) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        if (skipDir(entry.name)) continue;
-        await walk(full);
-        continue;
-      }
-      if (!isVideo(entry)) continue;
-      const stat = stats.get(full);
-      if (!stat) continue;
-      // A placeholder is left to be framed on demand, over HTTPS, as it is
-      // browsed. Reading one here would download it.
-      if (isCloudOnly(stat)) continue;
-      const key = keyFor(stat);
-      if (seen.has(key)) continue;            // the same file reached two ways
-      seen.add(key);
-      downloaded += 1;
-      if (await state.hasStrip(full, stat)) { framed += 1; continue; }
-      if ((state.failures.get(key) || 0) >= MAX_TRIES) continue;
-      found.push({ file: full, stat, key });
-    }
-  };
-
-  for (const root of roots) await walk(root);
+  // The shared walk (tree.js): one walk for all three sweeps and the carry-over.
+  const videos = await tree.videos({ home: state.homeOf(), roots: state.rootsOf() });
+  for (const v of videos) {
+    if (!VIDEO_EXT.has(path.extname(v.path).toLowerCase())) continue;
+    // A placeholder is left to be framed on demand, over HTTPS, as it is
+    // browsed. Reading one here would download it.
+    if (v.cloudOnly) continue;
+    const key = keyFor(v.stat);
+    if (seen.has(key)) continue;            // the same file reached two ways
+    seen.add(key);
+    downloaded += 1;
+    if (await state.hasStrip(v.path, v.stat)) { framed += 1; continue; }
+    if ((state.failures.get(key) || 0) >= MAX_TRIES) continue;
+    found.push({ file: v.path, stat: v.stat, key });
+  }
 
   state.downloaded = downloaded;
   state.framed = framed;

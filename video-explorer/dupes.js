@@ -33,7 +33,7 @@ const os = require('os');
 
 const engine = require('./dupe-engine');
 const priority = require('./priority');
-const { skipDir, statAll } = require('./walk-rules');
+const tree = require('./tree');
 // The key every store here agrees on, shared with the label store and the phone.
 const { keyFor } = require('./shared/facets.js');
 // Written whole or not at all: the digest and the prints live in the sync root.
@@ -399,41 +399,20 @@ const VIDEO_EXT = new Set(['.mp4', '.m4v', '.mov']);
 // other two sweeps. This one used to know THREE never-walk folders to the face
 // sweep's fifteen, which was a difference nobody chose.
 
-/** Every downloaded video under the roots, deepest folder last. */
+/** Every downloaded video under the roots, in directory order. */
 async function walkForWork() {
   const seen = new Set();
   const found = [];
-  const roots = [...new Set([state.homeOf(), ...state.rootsOf()].filter(Boolean))]
-    .map((r) => path.resolve(r));
-
-  const isVideo = (entry) => entry.isFile()
-    && VIDEO_EXT.has(path.extname(entry.name).toLowerCase());
-
-  const walk = async (dir) => {
-    let entries;
-    try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
-    // This folder's videos in one go, then the entries in their own order.
-    const stats = await statAll(entries.filter(isVideo)
-      .map((entry) => path.join(dir, entry.name)));
-    for (const entry of entries) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        if (skipDir(entry.name)) continue;
-        await walk(full);
-        continue;
-      }
-      if (!isVideo(entry)) continue;
-      const stat = stats.get(full);
-      if (!stat) continue;
-      if (isCloudOnly(stat)) continue;
-      const key = keyFor(stat);
-      if (seen.has(key)) continue;             // the same file reached two ways
-      seen.add(key);
-      found.push({ file: full, stat, key });
-    }
-  };
-
-  for (const root of roots) await walk(root);
+  // The shared walk (tree.js): one walk for all three sweeps and the carry-over.
+  const videos = await tree.videos({ home: state.homeOf(), roots: state.rootsOf() });
+  for (const v of videos) {
+    if (!VIDEO_EXT.has(path.extname(v.path).toLowerCase())) continue;
+    if (v.cloudOnly) continue;
+    const key = keyFor(v.stat);
+    if (seen.has(key)) continue;             // the same file reached two ways
+    seen.add(key);
+    found.push({ file: v.path, stat: v.stat, key });
+  }
   return found;
 }
 

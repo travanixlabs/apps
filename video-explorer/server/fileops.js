@@ -20,9 +20,10 @@ const { keyFor } = require('../shared/facets.js');
 
 const { log, exists, ffLimit, run } = require('./util');
 const { authoriseOrThrow, collapseRoots, rememberDest, state } = require('./config');
-const { statWithCloud, collectVideos, recycle } = require('./files');
+const { statWithCloud, recycle } = require('./files');
 const { migrateCache } = require('./cache');
 const { forgetWalks } = require('./walk');
+const tree = require('../tree');
 
 // ------------------------------------------------------- tags into the file
 
@@ -145,10 +146,11 @@ async function carryOver({ dry = false } = {}) {
   carrying = true;
   try {
     const present = new Map();
-    for (const root of collapseRoots([...state.config.roots, state.config.homeDir].filter(Boolean))) {
-      let videos = [];
-      try { videos = await collectVideos(root); } catch { continue; }
-      for (const v of videos) present.set(keyFor(v), v);
+    // The shared walk (tree.js), the same one the sweeps read.
+    const videos = await tree.videos({ home: state.config.homeDir, roots: state.config.roots });
+    for (const v of videos) {
+      const entry = { path: v.path, size: v.stat.size, mtimeMs: v.stat.mtimeMs, cloudOnly: v.cloudOnly };
+      present.set(keyFor(entry), entry);
     }
     if (!present.size) return { moved: 0 };
 
@@ -266,6 +268,7 @@ async function handleAction(body) {
     // And again once it is done: a listing asked for while the Recycle Bin
     // was still working read the folder as it was.
     forgetWalks();
+    tree.invalidate();
   }
 }
 
@@ -276,6 +279,7 @@ async function actOn(body) {
   // Whatever happens below moves or removes files, so every remembered walk is
   // about to describe a folder that no longer looks like that.
   forgetWalks();
+  tree.invalidate();
 
   // Deletes go as one batch through one shell -- see recycle(). Twenty files
   // used to be twenty PowerShell launches in a row.

@@ -16,6 +16,7 @@ const dupes = require('../dupes');
 const framing = require('../framing');
 const priority = require('../priority');
 const { writeWhole } = require('../write-whole');
+const tree = require('../tree');
 // The same file the page loads as a script. What "matches the advanced
 // filter" means is one definition, not two that would have to agree.
 const filter = require('../public/filter');
@@ -118,6 +119,9 @@ const server = http.createServer(async (req, res) => {
         ffmpeg: state.ffmpeg,
         // Who, if anyone, the sweeps are standing aside for right now.
         priority: priority.status(),
+        // The shared library walk the sweeps read: how old, and how many times
+        // the disk has actually been walked this session.
+        tree: tree.status(),
         // Bumped when a folder is found to have changed underneath a listing
         // that was served from the last walk of it.
         walkVersion: getWalkVersion(),

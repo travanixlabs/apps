@@ -47,10 +47,9 @@ const SKIP_DIRS = new Set(['.cache', 'node_modules', 'system volume information'
  * file, so anything that touches pixels must check this first — a 28k-file
  * library is ~4.7TB and would never fit locally.
  */
-function isCloudOnly(stat) {
-  if (!stat.size) return false;
-  return (stat.blocks || 0) * 512 < stat.size * 0.5;
-}
+// One definition, in walk-rules.js, so the shared tree walk agrees with the
+// listing about what a placeholder is.
+const { isCloudOnly } = require('../walk-rules');
 
 async function statWithCloud(file) {
   const stat = await fsp.stat(file);

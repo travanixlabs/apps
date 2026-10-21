@@ -30,7 +30,7 @@ const os = require('os');
 
 const engine = require('./face-engine');
 const priority = require('./priority');
-const { skipDir, statAll } = require('./walk-rules');
+const tree = require('./tree');
 // The key and the suggestion floor, shared with the label store, the filter
 // and the phone.
 const { keyFor, FACE_FLOOR } = require('./shared/facets.js');
@@ -2091,56 +2091,31 @@ async function walkForWork() {
   const onDisk = new Set();
   const paths = new Map();
   const seen = new Set();
-  const visited = new Set();
-
-  const isVideo = (e) => !e.isDirectory() && /\.(mp4|m4v|mov|mkv|webm)$/i.test(e.name);
-
-  async function walk(dir, depth) {
-    let entries;
-    try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
-    // This folder's videos in one go, then the entries in their own order: the
-    // queue has to come out exactly as it did stat'ing them one at a time.
-    const stats = await statAll(entries.filter(isVideo)
-      .map((e) => path.join(dir, e.name)));
-    for (const e of entries) {
-      const full = path.join(dir, e.name);
-      if (e.isDirectory()) {
-        if (depth >= 12 || skipDir(e.name)) continue;
-        // A junction pointing back up its own tree would otherwise recurse for
-        // ever, which is exactly what walking the user profile did.
-        const real = path.resolve(full).toLowerCase();
-        if (visited.has(real)) continue;
-        visited.add(real);
-        await walk(full, depth + 1);
-      } else if (isVideo(e)) {
-        const stat = stats.get(full);
-        if (!stat) continue;
-        const key = keyFor(stat);
-        // Where it is, whether or not it is here. A cloud-only video is never
-        // read -- that would download it -- but not reading one and not knowing
-        // where it lives are different things, and only the first is required.
-        // Most of this library lives in the cloud, so forgetting those
-        // addresses threw away most of what the index could offer.
-        paths.set(key, full);
-        if (isCloudOnly(stat)) continue;
-        onDisk.add(key);
-        if (seen.has(key)) continue;
-        const have = state.index.videos[key];
-        // Read at the current settings: nothing to do. Read at older ones: worth
-        // doing again, but only once everything unread has had its turn.
-        if (have && (have.gen || 0) >= HARVEST_GEN) continue;
-        if ((state.failures.get(key) || 0) >= 2) continue;
-        seen.add(key);
-        work.push({ file: full, stat, key, redo: Boolean(have) });
-      }
-    }
-  }
-
-  for (const root of sweepRoots()) {
-    const real = path.resolve(root).toLowerCase();
-    if (visited.has(real)) continue;
-    visited.add(real);
-    await walk(root, 0);
+  // The shared walk (tree.js), not one of our own: four sweeps each walking
+  // 27,000 files on their own timers was most of the disk's idle work. Its
+  // roots are bounded the way sweepRoots() bounds them.
+  const videos = await tree.videos({ home: state.homeOf ? state.homeOf() : '', roots: state.rootsOf() });
+  for (const v of videos) {
+    if (!/\.(mp4|m4v|mov|mkv|webm)$/i.test(v.path)) continue;
+    const full = v.path;
+    const { stat } = v;
+    const key = keyFor(stat);
+    // Where it is, whether or not it is here. A cloud-only video is never
+    // read -- that would download it -- but not reading one and not knowing
+    // where it lives are different things, and only the first is required.
+    // Most of this library lives in the cloud, so forgetting those
+    // addresses threw away most of what the index could offer.
+    paths.set(key, full);
+    if (v.cloudOnly) continue;
+    onDisk.add(key);
+    if (seen.has(key)) continue;
+    const have = state.index.videos[key];
+    // Read at the current settings: nothing to do. Read at older ones: worth
+    // doing again, but only once everything unread has had its turn.
+    if (have && (have.gen || 0) >= HARVEST_GEN) continue;
+    if ((state.failures.get(key) || 0) >= 2) continue;
+    seen.add(key);
+    work.push({ file: full, stat, key, redo: Boolean(have) });
   }
   state.onDisk = onDisk;
   // Merged, not replaced. The walk skips cloud-only files by design, and a

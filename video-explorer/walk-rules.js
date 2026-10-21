@@ -50,4 +50,13 @@ async function statAll(files) {
   return out;
 }
 
-module.exports = { NEVER_WALK, skipDir, STAT_BATCH, statAll };
+/**
+ * A OneDrive placeholder: a file whose bytes are not here. Windows reports
+ * the allocated size in blocks, and a placeholder has (nearly) none.
+ */
+function isCloudOnly(stat) {
+  if (!stat.size) return false;
+  return (stat.blocks || 0) * 512 < stat.size * 0.5;
+}
+
+module.exports = { NEVER_WALK, skipDir, STAT_BATCH, statAll, isCloudOnly };
