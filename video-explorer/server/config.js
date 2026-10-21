@@ -133,6 +133,10 @@ const state = {
   ONEDRIVE_ROOT: ENV_HOME,
   // Which account's folder we settled on, for the UI to explain itself.
   homeAccount: { email: '', source: 'env', choices: [] },
+  // Whether ffmpeg and ffprobe could be started at launch, and if not, why.
+  // The sweeps are not started without them -- see server.js -- and the page
+  // says what to install.
+  ffmpeg: { ok: true, reason: '' },
 };
 state.META_FILE = path.join(state.CACHE_DIR, 'meta.json');
 

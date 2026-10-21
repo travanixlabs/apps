@@ -99,8 +99,15 @@ function runtimeFrom(err) {
 }
 
 /** Collects a child process's stdout, and never rejects on a non-zero exit. */
+/** The error every reader raises when ffmpeg itself cannot be started. */
+function ffmpegMissing(err) {
+  const out = new Error(`ffmpeg could not be started (${err && err.code ? err.code : err}) -- is it on PATH?`);
+  out.code = 'FFMPEG_MISSING';
+  return out;
+}
+
 function collect(args, { level = 'error' } = {}) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const proc = spawn('ffmpeg', ['-hide_banner', '-loglevel', level, ...args],
       { windowsHide: true });
     // It reads the first fifteen minutes; well past that, it is stuck.
@@ -110,7 +117,10 @@ function collect(args, { level = 'error' } = {}) {
     const err = [];
     proc.stdout.on('data', (c) => out.push(c));
     proc.stderr.on('data', (c) => err.push(c));
-    proc.on('error', () => resolve({ out: Buffer.alloc(0), err: 'ffmpeg not runnable', code: -1 }));
+    // Not an empty result: ffmpeg gone from PATH is indistinguishable from a
+    // silent, faceless film once it has been written down as one, and it
+    // was being written down as one for every video in the library.
+    proc.on('error', (err) => reject(ffmpegMissing(err)));
     proc.on('close', (code) => {
       resolve({ out: Buffer.concat(out), err: Buffer.concat(err).toString(), code });
     });
@@ -551,6 +561,7 @@ module.exports = {
   PICTURE_PASS,
   RUN_PASS,
   fingerprint,
+  ffmpegMissing,
   pack,
   unpack,
   gapsOf,

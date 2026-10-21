@@ -296,12 +296,18 @@ async function loadIndex() {
 
   const snap = await readSnapshot();
   let carried = 0;
+  // Prints with nothing in them -- no runtime, no gaps -- are what a read that
+  // never ran looks like (ffmpeg always reports a duration). Left out of the
+  // index so the video is read again; if it genuinely cannot be, that is
+  // counted as a failure now and nothing is written.
+  let empty = 0;
   const fresh = [];
   for (const name of onDisk) {
     const key = keyFromFileName(name);
     const held = snap && snap[key];
     // The digest may have seeded a stub for this key; the snapshot's row is
     // the real one, exactly as the print's would be.
+    if (held && !held.secs && !(held.gaps || []).length) { empty += 1; continue; }
     if (held) { state.light.set(key, held); carried += 1; } else fresh.push(name);
   }
 
@@ -311,6 +317,7 @@ async function loadIndex() {
     await Promise.all(fresh.slice(i, i + BATCH).map(async (name) => {
       try {
         const row = JSON.parse(await fsp.readFile(path.join(dir, name), 'utf8'));
+        if (!row.secs && !(row.gaps || []).length) { empty += 1; return; }
         state.light.set(keyFromFileName(name), {
           gaps: row.gaps || [],
           secs: row.secs || 0,
@@ -324,7 +331,8 @@ async function loadIndex() {
     }));
   }
   state.ready = true;
-  log(`loaded ${loaded + carried} fingerprints (${carried} from the snapshot)`);
+  log(`loaded ${loaded + carried} fingerprints (${carried} from the snapshot`
+    + `${empty ? `, ${empty} empty ones left out to be read again` : ''})`);
   if (loaded || !snap) { snapshotDirty = true; await writeSnapshot(); }
 }
 
@@ -949,9 +957,17 @@ async function worker() {
       if (!state.startedAt) state.startedAt = Date.now();
       try {
         await profile(next.file, next.stat);
+        state.blocked = '';
         state.sinceMatch += 1;
       } catch (err) {
         if (!err || err.code !== 'NOT_LOCAL') state.failures.add(next.key);
+        if (err && (err.code === 'FFMPEG_MISSING' || err.code === 'ENOENT')) {
+          // Not this video's fault, and not the next one's either: stop, and
+          // say so where the pill can read it. The pill starts it again.
+          state.blocked = err.message;
+          state.enabled = false;
+          log(`stopped: ${err.message}`);
+        }
       }
       state.current = '';
       if (state.sinceMatch >= MATCH_AFTER
@@ -1078,6 +1094,8 @@ function status() {
     available: true,
     ready: state.ready,
     enabled: state.enabled,
+    // Why it stopped on its own, when it did: ffmpeg could not be started.
+    blocked: state.blocked || '',
     running: state.running,
     fingerprinted,
     // The pair that belongs either side of a slash. Fingerprints of freed-up

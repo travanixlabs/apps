@@ -189,6 +189,7 @@ async function frame(next) {
     // The fresh stat goes to the builder too: it decides local-or-cloud from it.
     const now = await stillLocal(next.file, next.stat);
     await state.build(next.file, now);
+    state.blocked = '';
     state.framed += 1;
     state.done += 1;
     state.failures.delete(next.key);
@@ -197,6 +198,13 @@ async function frame(next) {
     // A damaged file, or a seek past the last keyframe. Counted so it is not
     // returned to on every walk for the rest of the session.
     state.failures.set(next.key, (state.failures.get(next.key) || 0) + 1);
+    if (err && (err.code === 'FFMPEG_MISSING' || err.code === 'ENOENT')) {
+      // Not this video's fault, and not the next one's either: stop, and say
+      // so where the pill can read it. The pill starts it again.
+      state.blocked = err.message;
+      state.enabled = false;
+      log(`stopped: ${err.message}`);
+    }
   }
   state.current = '';
 }
@@ -312,6 +320,8 @@ function status() {
   return {
     available: typeof state.build === 'function',
     enabled: state.enabled,
+    // Why it stopped on its own, when it did: ffmpeg could not be started.
+    blocked: state.blocked || '',
     running: state.running,
     walking: state.walking,
     yielding: state.yielding,

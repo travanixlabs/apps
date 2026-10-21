@@ -388,7 +388,7 @@ function meanOf(vectors) {
  */
 function frames(file, opts, onFrame) {
   const { everySeconds, maxFrames } = { ...HARVEST, ...opts };
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const proc = spawn('ffmpeg', [
       '-hide_banner', '-loglevel', 'error',
       '-i', file,
@@ -434,7 +434,13 @@ function frames(file, opts, onFrame) {
         proc.kill(); // enough sampled; stop decoding the rest of the film
       }
     });
-    proc.on('error', () => resolve([]));
+    // A child that could not start is not a film with no faces in it: said
+    // so, rather than filed as faceless and never looked at again.
+    proc.on('error', (err) => {
+      const out = new Error(`ffmpeg could not be started (${err && err.code ? err.code : err}) -- is it on PATH?`);
+      out.code = 'FFMPEG_MISSING';
+      reject(out);
+    });
     proc.on('close', async () => {
       for (let i = 0; i < held.length; i += 1) {
         const frame = held[i];

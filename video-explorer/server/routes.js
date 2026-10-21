@@ -112,6 +112,8 @@ const server = http.createServer(async (req, res) => {
         faces: faces.status(),
         dupes: dupes.status(),
         framing: framing.status(),
+        // Whether ffmpeg could be started at launch; the page says so once.
+        ffmpeg: state.ffmpeg,
         // Bumped when a folder is found to have changed underneath a listing
         // that was served from the last walk of it.
         walkVersion: getWalkVersion(),

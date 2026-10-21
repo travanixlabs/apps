@@ -70,12 +70,16 @@ async function checkFfmpeg() {
   for (const bin of ['ffmpeg', 'ffprobe']) {
     try {
       await run(bin, ['-version']);
-    } catch {
-      log(`WARNING: "${bin}" was not found on PATH. Previews will not generate.`);
-      log('  Install with:  winget install Gyan.FFmpeg');
+    } catch (err) {
+      const reason = `"${bin}" could not be started (${err && err.code ? err.code : err}). `
+        + 'Install it with:  winget install Gyan.FFmpeg  -- then restart the app.';
+      log(`WARNING: ${reason}`);
+      log('  No previews will be made and the three sweeps will not run until then.');
+      state.ffmpeg = { ok: false, reason };
       return false;
     }
   }
+  state.ffmpeg = { ok: true, reason: '' };
   return true;
 }
 
@@ -150,6 +154,12 @@ async function loadCore(mark) {
   await writeCacheManifest();
   await writeColours();
 
+  // Before any sweep is let loose. Without ffmpeg every read came back
+  // empty, and empty was written down as the answer -- a faceless, silent
+  // film -- for every video, into the stores every machine shares.
+  const ffmpegOk = await checkFfmpeg();
+  mark(ffmpegOk ? 'ffmpeg found' : 'ffmpeg MISSING -- sweeps held');
+
   const face = faces.init({
     cacheDir: path.join(path.dirname(state.CACHE_DIR), 'faces'),
     library,
@@ -170,8 +180,12 @@ async function loadCore(mark) {
     log(`familiar faces: models at ${face.modelDir}`);
     // Started at every launch; the pill pauses it. The worker itself waits
     // for the store to finish loading before it queues anything.
-    faces.setEnabled(true);
-    log('familiar faces: sweeping (the pill pauses it)');
+    if (ffmpegOk) {
+      faces.setEnabled(true);
+      log('familiar faces: sweeping (the pill pauses it)');
+    } else {
+      log('familiar faces: not started -- ffmpeg is missing');
+    }
   } else {
     log(`familiar faces: off (${face.reason})`);
   }
@@ -191,6 +205,7 @@ async function loadCore(mark) {
   dupes.loadDigest()
     .then(() => dupes.loadIndex())
     .then(() => {
+      if (!ffmpegOk) { log('duplicates: not started -- ffmpeg is missing'); return; }
       dupes.setEnabled(true);
       log('duplicates: sweeping (the pill pauses it)');
     })
@@ -219,8 +234,12 @@ async function loadCore(mark) {
     roots: () => [...state.config.roots, state.config.homeDir].filter(Boolean),
     home: () => state.config.homeDir || state.ONEDRIVE_ROOT || '',
   });
-  framing.setEnabled(true);
-  log('framing: sweeping (the pill pauses it)');
+  if (ffmpegOk) {
+    framing.setEnabled(true);
+    log('framing: sweeping (the pill pauses it)');
+  } else {
+    log('framing: not started -- ffmpeg is missing');
+  }
 
   // A video that came back under a new modified time keeps what was known
   // about it: shortly after launch, then every ten minutes.
@@ -232,7 +251,6 @@ async function loadCore(mark) {
   mark(`${metaCount} cached metadata entries -- core ready`);
 
   // Housekeeping, behind everything: nothing waits on any of it.
-  checkFfmpeg().catch(() => {});
   setTimeout(() => { migrateCacheNames().catch(() => {}); }, 3000);
   // After the rename pass has had its turn, and well behind everything a
   // person is waiting on: this walks the roots once and then never again.

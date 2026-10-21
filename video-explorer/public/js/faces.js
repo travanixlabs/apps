@@ -1493,6 +1493,22 @@ const POLL_IDLE_MS = 15000;
 const POLL_HIDDEN_MS = 60000;
 let pollTimer = null;
 
+/**
+ * ffmpeg missing, or a sweep that stopped because it could not be started:
+ * said once, as a sticky error, with the install line. Without this a fresh
+ * machine showed a grid of black tiles and three pills reading "paused".
+ */
+let ffmpegWarned = '';
+
+function warnIfFfmpegMissing(all) {
+  if (!all) return;
+  const reason = all.ffmpeg && !all.ffmpeg.ok ? all.ffmpeg.reason
+    : [all.faces, all.dupes, all.framing].map((s) => s && s.blocked).find(Boolean) || '';
+  if (!reason || reason === ffmpegWarned) return;
+  ffmpegWarned = reason;
+  toast(`ffmpeg is not working, so previews and the sweeps are off. ${reason}`, 'err');
+}
+
 function sweepRunning(status) {
   return Boolean(status && (status.running || status.walking || status.counting));
 }
@@ -1506,6 +1522,7 @@ async function pollStatus() {
   faceStatus = all ? all.faces : null;
   dupeStatus = all ? all.dupes : null;
   framingStatus = all ? all.framing : null;
+  warnIfFfmpegMissing(all);
   if (!document.hidden) {
     renderFacePill();
     renderDupePill();

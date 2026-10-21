@@ -2313,6 +2313,7 @@ async function worker() {
       if (!state.startedAt) state.startedAt = Date.now();
       try {
         const entry = await profile(next.file, next.stat, { force: next.redo });
+        state.blocked = '';
         if (!entry.people.length && entry.faces < 2) {
           // Genuinely faceless: a harvest is never cut short any more, so an
           // empty result is the answer rather than an interruption. A second
@@ -2334,6 +2335,13 @@ async function worker() {
         // it for what it is.
         if (!err || err.code !== 'NOT_LOCAL') {
           state.failures.set(next.key, (state.failures.get(next.key) || 0) + 1);
+        }
+        if (err && (err.code === 'FFMPEG_MISSING' || err.code === 'ENOENT')) {
+          // Not this video's fault, and not the next one's either: stop, and
+          // say so where the pill can read it. The pill starts it again.
+          state.blocked = err.message;
+          state.enabled = false;
+          log(`stopped: ${err.message}`);
         }
       }
       state.done += 1;
@@ -2414,6 +2422,8 @@ function status() {
     available: ready,
     reason: engine.available().reason,
     enabled: state.enabled,
+    // Why it stopped on its own, when it did: ffmpeg could not be started.
+    blocked: state.blocked || '',
     running: state.running,
     walking: state.walking,
     current: state.current,
