@@ -388,6 +388,14 @@ async function writeSnapshot() {
  * time.
  */
 async function loadEntries() {
+  // OneDrive conflict copies of the digest ("suggestions-DESKTOP-XYZ.json")
+  // beside it: a stale line of the same answer, rebuilt from the entries
+  // anyway, so dropped rather than left to confuse a reader.
+  try {
+    for (const name of await fsp.readdir(state.dir)) {
+      if (/^(suggestions|lineups)-[^.]+\.json$/i.test(name)) await fsp.unlink(path.join(state.dir, name)).catch(() => {});
+    }
+  } catch { /* no store yet */ }
   const dir = path.join(state.dir, ENTRIES);
   let names;
   try { names = await fsp.readdir(dir); } catch { return; }

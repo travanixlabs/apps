@@ -417,6 +417,24 @@ function wireEvents() {
   }
   player.addEventListener('play', wakeBar);
   player.addEventListener('pause', wakeBar);
+  // A file that will not play -- moved or deleted outside the app, a format
+  // the WebView cannot decode -- opened as a black stage titled "Playing" and
+  // nothing else. Said, on the stage and as an error that stays.
+  const stage = player.closest('.player-stage');
+  player.addEventListener('error', () => {
+    // Clearing the source on close also fires this; that one is not a failure.
+    if (!state.playing || !player.currentSrc) return;
+    const code = player.error ? player.error.code : 0;
+    const why = code === 4 ? 'the file is missing, or not a format that plays here'
+      : code === 3 ? 'the video could not be decoded'
+        : code === 2 ? 'the read was interrupted'
+          : 'it could not be played';
+    if (stage) stage.classList.add('failed');
+    toast(`Could not play ${state.playing.name}: ${why}`, 'err');
+  });
+  for (const type of ['loadedmetadata', 'emptied']) {
+    player.addEventListener(type, () => { if (stage) stage.classList.remove('failed'); });
+  }
   // Autoplay next: on by its bar toggle, and never over a loop -- a loop
   // means "stay here", whatever the toggle says.
   player.addEventListener('ended', () => {
@@ -870,10 +888,26 @@ function onKeyDown(ev) {
  */
 function watchModalFocus() {
   const openers = new Map();
+  // Open dialogs, oldest first. Everything but the newest is inert, and so is
+  // the page behind them all: aria-modal promised that to screen readers, but
+  // Tab still walked out of a dialog into the 27,000 cards beneath it.
+  const open = [];
+  const page = () => ['header.topbar', '#breadcrumb', '#foldersSection', '#scrollArea']
+    .map((sel) => document.querySelector(sel)).filter(Boolean);
+  const syncInert = () => {
+    const top = open[open.length - 1] || null;
+    for (const el of page()) el.inert = Boolean(top);
+    for (const modal of document.querySelectorAll('.modal')) {
+      modal.inert = !modal.hidden && modal !== top;
+    }
+  };
   const observer = new MutationObserver((records) => {
     for (const { target: modal } of records) {
       const card = modal.querySelector('.modal-card');
       if (!card) continue;
+      if (!modal.hidden && !open.includes(modal)) open.push(modal);
+      if (modal.hidden && open.includes(modal)) open.splice(open.indexOf(modal), 1);
+      syncInert();
       if (!modal.hidden && !openers.has(modal)) {
         const from = document.activeElement;
         openers.set(modal, from && from !== document.body ? from : null);

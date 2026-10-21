@@ -190,6 +190,14 @@ function init({ cacheDir, roots = [], home = null }) {
  * videos were in a group.
  */
 async function loadDigest() {
+  // OneDrive conflict copies of the digest ("duplicates-DESKTOP-XYZ.json")
+  // beside it: a stale line of the same answer, rebuilt from the entries
+  // anyway, so dropped rather than left to confuse a reader.
+  try {
+    for (const name of await fsp.readdir(state.dir)) {
+      if (/^duplicates-[^.]+\.json$/i.test(name)) await fsp.unlink(path.join(state.dir, name)).catch(() => {});
+    }
+  } catch { /* no store yet */ }
   try {
     const body = JSON.parse(await fsp.readFile(path.join(state.dir, DIGEST), 'utf8'));
     // A group of one is not a group. A digest written before its last pair was

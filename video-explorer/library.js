@@ -178,6 +178,11 @@ async function init(oneDriveRoot) {
       readOnly = `${path.basename(FILE)} is not valid JSON (${err.message})`;
     }
   }
+  // OneDrive's own conflict copies, made when two machines rewrote the file
+  // inside one sync window: nothing read them, so whatever the losing machine
+  // labelled since its last merge was simply gone. Each is merged in now and
+  // moved aside, so it is read exactly once.
+  if (!readOnly) await adoptForks();
   // A file written before favourites existed has no list; the rest of the module
   // may then assume there is one.
   if (!Array.isArray(data.favourites)) data.favourites = [];
@@ -229,6 +234,54 @@ async function noteStaleTemps() {
 }
 
 const backupDir = () => path.join(path.dirname(FILE), 'backups');
+
+// "library-DESKTOP-Q5R7O53.json": what OneDrive leaves beside the file when
+// another machine's write lost the race. And the two names this module gives
+// a file it refused to read, which belong with the backups rather than beside
+// the live one.
+const FORK_NAME = /^library-[^.]+\.json$/i;
+const REFUSED_NAME = /^library\.(BROKEN|CORRUPT)-.*\.json$/i;
+
+/**
+ * Merges every conflict copy beside the file into what is held, then moves
+ * it under backups/. A union with the newest edit winning: the copy is an
+ * older line of the same library, so the base is taken as empty -- with
+ * ours as the base, every record the copy lacks would read as a deletion.
+ */
+async function adoptForks() {
+  const dir = path.dirname(FILE);
+  let names;
+  try { names = await fsp.readdir(dir); } catch { return 0; }
+  const forks = names.filter((n) => FORK_NAME.test(n) && n.toLowerCase() !== path.basename(FILE).toLowerCase());
+  const refused = names.filter((n) => REFUSED_NAME.test(n));
+  if (!forks.length && !refused.length) return 0;
+  await fsp.mkdir(backupDir(), { recursive: true });
+  let taken = 0;
+  for (const name of forks) {
+    const from = path.join(dir, name);
+    let fork = null;
+    try { fork = JSON.parse(await fsp.readFile(from, 'utf8')); } catch { /* unreadable: kept, below */ }
+    if (fork && fork.records && typeof fork.records === 'object' && !Array.isArray(fork.records)) {
+      const before = Object.keys(data.records).length;
+      const merged = mergeLibraries({ records: {} }, data, fork);
+      const changed = Object.entries(merged.records)
+        .filter(([k, v]) => JSON.stringify(v) !== JSON.stringify(data.records[k])).length;
+      Object.assign(data.records, merged.records);
+      for (const [k, v] of Object.entries(merged)) if (k !== 'records') data[k] = v;
+      log(`library: merged conflict copy ${name} (${Object.keys(fork.records).length} records; `
+        + `${changed} added or newer, ${Object.keys(data.records).length - before} new)`);
+      if (changed) taken += 1;
+    } else {
+      log(`library: conflict copy ${name} could not be read -- kept in backups/`);
+    }
+    await fsp.rename(from, path.join(backupDir(), `fork-${name}`)).catch(() => {});
+  }
+  for (const name of refused) {
+    await fsp.rename(path.join(dir, name), path.join(backupDir(), name)).catch(() => {});
+  }
+  if (taken) save();
+  return taken;
+}
 
 // Ratings run 0 (unrated) to 10 -- RATING_MAX, in shared/facets.js. They ran
 // to 5 until 2026-10-05.

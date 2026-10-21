@@ -133,6 +133,33 @@ test('apply: a lazy edit waits, and a prompt one afterwards carries it along', a
   await library.flush();
 });
 
+test('a OneDrive conflict copy beside the file is merged in once and moved to backups', async () => {
+  const dir = tempDir();
+  const file = path.join(dir, 'library.json');
+  fs.writeFileSync(file, JSON.stringify({ ratingScale: 10, records: {
+    'a:1': { rating: 2, tags: [], models: [], updated: 5 },
+    'b:1': { rating: 8, tags: [], models: [], updated: 9 },
+  } }));
+  // The other machine's line: a newer edit to a, an older one to b, and c.
+  fs.writeFileSync(path.join(dir, 'library-DESKTOP-ABC123.json'), JSON.stringify({ ratingScale: 10, records: {
+    'a:1': { rating: 6, tags: ['x'], models: [], updated: 7 },
+    'b:1': { rating: 1, tags: [], models: [], updated: 3 },
+    'c:1': { rating: 4, tags: [], models: [], updated: 4 },
+  } }));
+  fs.writeFileSync(path.join(dir, 'library.CORRUPT-2026-01-01T00-00.json'), 'garbage');
+  process.env.VIDEO_EXPLORER_LIBRARY = file;
+  await library.init();
+  const all = library.all();
+  assert.strictEqual(all['a:1'].rating, 6, 'the newer edit won');
+  assert.strictEqual(all['b:1'].rating, 8, 'the older one did not');
+  assert.strictEqual(all['c:1'].rating, 4, 'the record only the copy had is kept');
+  assert.ok(!fs.existsSync(path.join(dir, 'library-DESKTOP-ABC123.json')), 'the copy is gone from beside the file');
+  assert.ok(fs.existsSync(path.join(dir, 'backups', 'fork-library-DESKTOP-ABC123.json')), 'and kept under backups');
+  assert.ok(fs.existsSync(path.join(dir, 'backups', 'library.CORRUPT-2026-01-01T00-00.json')), 'as is the refused file');
+  await library.flush();
+  assert.strictEqual(onDisk(file).records['c:1'].rating, 4, 'and written back');
+});
+
 test('rekey: the record moves, and the old key is kept as an alias', async () => {
   const { file } = await fresh();
   library.apply(stat(7, 100), 'g.mp4', { rating: 5 });
