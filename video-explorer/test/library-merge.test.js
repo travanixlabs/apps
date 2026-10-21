@@ -132,3 +132,28 @@ test('a write after another writer changed the file keeps both sides', async () 
   }
   assert.deepStrictEqual(fs.readdirSync(dir).filter((n) => n.endsWith('.writing')), []);
 });
+
+test('mergeLibraries: a record changed on both sides is merged field by field', () => {
+  const base = { records: { a: rec(3, 1, { tags: ['solo'], models: ['Ann'], notModels: [], marks: [{ t: 10, icon: 'star' }], resume: 100 }) } };
+  // Here: a tag added, a name turned down, the resume moved on. Earlier stamp.
+  const ours = { records: { a: rec(3, 5, { tags: ['solo', 'outdoor'], models: ['Ann'], notModels: ['Bea'], marks: [{ t: 10, icon: 'star' }], resume: 250 }) } };
+  // The phone: the rating set, the old tag removed, a bookmark added. Later stamp.
+  const theirs = { records: { a: rec(8, 9, { tags: [], models: ['Ann', 'Cat'], notModels: [], marks: [{ t: 10, icon: 'star' }, { t: 42, icon: 'heart' }], resume: 100 }) } };
+  const out = mergeLibraries(base, ours, theirs).records.a;
+  assert.strictEqual(out.rating, 8, 'the scalar from the later side');
+  assert.deepStrictEqual(out.tags, ['outdoor'], 'our addition kept, their removal honoured');
+  assert.deepStrictEqual(out.models, ['Ann', 'Cat'], 'their addition kept');
+  assert.deepStrictEqual(out.notModels, ['Bea'], 'our refusal kept');
+  assert.deepStrictEqual(out.marks, [{ t: 10, icon: 'star' }, { t: 42, icon: 'heart' }], 'bookmarks by time');
+  assert.strictEqual(out.resume, 250, 'the side that moved the resume point');
+  assert.strictEqual(out.updated, 9, 'the later stamp');
+});
+
+test('mergeLibraries: both moved the resume point -- the one further along; case does not double a tag', () => {
+  const base = { records: { a: rec(3, 1, { tags: ['Solo'], resume: 100 }) } };
+  const ours = { records: { a: rec(3, 2, { tags: ['Solo', 'Night'], resume: 300 }) } };
+  const theirs = { records: { a: rec(3, 2, { tags: ['solo', 'night'], resume: 200 }) } };
+  const out = mergeLibraries(base, ours, theirs).records.a;
+  assert.deepStrictEqual(out.tags, ['Night', 'Solo']);
+  assert.strictEqual(out.resume, 300);
+});
