@@ -39,12 +39,30 @@ function localDay(when) {
   return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
 }
 
+// A day's file stops growing past this. Seven to forty KB is a normal day;
+// a page stuck in a loop, or something hammering the loopback port with
+// refused requests, must not fill the disk before anybody looks.
+const LOG_CAP_BYTES = 50 * 1024 * 1024;
+let logLines = 0;
+let logCapped = '';
+
 function logToFile(text) {
   try {
     if (!logDirReady) { fs.mkdirSync(LOG_DIR, { recursive: true }); logDirReady = true; }
     const now = new Date();
-    fs.appendFileSync(path.join(LOG_DIR, `server-${localDay(now)}.log`),
-      `${now.toISOString()} ${text}\n`);
+    const file = path.join(LOG_DIR, `server-${localDay(now)}.log`);
+    if (logCapped === file) return;
+    logLines += 1;
+    if (logLines % 500 === 0) {
+      let size = 0;
+      try { size = fs.statSync(file).size; } catch { size = 0; }
+      if (size > LOG_CAP_BYTES) {
+        fs.appendFileSync(file, `${now.toISOString()} log capped at ${LOG_CAP_BYTES} bytes for today; nothing more until tomorrow\n`);
+        logCapped = file;
+        return;
+      }
+    }
+    fs.appendFileSync(file, `${now.toISOString()} ${text}\n`);
   } catch { /* a log that cannot be written must not take the server with it */ }
 }
 

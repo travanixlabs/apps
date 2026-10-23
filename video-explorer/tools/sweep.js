@@ -9,6 +9,7 @@
  *   node tools/sweep.js --dry             say what is outstanding, read nothing
  *   node tools/sweep.js --watch           keep watching for new files
  *   node tools/sweep.js --watch --every 5 how many minutes between looks
+ *   node tools/sweep.js --log             also write every line to the daily sweep log
  *
  * The app does this too, but politely: one video at a time on each sweep,
  * because it is a background job competing with somebody browsing. With the app
@@ -29,6 +30,7 @@
  * made, so Ctrl-C loses at most the few in flight, and running it again picks up
  * where this left off.
  */
+const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const fsp = require('fs/promises');
@@ -60,7 +62,22 @@ const EVERY_MS = Math.max(1, Number(flag('every', 10))) * 60 * 1000;
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const now = () => new Date().toTimeString().slice(0, 8);
-const say = (line) => console.log(`${now()}  ${line}`);
+// --log: every line also goes to %LOCALAPPDATA%\video-explorer\logs\sweep-YYYY-MM-DD.log
+// (VIDEO_EXPLORER_LOG_DIR overrides the folder), through the server's own
+// logger, so an overnight run leaves a record without redirecting stdout by
+// hand -- which is what the stale sweep.log.1..9 files beside the native
+// build used to be.
+const LOG = argv.includes('--log');
+const { LOG_DIR } = require('../server/paths');
+function sayToFile(line) {
+  try {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+    const d = new Date();
+    const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    fs.appendFileSync(path.join(LOG_DIR, `sweep-${day}.log`), `${d.toISOString()} ${line}\n`);
+  } catch { /* a log that cannot be written must not stop the sweep */ }
+}
+const say = (line) => { console.log(`${now()}  ${line}`); if (LOG) sayToFile(line); };
 
 /** Is the app listening? Two writers on one store is the thing to avoid. */
 function appIsUp() {

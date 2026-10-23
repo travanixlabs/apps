@@ -5,7 +5,9 @@ have to open a video just to see what's in it.
 
 ## Run it
 
-Double-click `start.cmd`, or from a terminal:
+Double-click `start.cmd` (a console window), `Video Explorer.vbs` (no
+window; `stop.cmd` asks that one to save and stop, since Task Manager would
+not), or from a terminal:
 
 ```
 node server.js
@@ -660,16 +662,26 @@ Optional by construction. Without them the feature reports itself off in the log
 and the rest of the app is untouched.
 
 ```
-npm install                                  # onnxruntime-node
-%LOCALAPPDATA%\video-explorer\face-models\   # yunet.onnx + arcface.onnx
+npm install                                  # onnxruntime-node (CPU only; .npmrc skips the CUDA download)
+node tools\fetch-models.js                   # yunet.onnx + arcface.onnx, into the folder below
+%LOCALAPPDATA%\video-explorer\face-models\   # where they live
 ```
 
 The models live outside the repo and outside the build on purpose: 174MB of
 weights are not source, and they survive a rebuild where a bundled copy would be
-re-copied every time. `VIDEO_EXPLORER_FACE_MODELS` overrides the location. They
-are `yunet.onnx` (the detector, from OpenCV's model zoo) and `arcface.onnx`
-(the w600k_r50 ArcFace recogniser from InsightFace, exported to ONNX); put the
-two files in that folder and restart. Nothing downloads them for you.
+re-copied every time. `VIDEO_EXPLORER_FACE_MODELS` overrides the location.
+`tools/fetch-models.js` downloads them from where they are published and
+checks each against the SHA-256 the app was measured with (`--check` only
+reports; `--dir` puts them elsewhere):
+
+| file | what | from | SHA-256 |
+|---|---|---|---|
+| `yunet.onnx` | the detector: YuNet 2023mar, 232KB | OpenCV's `opencv_zoo`, `models/face_detection_yunet/` | `8f2383e4…2552fa4` |
+| `arcface.onnx` | the recogniser: ArcFace w600k_r50, 174MB | InsightFace's `buffalo_l.zip` (v0.7 release), the one file `w600k_r50.onnx` taken out of the 288MB pack | `4c06341c…619e43` |
+
+A different ArcFace export is not comparable: the index records which model
+built it and the bands were calibrated on this one, so the script refuses a
+file whose hash differs rather than installing it. Restart after fetching.
 
 The index records which recogniser built it. Swap the model and the old vectors
 are **discarded rather than mixed** — two models' vectors are not comparable, and
@@ -832,15 +844,27 @@ server/              the server, one file per concern:
   walk.js            listings and the filtered folder counts
   fileops.js         tags into files, carry-over, move/copy/rename/delete
   http.js            JSON, static files, bodies, streaming, the foreign gate
-  routes.js          every /api route
+  routes.js          the dispatcher: static files, then the API table
+  api/               the /api routes, one file per area: config (settings,
+                     status, log, shutdown), files (folders, scan, actions),
+                     library (labels and people), faces, sweeps, media
+  labels.js          label and performer operations the routes and tools share
+  paths.js           the three per-user folders, each with its reason
 shared/facets.js     races, traits, tiers, rating scale, suggestion floor, the
                      size+mtime key -- loaded by the server, the page and (as a
                      copy made by tools/sync-shared.js) the phone
 shared/merge.js      the three-way library merge, shared the same way
+shared/listing.js    the listing entry's shape: what the server leaves out and
+                     the page puts back
+shared/format.js     bytes, durations, star numbers, which suggested names to
+                     offer -- the page, the server and the phone
 write-whole.js       temp-file-and-rename writes, used by every store
 test/                npm test -- node:test, no dependencies, temp files only
 tools/               sync-shared, sweep (run the sweeps from a terminal),
-                     find-dupes, make-icons, and the cast scrapers
+                     fetch-models, find-dupes, make-icons, and the cast
+                     scrapers (see "Environment variables and tools")
+start.cmd, stop.cmd  a console launch, and the clean stop for the .vbs launch
+Video Explorer.vbs   launch with no console window
 graph.js             Microsoft Graph: cloud thumbnails and streaming URLs
 graph-login.js       one-off device-code sign-in for Graph
 library.js           ratings and tags, keyed by size + modified time
@@ -889,7 +913,7 @@ preview strip decodes the video again, and for one since freed up to the cloud,
 downloads it first.
 
 The ONNX models stay on the machine, in `%LOCALAPPDATA%\video-explorer\face-models`
-— 174MB of weights are a download, not your data.
+— 174MB of weights are a download, not your data (`tools\fetch-models.js`).
 
 Face profiles are **one small file per video** rather than one index. The index
 was rewritten whole after every video: about 25GB of writing across a full sweep
@@ -950,6 +974,51 @@ Three rules now keep that list honest, applied at every startup:
 
 Each of those is logged when it happens, so the list can be read back rather
 than taken on trust.
+
+## Environment variables and tools
+
+Every variable the server reads, in one place (`server/paths.js` holds the
+folders; the rest are read where they are used):
+
+| variable | what |
+|---|---|
+| `PORT` | the port, 4321 by default (`tools/sweep.js` reads `VIDEO_EXPLORER_PORT` for the same thing) |
+| `NO_OPEN=1` | do not open a window at launch (the native host sets it) |
+| `APP_WINDOW=0` | open a plain browser tab instead of an `--app` window |
+| `VIDEO_EXPLORER_CONFIG` | the settings file (the native host points it at `%APPDATA%\Video Explorer\config.json`) |
+| `VIDEO_EXPLORER_LIBRARY` | `library.json`, instead of `<OneDrive>\.video-explorer\library.json` |
+| `VIDEO_EXPLORER_CACHE` | the preview cache, instead of `<OneDrive>\.video-explorer\cache` |
+| `VIDEO_EXPLORER_LOG_DIR` | the daily logs, instead of `%LOCALAPPDATA%\video-explorer\logs` |
+| `VIDEO_EXPLORER_FACE_MODELS` | the face models, instead of `%LOCALAPPDATA%\video-explorer\face-models` |
+| `GRAPH_CLIENT_ID`, `GRAPH_TENANT`, `GRAPH_TOKEN_FILE` | the Graph app registration and where its token is kept |
+| `UV_THREADPOOL_SIZE` | Node's I/O thread pool; the server sets 8 unless it is already set |
+
+The tests set the folder variables to temp folders, so `npm test` touches
+nothing of yours.
+
+The command-line tools, all `node tools\<name>`:
+
+| tool | what |
+|---|---|
+| `sweep.js` | the three sweeps from a terminal with the app closed, harder than the app runs them; `--log` writes a daily `sweep-YYYY-MM-DD.log` beside the server's |
+| `fetch-models.js` | downloads and verifies the two face models |
+| `find-dupes.js` | the duplicate matching alone, with a report |
+| `sync-shared.js` | copies `shared/*.js` into the phone app (`--check` for the test) |
+| `make-icons.js` | redraws the bookmark icons from `tags\` (not in the repo) |
+| `record-overwrites.js` | reads the library's backups for records that changed |
+| `xchina-*.js`, `avjiali-*.mjs`, `japanhdv-cast.mjs`, `studio-credit.mjs` | the cast and studio scrapers, each with its own header |
+
+**Dev mode in a browser.** `node server.js` serves the same page at
+`http://127.0.0.1:4321`, and a normal browser tab works -- the server accepts
+`127.0.0.1:4321` and `localhost:4321` as its own origin. Two differences from
+the packaged app: fullscreen stays inside the tab, and nothing calls
+`/api/shutdown` when the tab closes, so `Ctrl+C` in the terminal (or
+`stop.cmd`) is what writes the stores out. The packaged app has DevTools
+enabled: right-click, Inspect.
+
+**The log** is capped at 50MB a day; past that, nothing more is written until
+the next day's file (a page stuck in a loop, or something hammering the port,
+must not fill the disk).
 
 ## Notes
 

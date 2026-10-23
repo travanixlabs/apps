@@ -9,6 +9,10 @@ avjiali.com/
 tools/manifests/
 # Local settings: the folder you last opened, your card size, your volume.
 config.json
+# The source pictures tools/make-icons.js draws the bookmark icons from: 9MB
+# of PNGs that only the tool reads, and whose output (public/icons/positions)
+# is what the app ships. Kept on disk beside the app, out of history.
+tags/
 # The mobile web app is its own repository with its own remote.
 mobile/
 # onnxruntime, pulled in for familiar faces. 280MB of native binaries for every

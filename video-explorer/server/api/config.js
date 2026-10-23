@@ -70,8 +70,13 @@ module.exports = (flushAll) => [
 
   // The window is closing: everything held in memory goes to disk before the
   // host ends the process, which it does without a signal.
-  ['POST', '/api/shutdown', async ({ res }) => {
+  ['POST', '/api/shutdown', async ({ res, body }) => {
+    const asked = await body().catch(() => ({}));
     await flushAll();
-    return sendJson(res, 200, { ok: true });
+    sendJson(res, 200, { ok: true });
+    // `exit: true` (stop.cmd) ends the process itself once the answer is
+    // out; the native host kills the process after this reply instead.
+    if (asked && asked.exit === true) setTimeout(() => process.exit(0), 150).unref();
+    return undefined;
   }],
 ];

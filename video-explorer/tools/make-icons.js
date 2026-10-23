@@ -23,6 +23,11 @@
  *
  * The id is the NUMBER, which is what makes re-running safe -- an id is what a
  * saved bookmark stores, so it has to survive the artwork being redone.
+ *
+ * tags\ is not in the repository (.gitignore): 9MB of source pictures that
+ * only this tool reads, while the icons it makes are tracked and shipped. A
+ * clone without the folder has every icon it needs and simply cannot redraw
+ * them; the pictures live beside the app on the machine that does.
  */
 const fs = require('fs');
 const path = require('path');
