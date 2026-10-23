@@ -472,6 +472,18 @@ async function ensureSprite(file, stat, { background = false } = {}) {
       if (cloud) {
         extracted = await cloudFrames(cloud.url, duration, frames, tmpDir, vf);
       } else {
+        // One ffmpeg for the whole strip (strips.oneShotArgs); frame by
+        // frame only when a seek finds nothing and the one command fails.
+        try {
+          await run('ffmpeg', strips.oneShotArgs(file, duration, frames, vf, out));
+          const st = await fsp.stat(out).catch(() => null);
+          if (st && st.size > 0) {
+            spriteFrameCount.set(out, frames);
+            await fsp.writeFile(sidecar, JSON.stringify({ frames, tileW, tileH })).catch(() => {});
+            noteStrip(out);
+            return { file: out, frames };
+          }
+        } catch { /* below */ }
         for (let i = 0; i < frames; i += 1) {
           // Even divisions: a 20-minute video split 10 ways gives 2:00, 4:00, …
           // The last is pulled a second short of the end to avoid a black frame.

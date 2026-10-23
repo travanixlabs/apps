@@ -638,6 +638,6 @@ function cropToPng(crop, size = CROP) {
 }
 
 module.exports = {
-  init, available, facesIn, groupFaces, embed, cosine, meanOf,
-  normalise, cropToPng, CROP, CROP_BYTES, HARVEST,
+  init, available, facesIn, groupFaces, embed, cosine,
+  normalise, cropToPng, CROP_BYTES, HARVEST,
 };

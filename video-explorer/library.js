@@ -370,7 +370,7 @@ const sameStamp = (a, b) => Boolean(a && b && a.size === b.size && a.mtimeMs ===
  * Favourites merge by name the same way. The phone carries a copy of this.
  */
 // One copy, shared with the phone: shared/merge.js.
-const { mergeLibraries } = require('./shared/merge.js');
+const { mergeLibraries, mergeRecord } = require('./shared/merge.js');
 
 /**
  * Takes in what another writer put on disk, if anything did.
@@ -788,7 +788,11 @@ function rekey(oldStat, newStat, name) {
   const aliases = [...new Set([from, ...(Array.isArray(record.aliases) ? record.aliases : [])])]
     .filter((k) => k !== to)
     .slice(0, ALIAS_LIMIT);
-  data.records[to] = { ...record, name: name || record.name, updated: Date.now(), aliases };
+  const moved = { ...record, name: name || record.name, updated: Date.now(), aliases };
+  // A record already under the new key -- a second copy of the same bytes --
+  // is merged with, not written over: both are somebody's labels.
+  const held = data.records[to];
+  data.records[to] = held ? mergeRecord({}, moved, held) : moved;
   delete data.records[from];
   save();
 }

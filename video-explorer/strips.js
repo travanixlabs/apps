@@ -104,6 +104,31 @@ function segmentSeek(duration, index, count) {
   return Math.min(at, Math.max(0, duration - 1));
 }
 
+/**
+ * The whole strip from ONE ffmpeg: every seek as its own input (`-ss` before
+ * `-i` is a fast input seek, so each decodes one frame), each letterboxed,
+ * the lot hstacked and written as the strip. The old way was a process per
+ * frame and then a tiling pass -- twelve starts, each re-opening the file,
+ * about a second of launch cost per strip across 77,000 strips.
+ *
+ * A seek past the last keyframe or a damaged region makes the one command
+ * fail, where the per-frame path merely lost a tile; so the caller falls
+ * back to that path when this throws. The arguments are built here so the
+ * two builders cannot drift.
+ */
+function oneShotArgs(input, duration, frames, vf, out) {
+  const args = ['-hide_banner', '-loglevel', 'error'];
+  for (let i = 0; i < frames; i += 1) {
+    args.push('-ss', segmentSeek(duration, i, frames).toFixed(3), '-i', input);
+  }
+  const chains = [];
+  for (let i = 0; i < frames; i += 1) chains.push(`[${i}:v]${vf}[f${i}]`);
+  const inputs = Array.from({ length: frames }, (unused, i) => `[f${i}]`).join('');
+  chains.push(`${inputs}hstack=inputs=${frames}[strip]`);
+  args.push('-filter_complex', chains.join(';'), '-map', '[strip]', '-frames:v', '1', '-q:v', '4', '-y', out);
+  return args;
+}
+
 async function durationOf(file) {
   const { stdout } = await run('ffprobe', [
     '-v', 'error', '-show_entries', 'format=duration', '-of', 'json', file,
@@ -140,6 +165,16 @@ async function build(cacheDir, file, stat, config) {
 
   try {
     const duration = await durationOf(file);
+    // One process for the whole strip, when every seek lands.
+    try {
+      await run('ffmpeg', oneShotArgs(file, duration, frames, vf, out));
+      const st = await fsp.stat(out).catch(() => null);
+      if (st && st.size > 0) {
+        await fsp.writeFile(`${out}.json`,
+          JSON.stringify({ frames, tileW, tileH })).catch(() => {});
+        return { file: out, frames, cached: false };
+      }
+    } catch { /* a seek that found nothing: frame by frame, below */ }
     const got = [];
     for (let i = 0; i < frames; i += 1) {
       const raw = path.join(tmpDir, `raw${i}.jpg`);
@@ -176,16 +211,15 @@ async function build(cacheDir, file, stat, config) {
   }
 }
 
+// Exported: what server/cache.js, framing and tools/sweep.js use.
 module.exports = {
   tileDims,
-  frameCount,
   spriteSalt,
   cacheName,
   legacyKey,
-  spritePath,
   legacySpritePath,
-  adopt,
   has,
   build,
   segmentSeek,
+  oneShotArgs,
 };

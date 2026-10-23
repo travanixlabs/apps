@@ -49,7 +49,7 @@ const SKIP_DIRS = new Set(['.cache', 'node_modules', 'system volume information'
  */
 // One definition, in walk-rules.js, so the shared tree walk agrees with the
 // listing about what a placeholder is.
-const { isCloudOnly } = require('../walk-rules');
+const { isCloudOnly, walkFolders } = require('../walk-rules');
 
 async function statWithCloud(file) {
   const stat = await fsp.stat(file);
@@ -63,68 +63,23 @@ function shouldSkipDir(name) {
 }
 
 /**
- * Sixty-four stats at once, not one. A stat is a round trip into the
- * filesystem, and a scan of the library root makes twenty-seven thousand of
- * them: one at a time that wait dominates the scan, and it dominates it worst
- * exactly when a sweep has the disk busy. Measured on this machine's sweeps,
- * the same batching made an identical walk 2.9x faster.
- */
-const SCAN_STAT_BATCH = 64;
-
-async function statAll(files) {
-  const out = new Map();
-  for (let i = 0; i < files.length; i += SCAN_STAT_BATCH) {
-    const batch = files.slice(i, i + SCAN_STAT_BATCH);
-    const got = await Promise.all(batch.map((f) => fsp.stat(f).catch(() => null)));
-    got.forEach((stat, j) => { if (stat) out.set(batch[j], stat); });
-  }
-  return out;
-}
-
-/**
  * Walks everything under `dir` collecting video paths + cheap stats. No
  * ffprobe here — probing is the expensive step and only the files we
  * actually display get probed.
  */
 async function collectVideos(dir) {
-  const videos = [];
-  const seen = new Set();
-
-  const isVideo = (entry) => entry.isFile()
-    && VIDEO_EXT.has(path.extname(entry.name).toLowerCase());
-
-  async function walk(current, depth) {
-    let entries;
-    try {
-      entries = await fsp.readdir(current, { withFileTypes: true });
-    } catch {
-      return; // unreadable folder — skip rather than abort the whole scan
-    }
-    const stats = await statAll(entries.filter(isVideo)
-      .map((entry) => path.join(current, entry.name)));
-    for (const entry of entries) {
-      const full = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        if (depth >= 12 || shouldSkipDir(entry.name)) continue;
-        const real = path.resolve(full).toLowerCase();
-        if (seen.has(real)) continue; // guard against junction loops
-        seen.add(real);
-        await walk(full, depth + 1);
-      } else if (isVideo(entry)) {
-        const stat = stats.get(full); // vanished between readdir and stat — ignore
-        if (!stat) continue;
-        videos.push({
-          path: full,
-          size: stat.size,
-          mtimeMs: stat.mtimeMs,
-          cloudOnly: isCloudOnly(stat),
-        });
-      }
-    }
-  }
-
-  await walk(dir, 0);
-  return videos;
+  // The shared walker: several folders read at once, results in directory
+  // order (walk-rules.js). This keeps the listing's own skip rules.
+  return walkFolders([dir], {
+    isVideo: (entry) => entry.isFile() && VIDEO_EXT.has(path.extname(entry.name).toLowerCase()),
+    skip: (name, depth) => depth >= 12 || shouldSkipDir(name),
+    describe: (full, stat) => ({
+      path: full,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      cloudOnly: isCloudOnly(stat),
+    }),
+  });
 }
 
 /** Windows Recycle Bin, so a misclick is always recoverable. */

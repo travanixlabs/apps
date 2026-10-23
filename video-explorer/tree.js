@@ -17,7 +17,7 @@
 
 const fsp = require('fs').promises;
 const path = require('path');
-const { skipDir, statAll, isCloudOnly } = require('./walk-rules');
+const { skipDir, walkFolders, isCloudOnly } = require('./walk-rules');
 
 // The union of what any consumer treats as a video; each narrows it itself.
 const EXT = /\.(mp4|m4v|mov|mkv|webm)$/i;
@@ -54,36 +54,20 @@ function boundRoots({ home = '', roots = [] } = {}) {
   return out.filter((r) => !out.some((other) => other !== r && inside(other, r)));
 }
 
-/** Depth first, in directory order, each folder's videos stat'ed together. */
+/**
+ * Depth first, in directory order, each folder's videos stat'ed together --
+ * and several folders read at once (walkFolders in walk-rules.js). The walk
+ * waited on one readdir at a time, so the 64-way stat batching only helped
+ * inside a folder with 64 videos; most folders have a handful.
+ */
 async function walkRoots(roots) {
-  const videos = [];
   const visited = new Set();
-  const isVideo = (e) => e.isFile() && EXT.test(e.name);
-  async function walk(dir, depth) {
-    let entries;
-    try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
-    const stats = await statAll(entries.filter(isVideo).map((e) => path.join(dir, e.name)));
-    for (const e of entries) {
-      const full = path.join(dir, e.name);
-      if (e.isDirectory()) {
-        if (depth >= MAX_DEPTH || skipDir(e.name)) continue;
-        const real = path.resolve(full).toLowerCase();
-        if (visited.has(real)) continue; // a junction pointing back up its own tree
-        visited.add(real);
-        await walk(full, depth + 1);
-      } else if (isVideo(e)) {
-        const stat = stats.get(full);
-        if (!stat) continue; // gone between the readdir and the stat
-        videos.push({ path: full, stat, cloudOnly: isCloudOnly(stat) });
-      }
-    }
-  }
-  for (const root of roots) {
-    const real = path.resolve(root).toLowerCase();
-    if (visited.has(real)) continue;
-    visited.add(real);
-    await walk(root, 0);
-  }
+  const videos = await walkFolders(roots, {
+    isVideo: (e) => e.isFile() && EXT.test(e.name),
+    skip: (name, depth) => depth >= MAX_DEPTH || skipDir(name),
+    visited,
+    describe: (full, stat) => ({ path: full, stat, cloudOnly: isCloudOnly(stat) }),
+  });
   walks += 1;
   return videos;
 }

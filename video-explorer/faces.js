@@ -931,13 +931,6 @@ function centroidWithout(acc, key) {
   return engine.normalise(sum);
 }
 
-function bandFor(score, margin) {
-  for (const b of BANDS) {
-    if (score >= b.score && margin >= b.margin) return b.band;
-  }
-  return '';
-}
-
 /**
  * One video, ranked against every performer.
  *
@@ -945,26 +938,52 @@ function bandFor(score, margin) {
  * suggest two names. Only the winner of each ranking is ever offered: second
  * place is what the margin is measured against, not a second guess.
  */
-function scoreVideo(key, entry, into = state.suggestions) {
+/**
+ * The thread keeps this many names per face (faces-scorer.js TOP_K). The
+ * in-process ranking lists the same many, so a video answered here and one
+ * answered there read the same -- a ninth name at the floor used to appear
+ * from this path only.
+ */
+const TOP_K = 8;
+
+/**
+ * The ranking itself, with nothing of the module's state in it: the faces
+ * of one video against the averages, the leave-one-out rule applied, the
+ * refusals left out, the bands drawn. Exactly what faces-scorer.js computes
+ * over its matrix, and a test holds the two to the same answer.
+ *
+ *   people       [{ vec }] -- one face group each
+ *   centroids    Map name -> { vec, sum, count, keys: Map key -> own vector }
+ *   refused      Set of lower-cased names turned down on this video
+ */
+function rankFaces(key, people, centroids, refused, { bands = BANDS, minVideos = MIN_VIDEOS, topK = TOP_K } = {}) {
   const out = [];
-  // Turned down on this video. Not a candidate at all rather than a candidate
-  // that loses: leaving her in would make her the runner-up the margin is
-  // measured against, and a name you have rejected should not be deciding
-  // whether somebody else is confident enough to suggest.
-  const refused = new Set(state.library ? state.library.notModelsByKey(key) : []);
-  for (const [personIndex, person] of (entry.people || []).entries()) {
+  const floor = Math.min(...bands.map((b) => b.score));
+  const without = (acc) => {
+    const own = acc.keys.get(key);
+    if (!own) return acc.vec;
+    if (acc.count <= minVideos) return null;
+    const sum = Float32Array.from(acc.sum);
+    for (let i = 0; i < sum.length; i += 1) sum[i] -= own[i];
+    return engine.normalise(sum);
+  };
+  const bandOf = (score, margin) => {
+    for (const b of bands) if (score >= b.score && margin >= b.margin) return b.band;
+    return '';
+  };
+  for (const [personIndex, person] of (people || []).entries()) {
     const vec = unpackVector(person.vec);
     const ranked = [];
-    for (const [name, acc] of state.centroids) {
+    for (const [name, acc] of centroids) {
       if (refused.has(name.toLowerCase())) continue;
-      const against = centroidWithout(acc, key);
+      const against = without(acc);
       if (!against) continue;
       ranked.push({ name, score: engine.cosine(vec, against), videos: acc.count });
     }
     if (ranked.length < 2) continue;
     ranked.sort((a, b) => b.score - a.score);
     const margin = ranked[0].score - ranked[1].score;
-    const band = bandFor(ranked[0].score, margin);
+    const band = bandOf(ranked[0].score, margin);
     if (!band) continue;
     // The same performer suggested for two groups is one suggestion, not two.
     if (out.some((s) => s.name === ranked[0].name)) continue;
@@ -980,8 +999,7 @@ function scoreVideo(key, entry, into = state.suggestions) {
     });
     // Everyone else at the floor or above, as the scorer thread does: shown,
     // never credited on their own.
-    const floor = Math.min(...BANDS.map((b) => b.score));
-    for (let i = 1; i < ranked.length && ranked[i].score >= floor; i += 1) {
+    for (let i = 1; i < ranked.length && i < topK && ranked[i].score >= floor; i += 1) {
       if (out.some((s) => s.name === ranked[i].name)) continue;
       out.push({
         name: ranked[i].name,
@@ -999,6 +1017,16 @@ function scoreVideo(key, entry, into = state.suggestions) {
   // name already on it should be the one at the top -- that is the shape of a
   // healthy answer, and it only reads that way if the order is the score.
   out.sort((a, b) => b.score - a.score);
+  return out;
+}
+
+function scoreVideo(key, entry, into = state.suggestions) {
+  // Turned down on this video. Not a candidate at all rather than a candidate
+  // that loses: leaving her in would make her the runner-up the margin is
+  // measured against, and a name you have rejected should not be deciding
+  // whether somebody else is confident enough to suggest.
+  const refused = new Set(state.library ? state.library.notModelsByKey(key) : []);
+  const out = rankFaces(key, entry.people, state.centroids, refused);
   // A one-off score landing while a background re-score is part way through
   // goes into both, so the swap at the end cannot undo it.
   const targets = into === state.suggestions && state.pendingSuggestions
@@ -1225,11 +1253,17 @@ async function rescoreInProcess(run, into) {
   return true;
 }
 
+// Which path answered the last re-score, and how long it took: for
+// /api/status, so a silent fall-back to the in-process path is visible.
+let lastScorer = 'none';
+let lastRescoreMs = 0;
+
 async function rescore(cast) {
   rescoreRun += 1;
   const run = rescoreRun;
   const into = new Map();
   state.pendingSuggestions = into;
+  const began = Date.now();
 
   let done = false;
   if (state.centroids.size && cast && cast.names.length) {
@@ -1246,13 +1280,19 @@ async function rescore(cast) {
         if (entry) scoreVideo(key, entry, into);
       }
       done = true;
+      lastScorer = 'thread';
     }
   } else if (!state.centroids.size) {
     done = true;
+    lastScorer = 'none';
   }
 
-  if (!done && !(await rescoreInProcess(run, into))) return false;
+  if (!done) {
+    lastScorer = 'process';
+    if (!(await rescoreInProcess(run, into))) return false;
+  }
   if (run !== rescoreRun) return false;
+  lastRescoreMs = Date.now() - began;
 
   state.suggestions = into;
   state.pendingSuggestions = null;
@@ -2498,6 +2538,12 @@ function status() {
     remaining: state.walking ? null : state.queue.length,
     performers: state.centroids.size,
     suggestions: state.suggestions.size,
+    // Which path ranked the library last ('thread' or, if the thread was not
+    // to be had, 'process'), how long it took, and which build of the face
+    // matrix it ran over.
+    scorer: lastScorer,
+    rescoreMs: lastRescoreMs,
+    matrixBuild,
     stale,
     covering: sweepRoots(),
     model: engine.available().model,
@@ -2544,9 +2590,10 @@ module.exports = {
   knownKeys, rekey,
   init, start, setEnabled, status, rootsChanged, count, decorate, writeDigest,
   rescoreOne,
-  rankFor,
   lineup, faceImageByKey, standing, similar, bestOf, notePath, forgetPath,
   // The reading order, for checking what a fresh install would do first.
   __queueForTest: walkForWork,
-  faceImage, profile, rebuild, rebuildSoon, flush, keyFor, MIN_VIDEOS,
+  faceImage, profile, rebuild, rebuildSoon, flush, keyFor,
+  // The pure ranking, for the test that holds it to the thread's answer.
+  rankFaces, BANDS, TOP_K,
 };

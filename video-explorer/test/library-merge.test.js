@@ -157,3 +157,36 @@ test('mergeLibraries: both moved the resume point -- the one further along; case
   assert.deepStrictEqual(out.tags, ['Night', 'Solo']);
   assert.strictEqual(out.resume, 300);
 });
+
+test('mergeLibraries: an edit the other side made under a key we rekeyed lands on the new key', () => {
+  // We moved "old" to "new" (tags written into the file); the phone, still
+  // holding "old", rated it meanwhile.
+  const base = { records: { old: rec(0, 1, { tags: ['solo'] }) } };
+  const ours = { records: { new: rec(0, 5, { tags: ['solo', 'night'], aliases: ['old'] }) } };
+  const theirs = { records: { old: rec(8, 9, { tags: ['solo'] }) } };
+  const out = mergeLibraries(base, ours, theirs);
+  assert.ok(!('old' in out.records), 'no orphan under the old key');
+  assert.strictEqual(out.records.new.rating, 8, 'their rating reached the new key');
+  assert.deepStrictEqual(out.records.new.tags, ['night', 'solo'], 'our tag kept');
+  assert.deepStrictEqual(out.records.new.aliases, ['old']);
+  // The other way round: they rekeyed, we edited the old key.
+  const flipped = mergeLibraries(base, theirs, ours);
+  assert.ok(!('old' in flipped.records));
+  assert.strictEqual(flipped.records.new.rating, 8);
+});
+
+test('rekey onto a key that already holds a record merges the two', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 've-rekey-'));
+  dirs.push(dir);
+  process.env.VIDEO_EXPLORER_LIBRARY = path.join(dir, 'library.json');
+  await library.init('');
+  const stat = (size, mtimeMs) => ({ size, mtimeMs });
+  library.apply(stat(7, 100), 'a.mp4', { tags: ['one'], rating: 4 });
+  library.apply(stat(7, 200), 'b.mp4', { tags: ['two'] });
+  library.rekey(stat(7, 100), stat(7, 200), 'b.mp4');
+  const held = library.all()['7:200'];
+  assert.deepStrictEqual(held.tags, ['one', 'two']);
+  assert.strictEqual(held.rating, 4);
+  assert.ok(!library.all()['7:100']);
+  await library.flush();
+});

@@ -164,19 +164,6 @@ function encodeDrivePath(relative) {
 }
 
 /**
- * Thumbnail URLs Microsoft already generated for this file.
- * Returns { small, medium, large } with url/width/height, or null if none.
- */
-async function getThumbnails(absPath, oneDriveRoot) {
-  const relative = toDriveRelative(absPath, oneDriveRoot);
-  if (!relative) throw new Error('file is outside the OneDrive root');
-
-  const data = await graphGet(`/me/drive/root:/${encodeDrivePath(relative)}:/thumbnails`);
-  const set = (data.value && data.value[0]) || null;
-  return set || null;
-}
-
-/**
  * Top-level folders can be your own or shared folders mounted from another
  * account. Shared ones 404 under /me/drive/root:/path and must be addressed
  * through their remoteItem's driveId + itemId, so the mapping is resolved once
@@ -200,10 +187,6 @@ async function getRootMap() {
   }
   rootMap = map;
   return map;
-}
-
-function resetRootMap() {
-  rootMap = null;
 }
 
 /**
@@ -239,23 +222,6 @@ async function itemPathFor(absPath, oneDriveRoot, suffix = '') {
 
 async function thumbnailsPathFor(absPath, oneDriveRoot) {
   return itemPathFor(absPath, oneDriveRoot, '/thumbnails');
-}
-
-/**
- * A short-lived, pre-authenticated URL for the file's bytes. It supports HTTP
- * range requests, so a <video> can stream and seek straight from OneDrive
- * without the local placeholder ever being hydrated.
- *
- * These expire (roughly an hour), so callers should cache with a margin rather
- * than hold one indefinitely.
- */
-async function getDownloadUrl(absPath, oneDriveRoot) {
-  // No $select here: the downloadUrl is an annotation Graph returns by default
-  // and rejects as a select field.
-  const urlPath = await itemPathFor(absPath, oneDriveRoot);
-  if (!urlPath) return null;
-  const item = await graphGet(urlPath);
-  return item['@microsoft.graph.downloadUrl'] || null;
 }
 
 /**
@@ -354,12 +320,10 @@ module.exports = {
   getAccessToken,
   isSignedIn,
   graphGet,
-  getThumbnails,
   fetchThumbnail,
-  getDownloadUrl,
   getStreamInfo,
   getRootMap,
-  resetRootMap,
+  itemPathFor,
   toDriveRelative,
   whoAmI,
   driveInfo,

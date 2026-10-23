@@ -75,4 +75,4 @@ function status() {
   return { holding: held > 0, holds: held, waitingFor: label, sinceMs: since ? Date.now() - since : 0 };
 }
 
-module.exports = { hold, busy, settled, status, MAX_HOLD_MS };
+module.exports = { hold, busy, settled, status };

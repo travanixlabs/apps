@@ -474,21 +474,8 @@ function hydrate(file) {
     state.metaAsked.add(file.path);
     delete file.meta;
   }
-  file.rating = file.rating || 0;
-  file.tags = file.tags || [];
-  file.models = file.models || [];
-  file.notModels = file.notModels || [];
-  file.url = file.url || '';
-  file.marks = file.marks || [];
-  file.resume = file.resume || 0;
-  file.updated = file.updated || 0;
-  file.suggested = file.suggested || [];
-  file.people = file.people || 0;
-  file.profiled = file.profiled || false;
-  file.cloudOnly = file.cloudOnly || false;
-  file.duplicate = file.duplicate || false;
-  file.copies = file.copies || 0;
-  file.dupeKinds = file.dupeKinds || null;
+  // The same list the server slims by: shared/listing.js.
+  fillListing(file);
   searchHay(file);
   return file;
 }

@@ -35,6 +35,9 @@ const { cacheName, spriteSalt, cachedMeta, cachedStripNames } = require('./cache
  * still correct. Skipping them hid the folders that were 100% done.
  */
 function sweepState(video, strips, printsReady) {
+  // What the faces know, kept whole: the listing entry reads the same
+  // answer (filterView) rather than asking twice per video.
+  const faced = faces.decorate(video);
   return {
     framed: strips.has(cacheName(video, spriteSalt())),
     // Only meaningful once the index is in. It is nine thousand small files
@@ -42,7 +45,8 @@ function sweepState(video, strips, printsReady) {
     // otherwise report a fraction of the fingerprints that exist and show it
     // as a half-finished folder rather than as an answer not ready yet.
     printed: printsReady ? dupes.has(dupes.keyFor(video)) : null,
-    profiled: faces.decorate(video).profiled === true,
+    profiled: faced.profiled === true,
+    faced,
   };
 }
 
@@ -75,20 +79,41 @@ async function subfolderEntries(dir) {
   return subs;
 }
 
-async function listSubfolders(dir, videos, strips = new Set()) {
+/**
+ * The videos of a walk, bucketed by the immediate subfolder of `dir` each
+ * sits under (lower-cased name -> indices). One pass over the walk instead
+ * of one per subfolder: at the library root that was folders x 27,000
+ * startsWith tests.
+ */
+function bucketBySubfolder(dir, videos) {
+  const base = path.resolve(dir).toLowerCase() + path.sep;
+  const buckets = new Map();
+  videos.forEach((video, i) => {
+    const lower = path.resolve(video.path).toLowerCase();
+    if (!lower.startsWith(base)) return;
+    const cut = lower.indexOf(path.sep, base.length);
+    if (cut < 0) return; // directly in dir, under no subfolder
+    const name = lower.slice(base.length, cut);
+    let list = buckets.get(name);
+    if (!list) { list = []; buckets.set(name, list); }
+    list.push(i);
+  });
+  return buckets;
+}
+
+async function listSubfolders(dir, videos, strips = new Set(), states = null) {
   const subs = await subfolderEntries(dir);
 
   // Worked out once per video rather than once per (folder, video) pair: the
   // outer loop below already costs folders x videos, and three index lookups
-  // inside it would multiply by that again.
+  // inside it would multiply by that again. The caller may hand the states
+  // in, worked out once for the listing as well.
   const printsReady = dupes.status().ready === true;
-  const done = videos.map((video) => sweepState(video, strips, printsReady));
-  const lowerPath = videos.map((video) => path.resolve(video.path).toLowerCase());
+  const done = states || videos.map((video) => sweepState(video, strips, printsReady));
+  const buckets = bucketBySubfolder(dir, videos);
 
   const folders = [];
   for (const sub of subs) {
-    const prefix = sub.prefix;
-
     let count = 0;
     let cloudCount = 0;
     let totalSize = 0;
@@ -97,8 +122,7 @@ async function listSubfolders(dir, videos, strips = new Set()) {
     let framed = 0;
     let printed = 0;
     let profiled = 0;
-    for (let i = 0; i < videos.length; i += 1) {
-      if (!lowerPath[i].startsWith(prefix)) continue;
+    for (const i of buckets.get(sub.name.toLowerCase()) || []) {
       const video = videos[i];
       count += 1;
       if (video.cloudOnly) cloudCount += 1;
@@ -148,24 +172,26 @@ async function listSubfolders(dir, videos, strips = new Set()) {
  * count is not a listing, and telling the face index that 28,000 videos were
  * just "seen" because a checkbox changed would be a lie it then acts on.
  */
-function filterView(video, strips = null) {
+function filterView(video, strips = null, known = null) {
   return {
     path: video.path,
     size: video.size,
     mtimeMs: video.mtimeMs,
     cloudOnly: video.cloudOnly,
     // Framed and fingerprinted, for the Sync filter -- when the caller has the
-    // cache directory's names in hand, which a listing always does.
-    ...(strips ? {
-      framed: strips.has(cacheName(video, spriteSalt())),
-      printed: dupes.status().ready === true && dupes.has(dupes.keyFor(video)),
-    } : {}),
+    // cache directory's names in hand, which a listing always does. `known`
+    // is the sweep state the folder tally already worked out for this video.
+    ...(known ? { framed: known.framed, printed: known.printed === true }
+      : strips ? {
+        framed: strips.has(cacheName(video, spriteSalt())),
+        printed: dupes.status().ready === true && dupes.has(dupes.keyFor(video)),
+      } : {}),
     // Free: the scan already holds the stat these are keyed by, so ratings and
     // tags arrive with the listing rather than costing a second round trip.
     ...library.decorate(video),
     // Likewise for who the faces look like, so "has a suggestion" is a filter
     // the listing can answer on its own.
-    ...faces.decorate(video),
+    ...(known ? known.faced : faces.decorate(video)),
     // And whether this is one of several copies of the same video.
     ...dupes.decorate(video),
   };
@@ -179,11 +205,8 @@ function filterView(video, strips = null) {
  * fields that are empty. Absent means the default, which the page fills in on
  * arrival, so nothing downstream has to test for missing.
  */
-const LISTING_DEFAULTS = {
-  rating: 0, tags: [], models: [], notModels: [], studio: '', production: '',
-  url: '', marks: [], resume: 0, updated: 0, settled: 0, suggested: [], people: 0,
-  profiled: false, cloudOnly: false, duplicate: false, copies: 0, dupeKinds: null,
-};
+// One list, shared with the page's hydrate: shared/listing.js.
+const { LISTING_DEFAULTS } = require('../shared/listing.js');
 
 function slim(entry) {
   const out = {};
@@ -193,6 +216,8 @@ function slim(entry) {
     const fallback = LISTING_DEFAULTS[key];
     if (Array.isArray(fallback)) { if (value && value.length) out[key] = value; continue; }
     if (fallback === null) { if (value) out[key] = value; continue; }
+    // null is a value in its own right ("not counted yet" for printed), and
+    // is kept; only the default itself is dropped.
     if (value !== fallback) out[key] = value;
   }
   return out;
@@ -253,13 +278,13 @@ function listedSuggestion(s) {
   };
 }
 
-function describeVideo(video, dir, stripSet = null) {
+function describeVideo(video, dir, stripSet = null, known = null) {
   // Every listing teaches the face index where its profiled videos are, which
   // is what lets "more of her" offer a thumbnail you can click. Free: the scan
   // is already holding this stat.
   faces.notePath(video, video.path);
   const meta = knownMeta(video);
-  const entry = filterView(video, stripSet);
+  const entry = filterView(video, stripSet, known);
   if (entry.suggested && entry.suggested.length) {
     entry.suggested = entry.suggested.map(listedSuggestion);
   }
@@ -439,20 +464,24 @@ async function scanDirectory(dir, recursive, includeCloud, fresh = false) {
   const videos = walk.videos;
   lastWalk = { key: walkKey(dir), videos };
   const strips = await cachedStripNames();
-  const folders = await listSubfolders(dir, videos, strips);
+  // Each video's sweep state once, for the folder tally and the entries both.
+  const printsReady = dupes.status().ready === true;
+  const states = videos.map((video) => sweepState(video, strips, printsReady));
+  const folders = await listSubfolders(dir, videos, strips, states);
 
   const target = path.resolve(dir).toLowerCase();
+  const indices = videos.map((unused, i) => i);
   const atThisLevel = recursive
-    ? videos
-    : videos.filter((v) => path.dirname(path.resolve(v.path)).toLowerCase() === target);
+    ? indices
+    : indices.filter((i) => path.dirname(path.resolve(videos[i].path)).toLowerCase() === target);
 
   // Default: list only files actually downloaded to this machine.
-  const shown = includeCloud ? atThisLevel : atThisLevel.filter((v) => !v.cloudOnly);
+  const shown = includeCloud ? atThisLevel : atThisLevel.filter((i) => !videos[i].cloudOnly);
   const cloudHidden = atThisLevel.length - shown.length;
 
   // Deliberately NO ffprobe here. Probing 47 cloud-backed files took 91s and
   // silently downloaded gigabytes. Metadata is fetched per page via /api/meta.
-  const files = shown.map((video) => describeVideo(video, dir, strips));
+  const files = shown.map((i) => describeVideo(videos[i], dir, strips, states[i]));
 
   const cloudBelow = videos.reduce((n, v) => n + (v.cloudOnly ? 1 : 0), 0);
   return {
@@ -475,5 +504,5 @@ const getWalkVersion = () => walkVersion;
 
 module.exports = {
   subfolderEntries, describeVideo, countUnderFolders, walkOf, forgetWalks, listedSuggestion,
-  scanDirectory, getLastWalk, getWalkVersion,
+  scanDirectory, getLastWalk, getWalkVersion, slim,
 };

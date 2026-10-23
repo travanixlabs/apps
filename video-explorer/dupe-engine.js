@@ -551,10 +551,10 @@ const round = (n, places) => {
   return Math.round(n * f) / f;
 };
 
+// Exported: what dupes.js and tools/find-dupes.js use; the arithmetic
+// (bits32, gapsOf, alignSound, popcount) stays private.
 module.exports = {
-  MAX_SHIFT_SEC,
   READ_SECONDS,
-  bits32,
   ENVELOPE_HZ,
   FRAME_EVERY,
   SOUND_PASS,
@@ -564,10 +564,7 @@ module.exports = {
   ffmpegMissing,
   pack,
   unpack,
-  gapsOf,
   longestRun,
-  alignSound,
   alignPicture,
   compare,
-  popcount,
 };
