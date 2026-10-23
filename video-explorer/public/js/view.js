@@ -44,12 +44,7 @@ function favouriteTier(name) {
   return (state.favTiers && state.favTiers.get(key)) || 3;
 }
 
-/** Height, bust and body, per performer, as the server holds them. */
-const TRAITS = {
-  height: ['Tall', 'Average', 'Small'],
-  bust: ['Massive', 'Big', 'Average', 'Small'],
-  body: ['Athletic', 'Tattoos', 'Curvy', 'Average', 'Petite'],
-};
+// Height, bust and body, per performer: TRAITS, from shared/facets.js.
 
 function setTraits(map) {
   state.traits = new Map(Object.entries(map && typeof map === 'object' ? map : {}));
@@ -339,8 +334,7 @@ function applyFilterSort() {
  * a view of what is in front of you, so filtering to one tag should reorder
  * the sections by who is best *in that tag*.
  */
-// Points per rating, unrated to ten stars.
-const STAR_POINTS = [0, 50, 75, 100, 250, 500, 1000, 2500, 5000, 7500, 10000];
+// Points per rating, unrated to ten stars: STAR_POINTS, from shared/facets.js.
 
 /**
  * The current listing, split into one section per performer.
@@ -477,6 +471,11 @@ function orderedModels(names) {
  */
 let elsewhere = { at: 0, files: [] };
 
+/** The copies elsewhere, as another file learned them (the player's delete). */
+function noteOtherCopies(files) {
+  elsewhere = { at: Date.now(), files: files || [] };
+}
+
 async function fetchOtherCopies() {
   try {
     const { files } = await api('/api/dupes/files');
@@ -581,6 +580,11 @@ function viewSignature() {
  * whoever is working down it.
  */
 let heldGroups = null;
+
+/** A new listing is a new order: nothing to hold the sections to. */
+function forgetGroupOrder() {
+  heldGroups = null;
+}
 
 function holdGroupOrder() {
   if (!state.grouped) { heldGroups = null; return; }
@@ -978,8 +982,13 @@ function toggleVolumeMenu(open) {
 // -------------------------------------------------------- advanced filters
 
 // Edited in the dialog and only copied onto state.adv on Apply, so closing
-// without applying changes nothing.
+// without applying changes nothing. Assigned only here: the reset and the
+// reload in other files go through setAdvDraft.
 let advDraft = newAdvFilter();
+
+function setAdvDraft(adv) {
+  advDraft = adv || newAdvFilter();
+}
 
 function openAdvanced() {
   // Every Map copied, not listed by hand. The draft has to be editable without
@@ -1220,15 +1229,6 @@ async function filterByLabel(field, value) {
   await commitFilter();
 }
 
-function chipToggle(label, on, onClick) {
-  const chip = document.createElement('button');
-  chip.type = 'button';
-  chip.className = 'chip' + (on ? ' on' : '');
-  chip.textContent = label;
-  chip.addEventListener('click', onClick);
-  return chip;
-}
-
 /**
  * Three states from one click target: include, exclude, off. A separate
  * "exclude" control would double the width of every row for a choice that is
@@ -1241,6 +1241,10 @@ function chipCycle(label, mode, onClick) {
   chip.title = mode === 'in' ? 'Included — click to exclude'
     : mode === 'out' ? 'Excluded — click to clear'
       : 'Click to include, again to exclude';
+  // The state is a glyph and a colour to the eye; to a screen reader it is
+  // the name. The dialog's match line (#advMatch, live) says the result.
+  const said = typeof label === 'string' ? label : (label.textContent || '');
+  chip.setAttribute('aria-label', `${said}: ${mode === 'in' ? 'included' : mode === 'out' ? 'excluded' : 'off'}`);
   const mark = document.createElement('span');
   mark.className = 'tri-mark';
   mark.textContent = mode === 'in' ? '+' : mode === 'out' ? '−' : '';

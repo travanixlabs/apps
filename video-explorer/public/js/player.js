@@ -67,10 +67,6 @@ async function doAction(op, paths, extra = {}) {
   return results;
 }
 
-function baseName(p) {
-  return String(p).split(/[\\/]/).pop();
-}
-
 /**
  * Delete one copy and the other stops being one.
  *
@@ -110,7 +106,7 @@ async function refreshDupeFlags() {
   }
   // The fetched siblings are the same answer, so keep them rather than asking
   // twice for one deletion.
-  elsewhere = { at: Date.now(), files: members };
+  noteOtherCopies(members);
 }
 
 /**
@@ -132,13 +128,6 @@ function syncHomeFields() {
     $('#homeHint').textContent = 'A fixed folder: the app opens here on launch and the home button goes here, '
       + 'whichever OneDrive account is signed in.';
   }
-}
-
-/** Windows paths compare case-insensitively, and a trailing slash means nothing. */
-function samePath(a, b) {
-  if (!a || !b) return false;
-  const norm = (p) => String(p).replace(/[\\/]+$/, '').toLowerCase();
-  return norm(a) === norm(b);
 }
 
 /** Resolves true only if files were actually recycled. */
@@ -939,18 +928,6 @@ function clearLoop() {
   loop.a = null;
   loop.b = null;
   syncLoopUI();
-}
-
-/**
- * The video the ➡ would play. Used by the end-of-video handover and by the
- * key itself; nothing is offered on screen for it any more.
- */
-function nextUp() {
-  const list = visibleCards();
-  const at = playingAt();
-  if (at < 0 || list.length < 2) return null;
-  const next = list[(at + 1) % list.length];
-  return state.grouped ? next.file : next;
 }
 
 // The up-next card is gone: it sat over the picture while paused and in the

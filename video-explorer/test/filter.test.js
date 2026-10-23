@@ -120,16 +120,14 @@ test('the filter takes its vocabularies from shared/facets.js', () => {
   assert.strictEqual(filter.FACE_FLOOR, facets.FACE_FLOOR);
 });
 
-test('in a page without shared/facets.js, the fallbacks are the same values', () => {
+test('a page without shared/facets.js is refused, not given a second copy of the lists', () => {
   const vm = require('node:vm');
   const fs = require('node:fs');
   const path = require('node:path');
   const page = {};
   vm.createContext(page);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'filter.js'), 'utf8'), page);
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(page.PERSON_FACETS)), JSON.parse(JSON.stringify(facets.PERSON_FACETS)));
-  assert.strictEqual(page.FACE_FLOOR, facets.FACE_FLOOR);
-  assert.deepStrictEqual([...page.RACES], facets.RACES);
+  assert.throws(() => vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'filter.js'), 'utf8'), page),
+    /shared\/facets\.js/);
 });
 
 test('in a page with shared/facets.js loaded first, the filter uses it', () => {

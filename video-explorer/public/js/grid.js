@@ -129,6 +129,7 @@ function renderListing() {
   grid.classList.toggle('avail-mixed', anyCloud && anyLocal);
   syncCardDetails();
   appendPage();
+  syncRovingCard();
 
   updateSelectionBar();
   renderEmptyState();
@@ -261,7 +262,7 @@ function buildDupeDismiss(group) {
       });
       // The endpoint hands back the counts it has just changed, so the pill is
       // right immediately rather than at the next poll.
-      dupeStatus = out.status || dupeStatus;
+      setDupeStatus(out.status);
       await refreshDupeFlags();
       render();
       renderDupePill();
@@ -273,7 +274,7 @@ function buildDupeDismiss(group) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ signature: out.signature }),
           });
-          dupeStatus = back.status || dupeStatus;
+          setDupeStatus(back.status);
           await refreshDupeFlags();
           render();
           renderDupePill();
@@ -345,7 +346,8 @@ function buildGroupHead(group) {
     line.appendChild(heart);
   }
 
-  const name = document.createElement('span');
+  // A heading, so the outline reads h1 app, h2 Videos, h3 each performer.
+  const name = document.createElement('h3');
   name.className = 'group-name';
   name.textContent = group.unnamed ? (group.label || 'Nobody named') : group.name;
   name.title = name.textContent;
@@ -722,19 +724,37 @@ function updateCardMeta(filePath, known) {
   }
 }
 
-function renderEmptyState() {
+/**
+ * The block where the grid would be, when there is none: before any folder
+ * is open (how to start), an open folder with nothing in it, or a folder
+ * that could not be read. Each says its own thing; a failed scan used to
+ * show whatever the previous listing had left there.
+ */
+function renderEmptyState(mode = null) {
   const empty = $('#empty');
-  if (state.files.length || state.folders.length) { empty.hidden = true; return; }
+  const which = mode || (state.dir ? 'empty' : 'onboarding');
+  if (!mode && (state.files.length || state.folders.length)) { empty.hidden = true; return; }
   empty.hidden = false;
-  empty.innerHTML = '<p class="empty-title">Nothing here.</p><p>No videos and no subfolders in this folder.</p>';
+  if (which === 'onboarding') {
+    empty.innerHTML = '<p class="empty-title">Point me at a folder of MP4s.</p>'
+      + '<p>Type or <strong>Browse…</strong> to a path, then press <strong>Open</strong>. '
+      + 'Hover any tile to play through 10 points in the video.</p>';
+  } else if (which === 'error') {
+    empty.innerHTML = '<p class="empty-title">That folder could not be opened.</p>'
+      + '<p>Check the path, or <strong>Browse…</strong> to another one.</p>';
+  } else {
+    empty.innerHTML = '<p class="empty-title">Nothing here.</p><p>No videos and no subfolders in this folder.</p>';
+  }
 }
 
 function buildCard(file, index, group = null, seq = null) {
   const card = document.createElement('article');
   card.className = 'card' + (state.selected.has(file.path) ? ' selected' : '');
   card.dataset.path = file.path;
-  // Reachable by Tab: Enter plays it and Space selects it (see onGridKey).
-  card.tabIndex = 0;
+  // One card at a time is in the Tab order (see rovingCard); the arrows move
+  // between them, Enter plays, Space selects (onGridKey). Every card used to
+  // be a Tab stop, with its quick-bar buttons after it: thousands of stops.
+  card.tabIndex = -1;
   card.setAttribute('aria-label', file.name);
   if (group && group.key != null) card.dataset.group = group.key;
   indexCard(file.path, card);
@@ -957,11 +977,60 @@ function onGridClick(ev) {
  * selects it. Only the card itself -- a key pressed in the rename box or on a
  * quick-bar button inside it is that control's.
  */
+/** The cards on screen, in reading order -- what the arrow keys move over. */
+function tabbableCards() {
+  return [...grid.querySelectorAll('.card')].filter((c) => c.offsetParent !== null);
+}
+
+/** How many cards sit in a row of the grid as it is laid out now. */
+function gridColumns() {
+  const cols = getComputedStyle(grid).gridTemplateColumns.split(' ').filter(Boolean).length;
+  return Math.max(1, cols);
+}
+
+/**
+ * One card carries tabIndex 0 and the rest -1, so Tab enters the grid once
+ * (at the card last used) and leaves it once. Its quick-bar buttons are in
+ * the Tab order only while their card has the focus, so the bar is one stop
+ * inside the card rather than eight stops per tile.
+ */
+function rovingCard(card) {
+  const was = grid.querySelector('.card[tabindex="0"]');
+  if (was && was !== card) {
+    was.tabIndex = -1;
+    for (const b of was.querySelectorAll('.quickbar .qbtn')) b.tabIndex = -1;
+  }
+  if (card) {
+    card.tabIndex = 0;
+    for (const b of card.querySelectorAll('.quickbar .qbtn')) b.tabIndex = 0;
+  }
+}
+
+/** After a render: if no card is in the Tab order, the first one is. */
+function syncRovingCard() {
+  if (grid.querySelector('.card[tabindex="0"]')) return;
+  const first = tabbableCards()[0];
+  if (first) rovingCard(first);
+}
+
 function onGridKey(ev) {
   if (!ev.target.classList || !ev.target.classList.contains('card')) return;
   if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
   const at = cardAt(ev.target);
   if (!at) return;
+  const arrows = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: gridColumns(), ArrowUp: -gridColumns() };
+  if (ev.key in arrows || ev.key === 'Home' || ev.key === 'End') {
+    const cards = tabbableCards();
+    const here = cards.indexOf(ev.target);
+    if (here < 0) return;
+    const next = ev.key === 'Home' ? 0 : ev.key === 'End' ? cards.length - 1
+      : Math.max(0, Math.min(cards.length - 1, here + arrows[ev.key]));
+    ev.preventDefault();
+    ev.stopPropagation();
+    rovingCard(cards[next]);
+    cards[next].focus({ preventScroll: false });
+    return;
+  }
   if (ev.key === 'Enter') {
     ev.preventDefault();
     ev.stopPropagation();
@@ -978,6 +1047,12 @@ function attachGridHandlers() {
   const grid = $('#grid');
   grid.addEventListener('click', onGridClick);
   grid.addEventListener('keydown', onGridKey);
+  // The card the focus lands on -- by click, by arrow, by Shift+Tab back in
+  // -- becomes the one Tab stop.
+  grid.addEventListener('focusin', (ev) => {
+    const card = ev.target instanceof Element ? ev.target.closest('.card') : null;
+    if (card && card.tabIndex !== 0) rovingCard(card);
+  });
   grid.addEventListener('dragstart', (ev) => {
     const at = cardAt(ev.target);
     if (at) cardDragStart(ev, at.file, at.index);
@@ -1075,6 +1150,8 @@ function buildActionButton(action) {
   el.innerHTML = action.icon;
   el.title = action.title;
   el.setAttribute('aria-label', action.title);
+  // In the Tab order only while the card has the focus (see rovingCard).
+  el.tabIndex = -1;
   if (action.href) {
     el.href = action.href;
     el.target = '_blank';

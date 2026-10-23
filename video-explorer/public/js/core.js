@@ -27,6 +27,41 @@ const BY_LETTERS = new Intl.Collator(undefined, { sensitivity: 'base' }).compare
 // NOTHING, SINGLE_VALUED, newAdvFilter, picked, choiceMatch, compileAdvanced,
 // matchesAdvanced.
 
+/**
+ * The page's last line of defence. Inside the native window there is no
+ * console anyone sees, so a throw in a timer or a promise nobody caught
+ * used to vanish: the feature just stopped. Said as an error toast (a few a
+ * minute at most) and sent to the server, whose daily log is where a report
+ * can be read later.
+ */
+const pageErrors = { stamps: [] };
+function reportPageError(what, err) {
+  const message = err && err.message ? err.message : String(err || what);
+  const stack = err && err.stack ? String(err.stack).slice(0, 2000) : '';
+  const now = Date.now();
+  pageErrors.stamps = pageErrors.stamps.filter((t) => now - t < 60000);
+  if (pageErrors.stamps.length >= 3) return;
+  pageErrors.stamps.push(now);
+  try { toast(`${what}: ${message}`, 'err'); } catch { /* before the DOM is up */ }
+  try {
+    fetch('/api/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: `${what}: ${message}`, stack }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch { /* nothing left to do */ }
+}
+window.addEventListener('error', (ev) => {
+  // A resource that failed to load (an image, a script) reports on its own
+  // element and is not a page fault.
+  if (ev.target && ev.target !== window && !(ev.error instanceof Error)) return;
+  reportPageError('Something went wrong', ev.error || ev.message);
+});
+window.addEventListener('unhandledrejection', (ev) => {
+  reportPageError('Something went wrong', ev.reason);
+});
+
 const state = {
   config: {},
   files: [],          // videos shown for the current folder
@@ -186,9 +221,9 @@ const PERSON_ROWS = [
  * puts these back; card size, preview engine and the default folder are
  * preferences and survive it.
  */
-// Ratings run 0 (unrated) to 10. They ran to 5 until 2026-10-05; the
-// library doubled every one of them the first time it was opened after.
-const RATING_MAX = 10;
+// Ratings run 0 (unrated) to RATING_MAX (10, from shared/facets.js). They
+// ran to 5 until 2026-10-05; the library doubled every one of them the first
+// time it was opened after.
 const RATING_VALUES = Array.from({ length: RATING_MAX + 1 }, (_, n) => n);
 
 /** A rating as a filter chip: its stars, half one and all. */
@@ -338,7 +373,7 @@ function resetView() {
   syncGroupButton();
   saveConfig({ ...VIEW_DEFAULTS });
   state.adv = newAdvFilter();
-  advDraft = newAdvFilter();
+  setAdvDraft(newAdvFilter());
   // Chromium restores form values across a reload, so this is cleared rather
   // than assumed empty.
   $('#searchInput').value = '';
@@ -383,13 +418,6 @@ function fmtDuration(seconds) {
   const s = total % 60;
   const pad = (v) => String(v).padStart(2, '0');
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
-}
-
-function fmtDate(ms) {
-  if (!ms) return '—';
-  return new Date(ms).toLocaleString(undefined, {
-    year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit',
-  });
 }
 
 // More than this at once is a wall over the grid; the oldest goes first.
@@ -527,7 +555,7 @@ async function saveConfig(patch) {
 async function scan(dir, { record = true } = {}) {
   const target = (dir || $('#dirInput').value).trim();
   if (!target) { toast('Enter a folder path first', 'err'); return; }
-  heldGroups = null;
+  forgetGroupOrder();
 
   setStatus('Scanning…');
   $('#empty').hidden = true;
@@ -565,7 +593,7 @@ async function scan(dir, { record = true } = {}) {
     if (scrollRoot) scrollRoot.scrollTop = 0;
   } catch (err) {
     setStatus('');
-    $('#empty').hidden = false;
+    renderEmptyState(state.dir ? 'error' : 'onboarding');
     toast(err.message, 'err');
   }
 }
@@ -576,3 +604,75 @@ function navigateTo(dir) {
   scan(dir);
 }
 
+// ------------------------------------------------- helpers other files share
+
+// Here rather than where they are mostly used, so a script loaded earlier
+// never leans on one loaded after it (see the note in index.html).
+
+function modalOpen() {
+  return !$('#playerModal').hidden || !$('#pickerModal').hidden
+    || !$('#settingsModal').hidden || !$('#tagModal').hidden || !$('#advModal').hidden
+    || !$('#faceModal').hidden || !$('#keysModal').hidden;
+}
+/** The cards' detail line, on or off, from the setting. */
+function syncCardDetails() {
+  const grid = $('#grid');
+  if (grid) grid.classList.toggle('no-details', !cardDetailsOn());
+}
+/**
+ * The line under a card's name: when, how sharp, and where. The date is the
+ * file's; the resolution only once a probe has read it; the subfolder only
+ * where there is one to tell apart -- a flattened or recursive listing.
+ */
+function cardMetaText(file) {
+  const info = state.meta.get(file.path) || {};
+  const bits = [];
+  if (file.mtimeMs) {
+    bits.push(new Date(file.mtimeMs).toLocaleDateString('en-GB', {
+      day: 'numeric', month: 'short', year: 'numeric',
+    }));
+  }
+  if (info.width && info.height) {
+    const lines = Math.min(info.width, info.height);
+    bits.push(lines >= 2100 ? '4K' : `${lines}p`);
+  }
+  if (file.relFolder) bits.push(file.relFolder);
+  return bits.join(' · ');
+}
+
+/**
+ * The filter in force, under the search: a chip a facet, each with a cross
+ * that clears just that facet. The dialog is where a filter is built; this is
+ * where you see it, and take a piece of it back, without opening anything.
+ */
+const FACET_NAMES = {
+  tags: 'Tags', ratings: 'Rating', models: 'Models', height: 'Height', bust: 'Bust',
+  body: 'Body', race: 'Race', favourites: 'Favourites', framing: 'Framing',
+  fingerprint: 'Duplicates', profiling: 'Faces', suggestions: 'Suggested',
+  storage: 'Storage', suggestedPct: 'Suggested %', labelledPct: 'Labelled %',
+};
+const NONE_NAMES = {
+  tags: 'no tags', models: 'no models', height: 'no height', bust: 'no bust',
+  body: 'no body', race: 'no race', favourites: 'no favourite',
+};
+
+function facetValueText(facet, value) {
+  if (value === NOTHING) return NONE_NAMES[facet] || 'none';
+  if (facet === 'ratings') return value === 0 ? 'unrated' : `${starsNumber(value)}★`;
+  if (RANGE_FACETS.includes(facet)) return `${String(value).replace('-', '–')}%`;
+  const row = CHOICE_ROWS.find(([, f]) => f === facet);
+  if (row) {
+    const found = row[2].find(([v]) => v === value);
+    return found ? found[1] : String(value);
+  }
+  return String(value);
+}
+function baseName(p) {
+  return String(p).split(/[\\/]/).pop();
+}
+/** Windows paths compare case-insensitively, and a trailing slash means nothing. */
+function samePath(a, b) {
+  if (!a || !b) return false;
+  const norm = (p) => String(p).replace(/[\\/]+$/, '').toLowerCase();
+  return norm(a) === norm(b);
+}

@@ -17,16 +17,17 @@
  */
 (function (root, build) {
   // The fixed vocabularies come from shared/facets.js. Under Node that is a
-  // require; on a page it is whatever that script left as globals, when the
-  // page loaded it first. A page that did not gets the copies written below,
-  // which are the same values -- so this file works with or without it while
-  // the page catches up.
+  // require; on a page it is what that script left as globals, so the page
+  // must load it first -- and says so if it did not, rather than carrying a
+  // second copy of every list that would drift.
   let shared = null;
   if (typeof module === 'object' && module.exports && typeof require === 'function') {
     shared = require('../shared/facets.js');
   } else if (root && Array.isArray(root.RACES) && root.PERSON_FACETS
     && typeof root.FACE_FLOOR === 'number') {
     shared = root;
+  } else {
+    throw new Error('filter.js needs shared/facets.js loaded before it');
   }
   const api = build(shared);
   if (typeof module === 'object' && module.exports) module.exports = api;
@@ -45,7 +46,7 @@
    * It lives here rather than in the page because the server loads this file
    * too, and one number in one place is the whole point of the arrangement.
    */
-  const FACE_FLOOR = shared ? shared.FACE_FLOOR : 0.20;
+  const FACE_FLOOR = shared.FACE_FLOOR;
 
   /**
    * The one-question facets, each answer a predicate.
@@ -142,7 +143,7 @@
    * video credited to her carries it. A video has as many races as it has
    * labelled performers, so it is matched like a tag list, not one value.
    */
-  const RACES = shared ? shared.RACES : ['Asian', 'Black', 'White', 'Other'];
+  const RACES = shared.RACES;
 
   /** The races a video carries, from its credited performers, in RACES order. */
   function racesOf(file, ctx) {
@@ -154,13 +155,7 @@
    * and how much of a favourite she is. A video carries whatever its credited
    * performers have, so each is matched like a tag list, in dialog order.
    */
-  const PERSON_FACETS = shared ? shared.PERSON_FACETS : {
-    height: ['Tall', 'Average', 'Small'],
-    bust: ['Massive', 'Big', 'Average', 'Small'],
-    body: ['Athletic', 'Tattoos', 'Curvy', 'Average', 'Petite'],
-    race: RACES,
-    favourites: ['Tier 1', 'Tier 2', 'Tier 3', 'Tier 4', 'Tier 5'],
-  };
+  const PERSON_FACETS = shared.PERSON_FACETS;
   const PERSON_FIELDS = Object.keys(PERSON_FACETS);
 
   /**

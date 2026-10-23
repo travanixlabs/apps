@@ -49,7 +49,6 @@
         <option value="tags">Tag</option>
         <option value="relFolder">Folder</option>
       </select>
-      <button id="sortDirBtn" hidden></button>
     </div>
 
 
@@ -79,9 +78,9 @@
     <div class="menu-host">
       <button id="volBtn" class="btn btn-icon" title="Volume">
         <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-          <path id="volCone" d="M2.5 6h2L7.5 3.4v9.2L4.5 10h-2z" fill="currentColor"/>
+          <path d="M2.5 6h2L7.5 3.4v9.2L4.5 10h-2z" fill="currentColor"/>
           <g id="volWaves" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
-            <path id="volWave1" d="M9.8 6.1a2.7 2.7 0 0 1 0 3.8"/>
+            <path d="M9.8 6.1a2.7 2.7 0 0 1 0 3.8"/>
             <path id="volWave2" d="M11.6 4.4a5.2 5.2 0 0 1 0 7.2"/>
           </g>
           <!-- display, not `hidden`: SVG elements ignore the HTML hidden attribute. -->
@@ -128,7 +127,7 @@
     <button id="facesPill" class="faces-pill" hidden>
       <span class="faces-dot"></span><span id="facesText">faces</span>
     </button>
-    <span id="status" class="status"></span>
+    <span id="status" class="status" aria-live="polite"></span>
   </div>
 
   <!-- The filter in force, a chip a facet, each one clearing its own. Hidden
@@ -451,7 +450,7 @@
   <div class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="advTitle">
     <header class="modal-head">
       <h2 id="advTitle">Advanced filters</h2>
-      <span id="advMatch" class="adv-match"></span>
+      <span id="advMatch" class="adv-match" aria-live="polite"></span>
       <button class="btn btn-icon modal-close" aria-label="Close">✕</button>
     </header>
     <p class="adv-legend">Click a chip once to require it, again to exclude it, again to clear.</p>
@@ -571,10 +570,10 @@
         <div class="sync-row"><span class="sync-name">Framing</span>
           <div id="advFraming" class="chip-row"></div>
           <button class="linkish" data-clear="framing">Clear</button></div>
-        <div class="sync-row"><span class="sync-name">Fingerprints</span>
+        <div class="sync-row"><span class="sync-name">Duplicates</span>
           <div id="advFingerprint" class="chip-row"></div>
           <button class="linkish" data-clear="fingerprint">Clear</button></div>
-        <div class="sync-row"><span class="sync-name">Profiling</span>
+        <div class="sync-row"><span class="sync-name">Faces</span>
           <div id="advProfiling" class="chip-row"></div>
           <button class="linkish" data-clear="profiling">Clear</button></div>
         <div class="sync-row"><span class="sync-name">Models suggested</span>
@@ -778,7 +777,9 @@
       <section class="keys-group">
         <h3 class="settings-head settings-head-first">Grid</h3>
         <dl class="keys-list">
-          <dt><kbd>Tab</kbd></dt><dd>Move between cards</dd>
+          <dt><kbd>Tab</kbd></dt><dd>Into the grid, then the focused card's buttons</dd>
+          <dt><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Move between cards</dd>
+          <dt><kbd>Home</kbd> <kbd>End</kbd></dt><dd>First, last card</dd>
           <dt><kbd>Enter</kbd></dt><dd>Play the focused card</dd>
           <dt><kbd>Space</kbd></dt><dd>Select the focused card</dd>
           <dt><kbd>/</kbd></dt><dd>Search</dd>
@@ -844,8 +845,10 @@
 <script src="/shared/listing.js"></script>
 <script src="/filter.js"></script>
 <!-- The page script, one file per concern. Classic scripts sharing one global
-     scope, so the order matters: each may only use, while it loads, what the
-     ones before it define. main.js is last and is the one that calls init(). -->
+     scope, so the order matters AT LOAD TIME: a top-level statement may only
+     use what the scripts before it defined. Functions call across files
+     freely once everything is loaded; the helpers several files share live
+     in core.js. main.js is last and is the one that calls init(). -->
 <script src="/js/core.js"></script>
 <script src="/js/nav.js"></script>
 <script src="/js/view.js"></script>

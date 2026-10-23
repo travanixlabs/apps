@@ -2,7 +2,22 @@
 
 // ---------------------------------------------------------------- listeners
 
+/**
+ * Every listener on the page, one function per region of it. They were one
+ * 600-line function; splitting it changed no behaviour, only where a thing
+ * is found. init() calls wireEvents(), which calls each in turn.
+ */
 function wireEvents() {
+  wireToolbar();
+  wireDialogs();
+  wireFaces();
+  wireSettings();
+  wirePlayer();
+  wireChrome();
+}
+
+/** The toolbar and the grid chrome: open, search, sort, volume, tile size. */
+function wireToolbar() {
   $('#scanBtn').addEventListener('click', () => scan());
   $('#dirInput').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') scan(); });
   $('#recursiveToggle').addEventListener('change', () => scan());
@@ -136,7 +151,10 @@ function wireEvents() {
     $('#dwellLabel').textContent = (Number(ev.target.value) / 1000).toFixed(1) + 's';
   });
   $('#dwellMs').addEventListener('change', (ev) => saveConfig({ dwellMs: Number(ev.target.value) }));
+}
 
+/** The dialogs: batch actions, the tag editor, the folder picker, the advanced filter. */
+function wireDialogs() {
   // batch actions
   for (const btn of document.querySelectorAll('[data-batch]')) {
     btn.addEventListener('click', () => {
@@ -224,7 +242,10 @@ function wireEvents() {
       renderAdvanced();
     });
   }
+}
 
+/** Familiar faces: the sweep pills, the hover card, the lineup dialog, the status poll. */
+function wireFaces() {
   $('#facesPill').addEventListener('click', toggleFaceSweep);
   $('#dupesPill').addEventListener('click', toggleDupeSweep);
   $('#framingPill').addEventListener('click', toggleFramingSweep);
@@ -250,6 +271,21 @@ function wireEvents() {
   hoverCard.addEventListener('mouseenter', () => clearTimeout(hover.out));
   hoverCard.addEventListener('mouseleave', () => {
     hover.out = setTimeout(closeFaceHover, HOVER_OUT_MS);
+  });
+  // The keyboard, too: focus inside the card keeps it open, and it closes
+  // once the focus has gone somewhere else. The chip's blur used to start
+  // the timer before Tab could reach the card's buttons.
+  hoverCard.addEventListener('focusin', () => clearTimeout(hover.out));
+  hoverCard.addEventListener('focusout', (ev) => {
+    if (ev.relatedTarget instanceof Element && hoverCard.contains(ev.relatedTarget)) return;
+    hover.out = setTimeout(closeFaceHover, HOVER_OUT_MS);
+  });
+  hoverCard.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    ev.stopPropagation();
+    const back = hover.anchor;
+    closeFaceHover();
+    if (back && back.isConnected) back.focus();
   });
   $('#faceHoverNo').addEventListener('click', () => {
     if (!hover.held) return;
@@ -278,7 +314,10 @@ function wireEvents() {
     clearTimeout(pollTimer);
     pollStatus();
   });
+}
 
+/** Settings: the group menu, the settings dialog and its fields, labels and colours. */
+function wireSettings() {
   // settings
   $('#groupBtn').addEventListener('click', (ev) => {
     ev.stopPropagation();
@@ -389,7 +428,10 @@ function wireEvents() {
       toast(err.message, 'err');
     }
   });
+}
 
+/** The player: the stage, the control bar, scrubbing and bookmarks. */
+function wirePlayer() {
   // player
   // The preview itself is what you click to start watching. Guarded on the
   // preview still running: afterwards the element belongs to the native
@@ -596,7 +638,10 @@ function wireEvents() {
   // Leaving fullscreen any way at all -- Escape, the button, the OS -- has to
   // put the bar back where it belongs.
   document.addEventListener('fullscreenchange', syncFullscreen);
+}
 
+/** Modal chrome, the keyboard, the mouse's side buttons. */
+function wireChrome() {
   // modal chrome
   for (const btn of document.querySelectorAll('.modal-close')) {
     btn.addEventListener('click', () => {
@@ -637,12 +682,6 @@ function isTyping() {
   const el = document.activeElement;
   if (!el) return false;
   return el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
-}
-
-function modalOpen() {
-  return !$('#playerModal').hidden || !$('#pickerModal').hidden
-    || !$('#settingsModal').hidden || !$('#tagModal').hidden || !$('#advModal').hidden
-    || !$('#faceModal').hidden || !$('#keysModal').hidden;
 }
 
 /**
@@ -974,61 +1013,6 @@ async function setCardDetails(on) {
   syncCardDetails();
 }
 
-/** The cards' detail line, on or off, from the setting. */
-function syncCardDetails() {
-  const grid = $('#grid');
-  if (grid) grid.classList.toggle('no-details', !cardDetailsOn());
-}
-
-/**
- * The line under a card's name: when, how sharp, and where. The date is the
- * file's; the resolution only once a probe has read it; the subfolder only
- * where there is one to tell apart -- a flattened or recursive listing.
- */
-function cardMetaText(file) {
-  const info = state.meta.get(file.path) || {};
-  const bits = [];
-  if (file.mtimeMs) {
-    bits.push(new Date(file.mtimeMs).toLocaleDateString('en-GB', {
-      day: 'numeric', month: 'short', year: 'numeric',
-    }));
-  }
-  if (info.width && info.height) {
-    const lines = Math.min(info.width, info.height);
-    bits.push(lines >= 2100 ? '4K' : `${lines}p`);
-  }
-  if (file.relFolder) bits.push(file.relFolder);
-  return bits.join(' · ');
-}
-
-/**
- * The filter in force, under the search: a chip a facet, each with a cross
- * that clears just that facet. The dialog is where a filter is built; this is
- * where you see it, and take a piece of it back, without opening anything.
- */
-const FACET_NAMES = {
-  tags: 'Tags', ratings: 'Rating', models: 'Models', height: 'Height', bust: 'Bust',
-  body: 'Body', race: 'Race', favourites: 'Favourites', framing: 'Framing',
-  fingerprint: 'Fingerprints', profiling: 'Profiling', suggestions: 'Suggested',
-  storage: 'Storage', suggestedPct: 'Suggested %', labelledPct: 'Labelled %',
-};
-const NONE_NAMES = {
-  tags: 'no tags', models: 'no models', height: 'no height', bust: 'no bust',
-  body: 'no body', race: 'no race', favourites: 'no favourite',
-};
-
-function facetValueText(facet, value) {
-  if (value === NOTHING) return NONE_NAMES[facet] || 'none';
-  if (facet === 'ratings') return value === 0 ? 'unrated' : `${starsNumber(value)}★`;
-  if (RANGE_FACETS.includes(facet)) return `${String(value).replace('-', '–')}%`;
-  const row = CHOICE_ROWS.find(([, f]) => f === facet);
-  if (row) {
-    const found = row[2].find(([v]) => v === value);
-    return found ? found[1] : String(value);
-  }
-  return String(value);
-}
-
 function renderActiveFilters() {
   const host = $('#activeFilters');
   if (!host) return;
@@ -1139,7 +1123,7 @@ async function init() {
     resetView();
   } else if (kept) {
     state.adv = unpackFilter(kept.adv);
-    advDraft = unpackFilter(kept.adv);
+    setAdvDraft(unpackFilter(kept.adv));
     $('#searchInput').value = typeof kept.search === 'string' ? kept.search : '';
     syncAdvBadge();
   }

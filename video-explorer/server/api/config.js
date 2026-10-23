@@ -13,6 +13,7 @@ const { userSettings, saveConfigSoon, applyHomeDir, state } = require('../config
 const { writeCacheManifest } = require('../cache');
 const { getWalkVersion } = require('../walk');
 const { sendJson } = require('../http');
+const { log } = require('../util');
 
 const withAccount = () => ({ ...state.config, homeAccount: state.homeAccount });
 
@@ -56,6 +57,16 @@ module.exports = (flushAll) => [
     // that was served from the last walk of it.
     walkVersion: getWalkVersion(),
   })],
+
+  // A fault the page caught (window.onerror, an unhandled rejection), into
+  // the daily log: the native window has no console anyone reads.
+  ['POST', '/api/log', async ({ res, body }) => {
+    const asked = await body();
+    const message = String(asked.message || '').slice(0, 2000);
+    const stack = String(asked.stack || '').slice(0, 2000);
+    if (message) log(`page: ${message}${stack ? '\n' + stack : ''}`);
+    return sendJson(res, 200, { ok: true });
+  }],
 
   // The window is closing: everything held in memory goes to disk before the
   // host ends the process, which it does without a signal.

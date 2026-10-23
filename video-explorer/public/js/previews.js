@@ -549,6 +549,9 @@ function startLive(previewEl, file) {
   };
   video.src = `/api/video?path=${encodeURIComponent(file.path)}`;
 
+  // Reduced motion: the first segment plays where the pointer is, and the
+  // tile does not cycle through the rest on its own.
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
   live.timer = setInterval(
     () => show((live.index + 1) % count),
     Number(state.config.dwellMs) || 2000,

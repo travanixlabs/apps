@@ -208,6 +208,17 @@ function attachFaceHover(chip, file, sug) {
     openFaceHover(chip, file, sug);
   });
   chip.addEventListener('blur', () => { hover.out = setTimeout(closeFaceHover, HOVER_OUT_MS); });
+  // Down arrow from the chip lands on the card's first button, so turning a
+  // name down is reachable without the pointer; Escape puts the chip back.
+  chip.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'ArrowDown') return;
+    const card = $('#faceHover');
+    if (!card || card.hidden) return;
+    ev.preventDefault();
+    clearTimeout(hover.out);
+    const no = $('#faceHoverNo');
+    if (no) no.focus();
+  });
 }
 
 async function openFaceHover(anchor, file, sug) {
@@ -217,6 +228,7 @@ async function openFaceHover(anchor, file, sug) {
   const token = {};
   hover.token = token;
   hover.held = { file, sug };
+  hover.anchor = anchor;
   // The margin and the runner-up are not in the listing; asked for here.
   sug = await fullSuggestion(file, sug);
   if (hover.token !== token) return;
@@ -1720,6 +1732,11 @@ async function toggleFramingSweep() {
 }
 
 let dupeStatus = null;
+
+/** The duplicates pill's numbers, from a reply that just changed them. */
+function setDupeStatus(status) {
+  if (status) dupeStatus = status;
+}
 
 function renderDupePill() {
   const pill = $('#dupesPill');

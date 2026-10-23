@@ -285,10 +285,6 @@ function draftDrop(field, name) {
   labelDraft[field] = labelDraft[field].filter((t) => t.toLowerCase() !== name.toLowerCase());
 }
 
-function parseTags(text) {
-  return text.split(',').map((t) => t.trim()).filter(Boolean);
-}
-
 /**
  * One dialog, two sections. They were separate dialogs reached from separate
  * buttons, which meant naming a performer and tagging the same video was two
@@ -440,51 +436,5 @@ async function commitTags(mode) {
   toast(mode === 'add'
     ? `Added ${say(tags.length, 'tag')} and ${say(models.length, 'model')} to ${videos}`
     : `Tags and models set on ${videos}`, 'ok');
-}
-
-/**
- * The other direction: push the sidecar into the files themselves. This
- * rewrites each container, so it warns with the real byte count first and
- * refuses cloud-only files rather than downloading them.
- */
-async function embedSelection() {
-  const files = state.files.filter((f) => state.selected.has(f.path));
-  const local = files.filter((f) => !f.cloudOnly);
-  const cloud = files.length - local.length;
-  const tagged = local.filter((f) => f.rating || (f.tags || []).length);
-
-  if (!tagged.length) {
-    toast(cloud ? `Nothing to write — ${cloud} are cloud-only` : 'None of these have a rating or tags yet', 'err');
-    return;
-  }
-
-  const bytes = tagged.reduce((n, f) => n + f.size, 0);
-  const warning = `Write ratings and tags into ${tagged.length} video${tagged.length === 1 ? '' : 's'}?\n\n`
-    + `Each file is rebuilt to carry the tags, so ${fmtBytes(bytes)} gets rewritten and re-uploaded to OneDrive.\n`
-    + 'Previews are carried over, not rebuilt.'
-    + (cloud ? `\n\n${cloud} cloud-only file${cloud === 1 ? '' : 's'} will be skipped.` : '');
-  if (!window.confirm(warning)) return;
-
-  setStatus(`Writing tags into ${tagged.length} file${tagged.length === 1 ? '' : 's'}…`);
-  try {
-    const data = await api('/api/library/embed', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paths: tagged.map((f) => f.path) }),
-    });
-    const ok = data.results.filter((r) => r.ok);
-    const failed = data.results.filter((r) => !r.ok);
-    for (const result of ok) {
-      const file = fileAt(result.path);
-      if (file) file.size = result.size; // the file grew by the tag block
-    }
-    toast(failed.length
-      ? `Wrote ${ok.length}, failed ${failed.length}: ${failed[0].error}`
-      : `Wrote tags into ${ok.length} file${ok.length === 1 ? '' : 's'}`, failed.length ? 'err' : 'ok');
-    render();
-  } catch (err) {
-    toast(err.message, 'err');
-  }
-  updateStatusLine();
 }
 
