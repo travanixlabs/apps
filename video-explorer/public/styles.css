@@ -3971,3 +3971,11 @@ body.dragging .card { cursor: grabbing; }
 /* At home the grid holds the two rows, which carry their own headings. */
 #filesSection.home-mode > .section-head { display: none; }
 #filesSection.home-mode .grid { gap: 18px; }
+
+/* Folded wins over every layout of the band, the home one included: the home
+   grid rule above sets display and would otherwise draw the cards anyway. */
+.folders-pane.collapsed .folder-grid,
+.folders-pane.home.collapsed .folder-grid,
+.folders-pane.expanded.collapsed .folder-grid { display: none; }
+/* Folded at home with nothing else listed, the pane is one line, not the window. */
+.folders-pane.expanded.collapsed { flex: 0 0 auto; }
