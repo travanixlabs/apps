@@ -148,6 +148,7 @@ function renderListing() {
  * folder, and only once the listing there (which is folders) is drawn.
  */
 let homeRowsToken = 0;
+let homeRowsTries = 0;
 
 function atHome() {
   return Boolean(state.dir && state.config.homeDir && samePath(state.config.homeDir, state.dir));
@@ -165,6 +166,14 @@ async function renderHomeRows() {
   } catch { return; }
   // The folder changed while the rows were coming.
   if (mine !== homeRowsToken || !atHome()) return;
+  // Nothing yet is usually the face index still reading back where every
+  // video is, in the first seconds after launch: ask again a few times.
+  if (!rows.opened.length && !rows.labelled.length) {
+    homeRowsTries += 1;
+    if (homeRowsTries <= 6) setTimeout(() => { if (mine === homeRowsToken) renderHomeRows(); }, 5000);
+    return;
+  }
+  homeRowsTries = 0;
   const n = (x) => x.toLocaleString();
   const section = (title, lead, files, kind) => {
     if (!files.length) return;
