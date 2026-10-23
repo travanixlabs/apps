@@ -128,6 +128,11 @@ test('a page without shared/facets.js is refused, not given a second copy of the
   vm.createContext(page);
   assert.throws(() => vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'filter.js'), 'utf8'), page),
     /shared\/facets\.js/);
+  // With the vocabularies but not the helpers: refused as well.
+  const half = Object.assign({}, require('../shared/facets.js'));
+  vm.createContext(half);
+  assert.throws(() => vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'filter.js'), 'utf8'), half),
+    /shared\/format\.js/);
 });
 
 test('in a page with shared/facets.js loaded first, the filter uses it', () => {
@@ -137,6 +142,7 @@ test('in a page with shared/facets.js loaded first, the filter uses it', () => {
   const page = {};
   vm.createContext(page);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'shared', 'facets.js'), 'utf8'), page);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'shared', 'format.js'), 'utf8'), page);
   const theirs = page.PERSON_FACETS;
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'filter.js'), 'utf8'), page);
   assert.strictEqual(page.PERSON_FACETS, theirs);

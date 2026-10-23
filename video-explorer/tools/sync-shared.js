@@ -19,7 +19,7 @@ const path = require('path');
 
 const APP = path.resolve(__dirname, '..');
 // Every file the phone carries a copy of. Add to this list, never to mobile/.
-const FILES = ['facets.js', 'merge.js'];
+const FILES = ['facets.js', 'merge.js', 'format.js'];
 const sourceOf = (name) => path.join(APP, 'shared', name);
 const targetOf = (name) => path.join(APP, 'mobile', 'shared', name);
 // Kept for anything still naming the first of them.

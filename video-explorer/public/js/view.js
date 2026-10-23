@@ -353,14 +353,13 @@ function applyFilterSort() {
  * less the names turned down on that video.
  */
 function suggestedNames(file) {
-  const refused = new Set((file.notModels || []).map((n) => String(n).toLowerCase()));
-  // Pending only: a name already credited has been dealt with, so it goes too.
-  const credited = groupOnly.suggested
-    ? new Set((file.models || []).map((n) => String(n).toLowerCase())) : new Set();
-  return (file.suggested || [])
-    .filter((s) => s.score >= FACE_FLOOR && !refused.has(String(s.name).toLowerCase())
-      && !credited.has(String(s.name).toLowerCase()))
-    .map((s) => s.name);
+  // The one rule (shared/format.js), the phone's too. Pending only: a name
+  // already credited has been dealt with, so it goes when the box says so.
+  return globalThis.suggestedNames(file.suggested, {
+    floor: FACE_FLOOR,
+    refused: file.notModels,
+    credited: groupOnly.suggested ? file.models : [],
+  });
 }
 
 /**

@@ -28,6 +28,13 @@ test('the phone reads the shared files rather than carrying its own copies', { s
     assert.ok(!new RegExp(`^const ${name} = [\\[{0-9'"]`, 'm').test(app), `mobile/app.js declares its own ${name}`);
   }
   assert.ok(!/^export function mergeLibraries/m.test(graph), 'mobile/graph.js carries its own mergeLibraries');
+  for (const name of ['fmtBytes', 'fmtDuration', 'starsNumber', 'fmtTime']) {
+    assert.ok(!new RegExp(`^function ${name}\\(`, 'm').test(app), `mobile/app.js declares its own ${name}`);
+  }
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'core.js'), 'utf8');
+  for (const name of ['fmtBytes', 'fmtDuration', 'starsNumber']) {
+    assert.ok(!new RegExp(`^function ${name}\\(`, 'm').test(page), `public/js/core.js declares its own ${name}`);
+  }
   for (const name of FILES) assert.ok(html.includes(`./shared/${name}`), `mobile/index.html does not load shared/${name}`);
 });
 

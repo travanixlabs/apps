@@ -29,12 +29,15 @@
   } else {
     throw new Error('filter.js needs shared/facets.js loaded before it');
   }
-  const api = build(shared);
+  const format = (typeof module === 'object' && module.exports && typeof require === 'function')
+    ? require('../shared/format.js') : root;
+  if (typeof format.suggestedNames !== 'function') throw new Error('filter.js needs shared/format.js loaded before it');
+  const api = build(shared, format);
   if (typeof module === 'object' && module.exports) module.exports = api;
   // A classic script: the page reads these as globals, exactly as it did when
   // they were declared at the top of app.js.
   else Object.assign(root, api);
-}(typeof globalThis !== 'undefined' ? globalThis : this, function (shared) {
+}(typeof globalThis !== 'undefined' ? globalThis : this, function (shared, format) {
 
   /**
    * Nothing under a fifth is offered. Half and up is credited on its own when a
@@ -72,12 +75,9 @@
   };
 
   function pendingSuggestions(f) {
-    const done = new Set([...(f.models || []), ...(f.notModels || [])].map((n) => String(n).toLowerCase()));
-    let n = 0;
-    for (const s of f.suggested || []) {
-      if (s.score >= FACE_FLOOR && !done.has(String(s.name).toLowerCase())) n += 1;
-    }
-    return n;
+    // The names still waiting: at the floor, neither credited nor refused.
+    // One rule, in shared/format.js, for the page, the server and the phone.
+    return format.suggestedNames(f.suggested, { floor: FACE_FLOOR, refused: f.notModels, credited: f.models }).length;
   }
 
   const CHOICE_FACETS = Object.keys(CHOICES);

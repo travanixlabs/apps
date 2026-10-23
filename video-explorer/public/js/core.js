@@ -337,10 +337,8 @@ function starsNode(rating) {
   return run;
 }
 
-/** A stored rating as a number of stars, for tooltips: 7 is "3.5". */
-function starsNumber(rating) {
-  return String((Math.round(Number(rating) || 0)) / 2);
-}
+// fmtBytes, fmtDuration and starsNumber come from shared/format.js, which
+// the phone loads too.
 
 /** Lights a row of five for a value: whole stars, then a half if it is odd. */
 function paintStarRow(wrap, value) {
@@ -454,25 +452,6 @@ const filterCtx = () => ({
 const personFiltered = () => PERSON_FIELDS.some((f) => state.adv[f] && state.adv[f].size);
 
 // ----------------------------------------------------------------- utilities
-
-function fmtBytes(bytes) {
-  if (!bytes) return '—';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let i = 0;
-  let n = bytes;
-  while (n >= 1024 && i < units.length - 1) { n /= 1024; i += 1; }
-  return `${n < 10 && i > 0 ? n.toFixed(1) : Math.round(n)} ${units[i]}`;
-}
-
-function fmtDuration(seconds) {
-  if (!seconds || seconds < 0) return '—';
-  const total = Math.round(seconds);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  const pad = (v) => String(v).padStart(2, '0');
-  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
-}
 
 // More than this at once is a wall over the grid; the oldest goes first.
 const TOAST_CAP = 3;
