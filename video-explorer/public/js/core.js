@@ -710,6 +710,21 @@ function facetValueText(facet, value) {
 function baseName(p) {
   return String(p).split(/[\\/]/).pop();
 }
+/** "12 min ago", "2 h ago", "yesterday", "6 days ago", then the date. */
+function fmtWhen(ms) {
+  const at = Number(ms) || 0;
+  if (!at) return '';
+  const gap = Date.now() - at;
+  const min = Math.round(gap / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const hours = Math.round(min / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.round(hours / 24);
+  if (days === 1) return 'yesterday';
+  if (days < 14) return `${days} days ago`;
+  return new Date(at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
 /** Windows paths compare case-insensitively, and a trailing slash means nothing. */
 function samePath(a, b) {
   if (!a || !b) return false;

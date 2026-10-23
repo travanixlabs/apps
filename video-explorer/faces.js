@@ -1877,6 +1877,11 @@ function notePath(stat, at) {
   if (at) state.pathByKey.set(keyFor(stat), at);
 }
 
+/** Where a key was last seen, or '' when no listing or sweep has met it. */
+function pathOf(key) {
+  return state.pathByKey.get(key) || '';
+}
+
 /**
  * And unlearnt, when the file turns out not to be there.
  *
@@ -2617,7 +2622,7 @@ module.exports = {
   knownKeys, rekey,
   init, start, setEnabled, status, rootsChanged, count, decorate, writeDigest,
   rescoreOne,
-  lineup, faceImageByKey, standing, similar, bestOf, notePath, forgetPath,
+  lineup, faceImageByKey, standing, similar, bestOf, notePath, forgetPath, pathOf,
   // The reading order, for checking what a fresh install would do first.
   __queueForTest: walkForWork,
   faceImage, profile, rebuild, rebuildSoon, flush, keyFor,

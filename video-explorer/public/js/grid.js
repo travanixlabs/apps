@@ -137,6 +137,86 @@ function renderListing() {
   // A new filter, sort or search moves the open video's place in the listing
   // -- or takes the listing away from under it.
   if (state.playing) syncPlayerNav();
+  renderHomeRows();
+}
+
+/**
+ * The home folder's two rows under its libraries: what was opened lately,
+ * and what was labelled lately. Both come from the server (/api/recent), and
+ * both are drawn as ordinary cards inside the grid, so a click, a hover and
+ * the arrows work on them exactly as they do on a listing. Only at the home
+ * folder, and only once the listing there (which is folders) is drawn.
+ */
+let homeRowsToken = 0;
+
+function atHome() {
+  return Boolean(state.dir && state.config.homeDir && samePath(state.config.homeDir, state.dir));
+}
+
+async function renderHomeRows() {
+  const mine = ++homeRowsToken;
+  const grid = $('#grid');
+  for (const old of grid.querySelectorAll('.home-row')) old.remove();
+  $('#filesSection').classList.remove('home-mode');
+  if (!atHome() || state.files.length) return;
+  let rows;
+  try {
+    rows = await api('/api/recent?limit=12');
+  } catch { return; }
+  // The folder changed while the rows were coming.
+  if (mine !== homeRowsToken || !atHome()) return;
+  const n = (x) => x.toLocaleString();
+  const section = (title, lead, files, kind) => {
+    if (!files.length) return;
+    const row = document.createElement('section');
+    row.className = `home-row home-${kind}`;
+    const head = document.createElement('div');
+    head.className = 'home-row-head';
+    const h = document.createElement('h3');
+    h.textContent = title;
+    head.appendChild(h);
+    const sub = document.createElement('span');
+    sub.className = 'home-row-lead';
+    sub.textContent = lead;
+    head.appendChild(sub);
+    row.appendChild(head);
+    const strip = document.createElement('div');
+    strip.className = 'home-row-cards';
+    files.forEach((file, i) => {
+      const card = buildCard(file, i);
+      const preview = card.querySelector('.preview');
+      const when = document.createElement('span');
+      when.className = 'badge badge-when';
+      when.textContent = fmtWhen(kind === 'opened' ? file.opened : file.updated);
+      preview.appendChild(when);
+      // Where it was left: a bar along the foot of the picture.
+      const info = state.meta.get(file.path) || {};
+      if (kind === 'opened' && file.resume && info.duration) {
+        const bar = document.createElement('span');
+        bar.className = 'resume-bar';
+        const fill = document.createElement('span');
+        fill.style.width = `${Math.max(2, Math.min(100, Math.round((file.resume / info.duration) * 100)))}%`;
+        bar.appendChild(fill);
+        preview.appendChild(bar);
+      }
+      strip.appendChild(card);
+    });
+    row.appendChild(strip);
+    grid.appendChild(row);
+  };
+  const opened = hydrateAll(rows.opened);
+  const labelled = hydrateAll(rows.labelled);
+  section('Recently opened', 'Enter resumes where you stopped', opened, 'opened');
+  section('Recently labelled', 'ratings, names and tags you added · newest first', labelled, 'labelled');
+  $('#filesSection').hidden = !(opened.length || labelled.length);
+  $('#filesSection').classList.toggle('home-mode', Boolean(opened.length || labelled.length));
+  if (opened.length || labelled.length) {
+    $('#empty').hidden = true;
+    $('#fileCount').textContent = `(${n(opened.length + labelled.length)} recent)`;
+  }
+  for (const card of grid.querySelectorAll('.home-row .card')) spriteObserver.observe(card.querySelector('.preview'));
+  fetchMetaFor([...opened, ...labelled]);
+  syncRovingCard();
 }
 
 /**

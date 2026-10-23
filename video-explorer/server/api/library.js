@@ -13,6 +13,8 @@ const faces = require('../../faces');
 const { authoriseOrThrow, state } = require('../config');
 const labels = require('../labels');
 const { sendJson } = require('../http');
+const { describeVideo } = require('../walk');
+const { isCloudOnly } = require('../../walk-rules');
 
 const vocabulary = () => ({
   tags: library.tagCounts(),
@@ -28,7 +30,52 @@ const people = () => ({
   traits: library.performerTraits(),
 });
 
+/**
+ * The home screen's two rows: the videos last opened in a player, and the
+ * ones whose labels last changed. Both come from the library records, which
+ * are keyed by size and modified time rather than by path -- so each key is
+ * put back on its path through the face index, which every listing and sweep
+ * teaches where a video is. A record whose file has moved, or has never been
+ * listed this install, is skipped rather than guessed at. The rows are a
+ * shelf, not a result set: `limit` is how many fit on the screen.
+ */
+async function recentRows(limit) {
+  const all = library.all();
+  const rows = { opened: [], labelled: [] };
+  const seen = new Set();
+  const describe = async (key, record) => {
+    const at = faces.pathOf(key);
+    if (!at) return null;
+    let stat;
+    try {
+      stat = await fsp.stat(authoriseOrThrow(at));
+    } catch { return null; }
+    if (library.keyFor(stat) !== key) return null;
+    return describeVideo({ path: at, size: stat.size, mtimeMs: stat.mtimeMs, cloudOnly: isCloudOnly(stat) }, null);
+  };
+  const fill = async (stamp, into, keep) => {
+    const ranked = Object.entries(all)
+      .filter(([, r]) => r[stamp] && keep(r))
+      .sort((a, b) => b[1][stamp] - a[1][stamp]);
+    for (const [key, record] of ranked) {
+      if (into.length >= limit) break;
+      if (seen.has(`${stamp}:${key}`)) continue;
+      seen.add(`${stamp}:${key}`);
+      const entry = await describe(key, record);
+      if (entry) into.push(entry);
+    }
+  };
+  await fill('opened', rows.opened, () => true);
+  await fill('updated', rows.labelled, (r) => r.rating || (r.tags || []).length || (r.models || []).length || r.studio);
+  return rows;
+}
+
 module.exports = () => [
+  ['GET', '/api/recent', async ({ res, url }) => {
+    const limit = Math.max(1, Math.min(60, Number(url.searchParams.get('limit')) || 12));
+    return sendJson(res, 200, await recentRows(limit));
+  }],
+
   ['GET', '/api/library', async ({ res }) => sendJson(res, 200, {
     ...vocabulary(),
     ...people(),

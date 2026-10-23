@@ -330,6 +330,9 @@ function playFile(file, seq = null) {
   state.playingAnchor = null; // this one is in the listing until told otherwise
   state.playingCard = seq !== null ? seq : nearestCard(file, from);
   buildPlayerActions(file);
+  // Noted for the home screen's recently-opened row. Bookkeeping, not a
+  // label: the record's updated stamp is left alone (library.apply).
+  editRecords([file.path], { opened: true });
   syncPlayerAvail(file);
   buildPlayerSuggestions(file);
   buildPlayerSimilar(file);

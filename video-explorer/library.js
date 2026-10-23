@@ -458,6 +458,8 @@ function decorate(stat) {
     marks: record.marks || [],
     // Where playback stood when this was last closed, on any device.
     resume: record.resume || 0,
+    // When it was last opened in the player, for the home screen's row.
+    opened: record.opened || 0,
     // When the labels last changed. Travels with the listing so "date modified"
     // can mean the video *or* what is known about it, whichever happened later.
     updated: record.updated || 0,
@@ -639,7 +641,7 @@ function normaliseTags(tags) {
 function isEmptyRecord(r) {
   return !r.rating && !(r.tags || []).length && !(r.models || []).length
     && !(r.notModels || []).length && !(r.marks || []).length
-    && !r.studio && !r.production && !r.url && !r.resume && !r.settled;
+    && !r.studio && !r.production && !r.url && !r.resume && !r.settled && !r.opened;
 }
 
 /**
@@ -655,12 +657,16 @@ function apply(stat, name, patch, { lazy = false } = {}) {
   // change is the resume point keeps its updated stamp, or merely watching
   // something would push it to the top of the date sort as though it had been
   // worked on.
-  const onlyResume = Object.keys(patch).every((k) => k === 'resume');
+  // The same goes for "opened": when a video was last played is bookkeeping
+  // for the home screen's recently-opened row, not a label.
+  const onlyResume = Object.keys(patch).every((k) => k === 'resume' || k === 'opened');
   const next = {
     ...current,
     name: name || current.name,
     updated: onlyResume ? (current.updated || 0) : Date.now(),
   };
+
+  if (patch.opened) next.opened = Date.now();
 
   if (patch.resume !== undefined) {
     // Seconds into the video, shared between the desktop and the phone through

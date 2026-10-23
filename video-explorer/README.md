@@ -79,15 +79,32 @@ including a mapped drive.
 
 ## Browsing
 
-Navigation is explorer-style: one folder level at a time. Subfolders render in
-their own section **above** the videos, each showing a recursive video count and
-total size, so you can see there are 5,682 videos under a folder while standing
-outside it. Folder covers use the first video inside as a thumbnail. Folders
-containing no videos at any depth are dimmed but still navigable.
+Navigation is explorer-style: one folder level at a time. Subfolders are a
+**band** of cards above the videos — a 16:9 cover from the first video inside,
+the recursive video count, and "· 37 on disk" when only some are downloaded —
+one row that scrolls sideways. The line above the band ("42 subfolders ·
+flattened · 6,485 videos") folds it away, and whether it is folded is
+remembered **per folder**. At the home folder the libraries take the full width
+with a wide cover. Folders containing no videos at any depth are dimmed but
+still navigable.
 
-A clickable breadcrumb runs along the top, preceded by **←** / **→** history
-buttons, **🏠** for the default folder, and **↑** for the parent folder. All
-three are drop targets. History behaves like a browser's:
+The toolbar is one row: **←** / **→** history buttons, **🏠** for the default
+folder, **↑** for the parent folder, then the path as a trail of crumbs in a
+box — click a crumb to go there, **edit** to type a path (Esc puts the crumbs
+back), **Browse** for the picker. All three buttons are drop targets. A 2px bar
+under the toolbar fills as a chunk of the listing draws, and sweeps while a
+folder is being read.
+
+### Home
+
+With no videos of its own, the home folder shows two rows under its libraries:
+**Recently opened** — the videos last played, newest first, each with when and
+a bar along the foot of the picture for where playback was left — and
+**Recently labelled** — the videos whose rating, names or tags last changed.
+Both are ordinary cards: hover, click, arrow keys and the quick bar all work.
+They come from `/api/recent`, which maps each library record back to its
+file through the face index's path memory, so a video never listed on this
+install does not appear until it has been. History behaves like a browser's:
 visiting a new folder after going back discards the forward entries. Alt+← and
 Alt+→ work, as do the side buttons on a mouse, and Backspace goes up a level.
 
@@ -718,14 +735,23 @@ the full path.
 
 - **Flatten subfolders** — collapse everything below into one grid (junction-loop safe, 12 levels deep)
 - **Filter** — matches video names, their subfolder, folder names, **tags** and **models**; space-separated terms must all match. **A search covers the whole subtree**: typing in a folder whose videos live in subfolders switches the scan to recursive and ticks **Flatten**, because filtering can only ever see what has been scanned — and a cloud library is exactly the one that sits in subfolders rather than in front of you. Clearing the search leaves the flatten on, rather than spending another scan to put you back where you could not find anything. Prefix a term with `#` or `tag:` to match tags only — `#hd` finds what you tagged, `hd` also finds what's named that way. Clicking a tag chip fills in the `#` form.
-- **Sort** — an icon in the top row, left of the filter funnel: name, date modified, size, duration, rating, model, tag, or folder — and, grouped by performer, **Match %** (how like her each video's faces are, highest first; it is the default sort in those groupings and the previous sort comes back on leaving them). The label sorts read the first value — the alphabetically first performer or tag where there are several — and the unlabelled go last whichever way the arrow points, so reversing brings the labelled tail up rather than a wall of blanks. Picking the field you are already on reverses it, and the icon flips so the direction reads without opening the menu. **Every launch starts on rating, highest first**, with everything unrated below it in name order — a session can sort however it likes and that choice is still written down, it just does not decide what you see when you next open the app (the same treatment `recursive` gets)
-- **Volume** — an icon right of the filter funnel, opening a slider: one master level every video opens at. The player's own slider writes back to it, so there is one number rather than a toolbar setting and a per-video one drifting apart. The icon carries the level — crossed out at zero, one wave up to half, two above it — and it is a preference, so a refresh does not reset it
+- **Sort** — a state button that says what it holds ("Sort: Rating ↓"), opening the menu: name, date modified, size, duration, rating, model, tag, or folder — and, grouped by performer, **Match %** (how like her each video's faces are, highest first; it is the default sort in those groupings and the previous sort comes back on leaving them). The label sorts read the first value — the alphabetically first performer or tag where there are several — and the unlabelled go last whichever way the arrow points, so reversing brings the labelled tail up rather than a wall of blanks. Picking the field you are already on reverses it, and the button's arrow flips so the direction reads without opening the menu. **Every launch starts on rating, highest first**, with everything unrated below it in name order — a session can sort however it likes and that choice is still written down, it just does not decide what you see when you next open the app (the same treatment `recursive` gets)
+- **Sound** — "Sound: off" until sound is turned on for the session, then the level; it opens a slider, one master level every video opens at. The player's own slider writes back to it, so there is one number rather than a toolbar setting and a per-video one drifting apart. The level is a preference, so a refresh does not reset it
+- **Group** — "Group: Off", or the grouping in force; the button wears the people colour when the sections are performers
+- **The sweep strip** — the three sweeps sit along the foot of the window: a dot in the colour of the state (accent running, green idle or done, amber paused), the word, the numbers, a short bar while one is running, and a card with the detail on hover. The listing's count — "2 selected · 6,485 videos · 240 loaded" — sits at the strip's right end
 - **Card size** — grid tile width, 200–520px (defaults to the smallest)
 - **Frame dwell** — hover advance interval, 1–5s (defaults to 2s)
 
-### Advanced filters (the funnel)
+### Filter
 
-Rating, **tags**, **models**, source link and availability, counted live against the whole
+A rail of facets on the left — Tags, Rating, Models, the performer traits,
+Storage, Sweeps — each wearing a count where it holds something, and one
+facet's chips on the right with its all/any switch. The chips cycle
+include (**+**, accent) → exclude (**−**, danger, struck through) → off. What
+is picked across every facet is listed at the foot of the panel, each with a
+cross, so a choice made in a panel you are not looking at stays in sight; the
+Apply button says how many videos the draft leaves ("Apply · 1,284 videos").
+The facets, counted live against the whole
 listing rather than the loaded page — the match line at the top moves as you
 pick, and nothing is applied until **Apply**. Both vocabularies are listed
 alphabetically with their counts, as in the editor: a facet is chosen by looking
@@ -820,11 +846,13 @@ moves anything.
 
 ## Settings (⚙)
 
-Default folder (whether it follows the signed-in OneDrive account, or a fixed
-path), hover engine (live video vs cached stills), segments per video (2–24),
-tile width
-(120–640px), and an option to scrub with horizontal mouse position instead of the
-timer (cached-stills mode only). Changing the engine, segment count, or tile width
+Four tabs — Library, Previews, Appearance, Labels — and **every change saves as
+it is made** ("● Saved" in the head; there is no Save button; Esc closes).
+Library: the default folder (whether it follows the signed-in OneDrive account,
+or a fixed path) and the folders shown there. Previews: hover engine (live
+video vs cached stills), segments per video (2–24), tile width (120–640px), and
+an option to scrub with horizontal mouse position instead of the timer
+(cached-stills mode only). Changing the engine, segment count, or tile width
 rebuilds on next hover. **Clear preview cache** empties the cache directory —
 everything rebuilds on demand.
 
