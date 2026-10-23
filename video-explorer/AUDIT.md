@@ -568,3 +568,30 @@ All seven desktop modals carry `role="dialog" aria-modal="true" aria-labelledby`
 Next five if there is appetite: `-skip_frame nokey -threads 2` in the face harvest (2.5a); gate the sweeps on `checkFfmpeg()` and report it in `/api/status` + UI (3.2, 6.16 — M); wire `mobile/shared/facets.js` into the phone (4.2); inline "nothing matches" state + `aria-live` on `#status` (6.7, 6.10); `UV_THREADPOOL_SIZE=8` with a before/after walk timing (2.12).
 
 Not quick, but Critical: **3.2** (ffmpeg-missing poisons the stores) is the one Critical item that is M effort; it should follow the quick wins immediately.
+
+---
+
+## Resolution (2026-10-23)
+
+Every Critical, High, Medium and Nice-to-have item above was taken up after the audit, in 22 commits between `4dc78b6` and the tree this note is in. The suite went from 53 to 118 tests. Where an item was done differently from the fix the audit proposed, or scaled down, it is said here; everything not listed was done as written.
+
+**Done differently or in part**
+
+- **1.4 Oversized functions** — `wireEvents` split by region; `routes.js` split into `server/api/*.js` (4.6). `boot`, `attachScrub`, `renderAdv` on the phone, `buildGroupHead`, `buildCard`, `loadCore`, `ensureSprite`, `apply`, `renderAdvanced` were left whole: each is long because it does one long thing, and splitting them would have been a rename with no behaviour to test.
+- **1.9 mobile/app.js** — the DOM-free pieces moved to `shared/format.js` (bytes, durations, star numbers, the suggested-names rule) and the phone loads it; the 4,300-line module was **not** split into ES modules. The split is a week of exports and imports between files with no behaviour change to hold it to.
+- **2.9 suggestions.json** — unchanged digests are no longer rewritten (hash), which removes the five-minute re-uploads during a sweep. The `[name, score, band, person]` tuple format was not adopted: it would change the file the phone reads for a 40% saving on a file that is now written only when it changes.
+- **3.16 GET mutates authorisation** — `/api/scan` and `/api/dirs` became POSTs and the static prefix check gained its separator. The custom `X-Video-Explorer` header on every `/api/*` was not added: the native host and the command-line tools send none, and the foreign-request gate already refuses every browser-made cross-site request.
+- **4.9 Routes with no caller** — five deleted (`/api/drives`, `/api/carry-over`, `/api/graph`, `/api/dupes/match`, `/api/dupes/groups`). The three `*/status` routes the audit listed are **used**: the native host's tray tooltip polls them (`Program.cs SweepLine`). Kept.
+- **4.12 (a)** — done: the listing carries no suggestions; the page holds the whole set by key from `/api/faces/suggestions` and refetches when `/api/status` reports the stamp moved. (b)–(d) are deliberately not started: the measured ceilings are not near.
+- **4.13 1 ms key mismatch** — checked live over 208 files in two real folders: Graph and `fs.stat` agree on every key, and no synced file carried a fractional millisecond at all (OneDrive sets whole-millisecond times). No change needed.
+- **6.9 Reduced motion** — animations and transitions off; hover previews still play on hover (that is a request) but stop cycling through the ten segments on their own.
+- **6.12 Roving tabindex** — arrows, Home and End move between cards, one card is the Tab stop, the focused card's quick bar is reachable by Tab. Column count is read from the grid's computed `grid-template-columns`.
+- **6.20 Sweep names** — the filter rows say Framing / Duplicates / Faces like the pills and the phone says "face sweep"; "N profiled" on a heading and "All profiled" were kept, as the word in use for the faces sweep's state.
+- **6.21** — the sort vocabularies now match; the phone has an offline strip and warnings; a light theme and rem-based type were not done (a design job, not a fix).
+- **5.5 / 5.6 / 5.9 / 5.10** — in the native host folder, which is not in this repository: `build.ps1` and `Program.cs` carry the changes; `VideoExplorer.csproj` targets net8.0.
+
+**Found while writing the tests**
+
+- A root that is a drive root (`C:\`) covered nothing under it: the prefix check appended a second separator. Fixed in `config.js`, `fileops.js` and `tree.js`.
+- A group of one in the duplicates digest was dropped from the groups but still entered the light index as a fingerprinted video.
+- Taking a label off every video (`removeTagEverywhere`) left empty records behind in the synced file; an edit's empty record is dropped, so now this one is too.
