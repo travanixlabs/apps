@@ -129,17 +129,26 @@ function buildLabelChips(file, field, { add: withAdd = true, edit = true } = {})
     // a cross on a tile you were only looking at is exactly what "the grid does
     // not edit" is meant to stop -- so it is drawn where editing is allowed,
     // which is the player.
+    // How alike, ahead of the name and quieter than it: "75% Nicolove".
+    const score = scoreOf ? scoreOf.get(value) : null;
+    const named = () => {
+      const text = document.createElement('span');
+      text.className = 'chip-text';
+      if (score !== null && score !== undefined) {
+        const pct = document.createElement('span');
+        pct.className = 'chip-pct';
+        pct.textContent = `${Math.round(score * 100)}% `;
+        text.appendChild(pct);
+      }
+      text.appendChild(document.createTextNode(value));
+      return text;
+    };
     if (!edit) {
-      const score = scoreOf ? scoreOf.get(value) : null;
-      chip.textContent = score === null || score === undefined ? value : `(${Math.round(score * 100)}%) ${value}`;
+      chip.appendChild(named());
     } else {
       // The label is its own element now, because the cross has to sit beside
       // it rather than inside the run of text the ellipsis trims.
-      const text = document.createElement('span');
-      text.className = 'chip-text';
-      const score = scoreOf ? scoreOf.get(value) : null;
-      text.textContent = score === null || score === undefined ? value : `(${Math.round(score * 100)}%) ${value}`;
-      chip.appendChild(text);
+      chip.appendChild(named());
 
       // A span, not a button: a button inside a button is invalid HTML, and
       // this one is reached by the mouse. The chip itself is still a real
@@ -195,6 +204,14 @@ function buildRecordRow(file, { edit = true } = {}) {
 
   // Race, height, bust and body are not shown here: they belong to a person and
   // are set, seen and filtered from her section's heading and the filters.
+  // The studio first, outlined: it is where the video is from, not who is in it.
+  if (file.studio) {
+    const studio = document.createElement('span');
+    studio.className = 'chip chip-studio';
+    studio.textContent = file.studio;
+    studio.title = `Studio: ${file.studio}`;
+    row.appendChild(studio);
+  }
   // Names show when there are names; nothing sits there inviting you to add one.
   if ((file.models || []).length) row.appendChild(buildLabelChips(file, 'models', { add: false, edit }));
   // With no add button and no tags there is nothing to draw, and an empty

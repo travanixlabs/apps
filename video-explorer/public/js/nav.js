@@ -37,10 +37,33 @@ function goForward() {
   scan(dir, { record: false });
 }
 
+/**
+ * The path box, shown in the breadcrumb's place while a path is typed. The
+ * crumbs come back with the next listing (renderBreadcrumb), or on Escape.
+ */
+function openPathEdit() {
+  $('#breadcrumb').hidden = true;
+  const edit = $('#pathEdit');
+  edit.hidden = false;
+  const input = $('#dirInput');
+  input.value = state.dir || input.value;
+  input.focus();
+  input.select();
+}
+
+function closePathEdit() {
+  if (!state.dir) return;
+  $('#pathEdit').hidden = true;
+  $('#breadcrumb').hidden = false;
+  $('#dirInput').value = state.dir;
+}
+
 function renderBreadcrumb() {
   const bar = $('#breadcrumb');
-  if (!state.dir) { bar.hidden = true; return; }
+  const edit = $('#pathEdit');
+  if (!state.dir) { bar.hidden = true; edit.hidden = false; return; }
   bar.hidden = false;
+  edit.hidden = true;
   bar.innerHTML = '';
 
   const backBtn = document.createElement('button');
@@ -86,6 +109,14 @@ function renderBreadcrumb() {
   if (state.parent) attachDropTarget(upBtn, state.parent, baseName(state.parent) || state.parent);
   bar.appendChild(upBtn);
 
+  // The trail sits in a box that reads as the path field it replaces, with
+  // "edit" and "Browse" at its right end: edit brings the typed-path box
+  // back in its place, Browse opens the folder picker.
+  const box = document.createElement('div');
+  box.className = 'crumb-box';
+  box.title = 'Click a folder to go there; edit to type a path';
+  bar.appendChild(box);
+
   // Split "C:\a\b" into a clickable trail: C:\ > a > b
   const parts = state.dir.split(/[\\/]/).filter(Boolean);
   let accumulated = '';
@@ -96,7 +127,7 @@ function renderBreadcrumb() {
       const sep = document.createElement('span');
       sep.className = 'crumb-sep';
       sep.textContent = '›';
-      bar.appendChild(sep);
+      box.appendChild(sep);
     }
     const isCurrent = index === parts.length - 1;
     const crumb = document.createElement('button');
@@ -106,8 +137,30 @@ function renderBreadcrumb() {
     crumb.addEventListener('click', () => navigateTo(target));
     // The current folder is not a drop target — files are already in it.
     if (!isCurrent) attachDropTarget(crumb, target, part);
-    bar.appendChild(crumb);
+    box.appendChild(crumb);
   });
+
+  const tail = document.createElement('span');
+  tail.className = 'crumb-tail';
+  const editBtn = document.createElement('button');
+  editBtn.type = 'button';
+  editBtn.className = 'crumb-tail-btn';
+  editBtn.textContent = 'edit';
+  editBtn.title = 'Type a path';
+  editBtn.addEventListener('click', (ev) => { ev.stopPropagation(); openPathEdit(); });
+  tail.appendChild(editBtn);
+  tail.appendChild(document.createTextNode(' · '));
+  const browse = document.createElement('button');
+  browse.type = 'button';
+  browse.className = 'crumb-tail-btn';
+  browse.textContent = 'Browse';
+  browse.title = 'Pick a folder';
+  browse.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    pickFolder('Choose a video folder', (dest) => { $('#dirInput').value = dest; scan(dest); });
+  });
+  tail.appendChild(browse);
+  box.appendChild(tail);
 }
 
 /**
@@ -196,11 +249,61 @@ function folderTally(folder) {
   };
 }
 
-/** "3 / 91 (12 DL)" — matching, of everything in it, of which this many are here. */
+/**
+ * The count on a folder card, and the quieter fraction after it.
+ *
+ * Unfiltered: "1,204", then "· 37 on disk" only when that is neither none nor
+ * all of them -- a folder entirely here or entirely in the cloud has nothing
+ * to add. Filtered: "3 / 91", how many survive the filter of how many there
+ * are. The size moved to the hover card: "how big is this" is a question you
+ * ask of one folder, not of forty.
+ */
 function folderTallyText(folder) {
   const { total, downloaded, matched, waiting } = folderTally(folder);
-  const left = matched === null ? (waiting ? '…' : '?') : matched.toLocaleString();
-  return `${left} / ${total.toLocaleString()} (${downloaded.toLocaleString()} DL)`;
+  const n = (x) => x.toLocaleString();
+  if (folderCounts.key) {
+    const left = matched === null ? (waiting ? '…' : '?') : n(matched);
+    return { count: `${left} / ${n(total)}`, extra: '' };
+  }
+  const partial = downloaded > 0 && downloaded < total;
+  return { count: n(total), extra: partial ? `· ${n(downloaded)} on disk` : '' };
+}
+
+/**
+ * Whether the band is folded in this folder. Remembered per folder, under the
+ * lowercased path, because the folder that needs its forty subfolders out of
+ * the way is not the one whose three you want to see.
+ */
+function bandFoldedHere() {
+  const held = state.config.bandFolded;
+  return Boolean(held && state.dir && held[state.dir.toLowerCase()]);
+}
+
+function setBandFolded(folded) {
+  if (!state.dir) return;
+  const key = state.dir.toLowerCase();
+  const held = { ...(state.config.bandFolded || {}) };
+  if (folded) held[key] = true;
+  else delete held[key];
+  state.config.bandFolded = held;
+  saveConfig({ bandFolded: held });
+  syncBand();
+}
+
+/** The band's fold state and its one-line summary, from what is known now. */
+function syncBand() {
+  const section = $('#foldersSection');
+  const folded = bandFoldedHere();
+  section.classList.toggle('collapsed', folded);
+  const head = $('#foldersCollapse');
+  head.setAttribute('aria-expanded', String(!folded));
+  head.title = folded ? 'Show the subfolders' : 'Hide the subfolders';
+  const n = (x) => Number(x || 0).toLocaleString();
+  const bits = [];
+  if ($('#recursiveToggle').checked) bits.push('flattened');
+  if (state.files.length) bits.push(`${n(state.files.length)} video${state.files.length === 1 ? '' : 's'}`);
+  else if (state.totalBelow) bits.push(`${n(state.totalBelow)} below`);
+  $('#bandSummary').textContent = bits.length ? `· ${bits.join(' · ')}` : '';
 }
 
 function renderFolders() {
@@ -221,21 +324,25 @@ function renderFolders() {
 
   if (!folders.length) { section.hidden = true; return; }
   section.hidden = false;
-  section.classList.toggle('collapsed', state.config.foldersCollapsed === true);
-  // With no videos listed, folders get the full window rather than 38vh.
+  // With no videos listed, folders are the listing: a wrapping grid rather
+  // than one row, and the window is theirs.
   section.classList.toggle('expanded', state.files.length === 0);
-  // The grid is the thing that scrolls now -- two rows of it, then a bar --
-  // so a new folder starts at its own top rather than wherever the last one
-  // was left.
-  section.scrollTop = 0;
+  // The home folder's few libraries get the whole width, with a wide cover.
+  section.classList.toggle('home', Boolean(state.config.homeDir) && samePath(state.config.homeDir, state.dir));
+  syncBand();
+  // A new folder's row starts at its own left edge rather than wherever the
+  // last one was scrolled to.
+  wrap.scrollLeft = 0;
   wrap.scrollTop = 0;
+  const n = (x) => x.toLocaleString();
   $('#folderCount').textContent = folders.length === state.folders.length
-    ? `(${state.folders.length})`
-    : `(${folders.length} of ${state.folders.length})`;
+    ? `${n(state.folders.length)} subfolder${state.folders.length === 1 ? '' : 's'}`
+    : `${n(folders.length)} of ${n(state.folders.length)} subfolders`;
 
   for (const folder of folders) {
     const tile = document.createElement('button');
     tile.className = 'folder-tile' + (folder.videoCount === 0 ? ' no-videos' : '');
+    tile.setAttribute('role', 'listitem');
     // No `title`: the hover card below says all of this and more, and a native
     // tooltip would fade in on top of it a second later.
     tile.addEventListener('click', () => navigateTo(folder.path));
@@ -251,29 +358,27 @@ function renderFolders() {
     }
     tile.appendChild(cover);
 
-    const body = document.createElement('div');
-    body.className = 'folder-body';
-
     const name = document.createElement('span');
     name.className = 'folder-name';
     name.textContent = folder.name;
-    body.appendChild(name);
+    tile.appendChild(name);
 
     const meta = document.createElement('span');
     meta.className = 'folder-meta';
     if (folder.videoCount === 0) {
       meta.textContent = 'no videos';
     } else {
-      // One shape whether or not anything is filtered and whether or not any of
-      // it is downloaded, so the total is always the number on the right and
-      // the line never has to be re-read. The size moved to the hover card:
-      // "how big is this" is a question you ask of one folder, not of forty.
-      meta.textContent = folderTallyText(folder);
+      const { count, extra } = folderTallyText(folder);
+      meta.textContent = count;
+      if (extra) {
+        const more = document.createElement('span');
+        more.className = 'folder-meta-extra';
+        more.textContent = ' ' + extra;
+        meta.appendChild(more);
+      }
       meta.classList.toggle('filtered', folderCounts.key !== '');
     }
-    body.appendChild(meta);
-
-    tile.appendChild(body);
+    tile.appendChild(meta);
     tile.addEventListener('pointerenter', () => showFolderPop(tile, folder));
     tile.addEventListener('pointerleave', hideFolderPop);
     wrap.appendChild(tile);

@@ -19,7 +19,11 @@ function wireEvents() {
 /** The toolbar and the grid chrome: open, search, sort, volume, tile size. */
 function wireToolbar() {
   $('#scanBtn').addEventListener('click', () => scan());
-  $('#dirInput').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') scan(); });
+  $('#dirInput').addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') scan();
+    // Escape puts the crumbs back, with nothing changed.
+    if (ev.key === 'Escape' && state.dir) { ev.stopPropagation(); closePathEdit(); }
+  });
   $('#recursiveToggle').addEventListener('change', () => scan());
 
   $('#groupsFold').addEventListener('click', () => {
@@ -37,9 +41,7 @@ function wireToolbar() {
 
   $('#foldersCollapse').addEventListener('click', (ev) => {
     ev.stopPropagation();
-    const pane = $('#foldersSection');
-    pane.classList.toggle('collapsed');
-    saveConfig({ foldersCollapsed: pane.classList.contains('collapsed') });
+    setBandFolded(!bandFoldedHere());
   });
 
   $('#browseBtn').addEventListener('click', () => {
@@ -233,6 +235,8 @@ function wireDialogs() {
   $('#advBtn').addEventListener('click', openAdvanced);
   $('#advApply').addEventListener('click', applyAdvanced);
   $('#advReset').addEventListener('click', resetAdvanced);
+  // Cancel is the close cross with a name: the draft is dropped either way.
+  $('#advCancel').addEventListener('click', () => { $('#advModal').hidden = true; });
 
   for (const btn of document.querySelectorAll('[data-clear]')) {
     btn.addEventListener('click', () => {
@@ -380,7 +384,29 @@ function wireSettings() {
       syncHomeFields();
     });
   });
-  $('#settingsSave').addEventListener('click', async () => {
+  // The tabs: one pane at a time, the rest hidden.
+  for (const tab of document.querySelectorAll('.settings-tab')) {
+    tab.addEventListener('click', () => {
+      for (const t of document.querySelectorAll('.settings-tab')) {
+        const on = t === tab;
+        t.classList.toggle('on', on);
+        t.setAttribute('aria-selected', String(on));
+      }
+      for (const pane of document.querySelectorAll('.settings-pane')) {
+        const on = pane.dataset.pane === tab.dataset.tab;
+        pane.classList.toggle('on', on);
+        pane.hidden = !on;
+      }
+    });
+  }
+
+  // Every setting saves as it changes. The sliders and the colours already
+  // did; the fields that used to wait for a Save button now go the same way,
+  // a moment after the last keystroke, and the head says "Saved".
+  let settingsTimer = null;
+  const settingsFields = ['#setFrames', '#setTileWidth', '#setPreviewMode', '#setScrub',
+    '#setHomeDir', '#setHomeFolders', '#setHomeFollow'];
+  const commitSettings = async () => {
     const frames = Math.max(2, Math.min(24, Number($('#setFrames').value) || 10));
     const tileWidth = Math.max(120, Math.min(640, Number($('#setTileWidth').value) || 320));
     const previewMode = $('#setPreviewMode').value === 'sprite' ? 'sprite' : 'live';
@@ -403,12 +429,13 @@ function wireSettings() {
       frames, tileWidth, previewMode, homeDir, homeFollowsAccount, homeFolders,
       scrubWithMouse: $('#setScrub').checked,
     });
-    $('#settingsModal').hidden = true;
+    settingsSaidSaved();
     if (foldersChanged && samePath(state.dir, state.config.homeDir)) scan(state.dir, { record: false });
     if (homeChanged) {
       renderBreadcrumb();
       // Following the account re-resolves server-side, so report what was
       // actually kept rather than what was typed.
+      $('#setHomeDir').value = state.config.homeDir || '';
       toast('Default folder: ' + state.config.homeDir, 'ok');
     }
     if (changed) {
@@ -416,6 +443,23 @@ function wireSettings() {
       render();
       toast(previewMode === 'live' ? 'Live hover previews active' : 'Cached stills will build for every video listed', 'ok');
     }
+  };
+  const commitSoon = () => {
+    clearTimeout(settingsTimer);
+    settingsTimer = setTimeout(() => commitSettings().catch((err) => toast(err.message, 'err')), 500);
+  };
+  for (const id of settingsFields) {
+    const el = $(id);
+    if (!el) continue;
+    el.addEventListener('change', commitSoon);
+    if (el.type === 'text' || el.type === 'number') el.addEventListener('input', commitSoon);
+  }
+  // Closing with a change still pending writes it rather than losing it.
+  $('#settingsModal').addEventListener('click', (ev) => {
+    if (!ev.target.closest('.modal-close') || settingsTimer === null) return;
+    clearTimeout(settingsTimer);
+    settingsTimer = null;
+    commitSettings().catch((err) => toast(err.message, 'err'));
   });
   $('#clearCacheBtn').addEventListener('click', async () => {
     if (!window.confirm('Delete all cached previews and metadata? They rebuild on demand.')) return;
@@ -1013,13 +1057,17 @@ async function setCardDetails(on) {
   syncCardDetails();
 }
 
-function renderActiveFilters() {
-  const host = $('#activeFilters');
-  if (!host) return;
+/**
+ * A filter as chips: one per facet in force, each with a cross that clears
+ * just that facet. Drawn under the toolbar for the filter in force, and at the
+ * foot of the dialog for the draft. Returns how many facets it drew.
+ */
+function renderFilterChips(filter, host, { clear, clearAll = null } = {}) {
+  if (!host) return 0;
   host.replaceChildren();
   let facets = 0;
   for (const facet of ALL_FACETS) {
-    const held = state.adv[facet];
+    const held = filter[facet];
     if (!held || !held.size) continue;
     facets += 1;
     const chip = document.createElement('span');
@@ -1027,7 +1075,7 @@ function renderActiveFilters() {
     const label = document.createElement('span');
     label.className = 'chip-text';
     const parts = [...held].map(([value, mode]) => (mode === 'out' ? '−' : '') + facetValueText(facet, value));
-    const mode = state.adv.mode && state.adv.mode[facet];
+    const mode = filter.mode && filter.mode[facet];
     const how = held.size > 1 && mode === 'any' ? ' (any)' : '';
     label.textContent = `${FACET_NAMES[facet] || facet}: ${parts.join(', ')}${how}`;
     chip.title = label.textContent;
@@ -1040,29 +1088,48 @@ function renderActiveFilters() {
     x.setAttribute('aria-label', x.title);
     x.addEventListener('click', (ev) => {
       ev.stopPropagation();
+      clear(facet);
+    });
+    chip.appendChild(x);
+    host.appendChild(chip);
+  }
+  if (facets > 1 && clearAll) {
+    const all = document.createElement('button');
+    all.type = 'button';
+    all.className = 'linkish';
+    all.textContent = 'Clear all';
+    all.addEventListener('click', clearAll);
+    host.appendChild(all);
+  }
+  host.hidden = facets === 0;
+  return facets;
+}
+
+function renderActiveFilters() {
+  return renderFilterChips(state.adv, $('#activeFilters'), {
+    clear: (facet) => {
       // A fresh map rather than clearing in place: the dialog's draft may be
       // holding this one, and Cancel there must still mean cancel.
       state.adv = { ...state.adv, [facet]: new Map() };
       syncAdvBadge();
       render();
-    });
-    chip.appendChild(x);
-    host.appendChild(chip);
-  }
-  if (facets > 1) {
-    const all = document.createElement('button');
-    all.type = 'button';
-    all.className = 'linkish';
-    all.textContent = 'Clear all';
-    all.addEventListener('click', () => {
+    },
+    clearAll: () => {
       state.adv = newAdvFilter();
       syncAdvBadge();
       render();
-    });
-    host.appendChild(all);
-  }
-  host.hidden = facets === 0;
-  return facets;
+    },
+  });
+}
+
+/** "● Saved" in the settings head, for a moment after a write. */
+let savedTimer = null;
+function settingsSaidSaved() {
+  const el = $('#settingsSaved');
+  if (!el) return;
+  el.hidden = false;
+  clearTimeout(savedTimer);
+  savedTimer = setTimeout(() => { el.hidden = true; }, 1800);
 }
 
 // -------------------------------------------------------------------- init
@@ -1116,12 +1183,6 @@ async function init() {
   try { kept = JSON.parse(sessionStorage.getItem(VIEW_KEY) || 'null'); } catch { kept = null; }
   sessionStorage.removeItem(VIEW_KEY);
 
-  // The folders open out on a launch and on Ctrl+Shift+R; a refresh keeps
-  // them however you left them.
-  if ((!reloaded || toHome) && state.config.foldersCollapsed) {
-    state.config.foldersCollapsed = false;
-    saveConfig({ foldersCollapsed: false });
-  }
   if (!reloaded || toHome || hard) {
     resetView();
   } else if (kept) {

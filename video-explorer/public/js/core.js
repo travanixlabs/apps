@@ -248,7 +248,8 @@ function syncPlayerAvail(file) {
   const btn = $('#playerAvail');
   if (!btn) return;
   const cloud = Boolean(file.cloudOnly);
-  btn.innerHTML = cloud ? ICON_CLOUD : ICON_LOCAL;
+  btn.innerHTML = (cloud ? ICON_CLOUD : ICON_LOCAL)
+    + `<span class="qbtn-label">${cloud ? 'Download' : 'Cloud'}</span>`;
   btn.classList.toggle('is-cloud', cloud);
   btn.title = cloud ? 'Cloud only — click to download to this PC'
     : 'Downloaded — click to free up space (cloud only)';
@@ -593,6 +594,7 @@ async function scan(dir, { record = true } = {}) {
   forgetGroupOrder();
 
   setStatus('Scanning…');
+  setLoadBar(null);
   $('#empty').hidden = true;
   try {
     // The scan always lists everything that is there. Narrowing to what is
@@ -628,6 +630,7 @@ async function scan(dir, { record = true } = {}) {
     if (scrollRoot) scrollRoot.scrollTop = 0;
   } catch (err) {
     setStatus('');
+    setLoadBar(1);
     renderEmptyState(state.dir ? 'error' : 'onboarding');
     toast(err.message, 'err');
   }
@@ -662,16 +665,18 @@ function syncCardDetails() {
 function cardMetaText(file) {
   const info = state.meta.get(file.path) || {};
   const bits = [];
+  if (info.duration) bits.push(fmtDuration(info.duration));
+  if (info.width && info.height) {
+    const lines = Math.min(info.width, info.height);
+    bits.push(lines >= 2100 ? '4K' : `${lines}p`);
+  }
   if (file.mtimeMs) {
     bits.push(new Date(file.mtimeMs).toLocaleDateString('en-GB', {
       day: 'numeric', month: 'short', year: 'numeric',
     }));
   }
-  if (info.width && info.height) {
-    const lines = Math.min(info.width, info.height);
-    bits.push(lines >= 2100 ? '4K' : `${lines}p`);
-  }
-  if (file.relFolder) bits.push(file.relFolder);
+  // The subfolder, only where there is one: "." is the folder itself.
+  if (file.relFolder && file.relFolder !== '.') bits.push(file.relFolder);
   return bits.join(' · ');
 }
 

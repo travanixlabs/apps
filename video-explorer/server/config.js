@@ -81,7 +81,9 @@ const DEFAULT_CONFIG = {
   cardWidth: 200,     // smallest tile: the most videos on screen at once
   volume: 1,          // master playback volume, 0..1 — a preference, not a view
   autoNext: false,    // when a video ends, play the next one
-  foldersCollapsed: false,
+  foldersCollapsed: false, // superseded by bandFolded; kept so an old file still parses
+  // Whether the subfolder band is folded away, by lowercased folder path.
+  bandFolded: {},
   recursive: false,   // explorer-style by default: one folder level at a time
   // '' | 'models' | 'suggested': the grid split into a section per performer,
   // by who is credited or by who the faces look like. `true` from an older

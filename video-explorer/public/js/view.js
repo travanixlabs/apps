@@ -860,12 +860,13 @@ function renderSortMenu() {
   }
 }
 
-/** The icon carries the direction, so the current order is readable at a glance. */
+/** The button says the field and the direction, so the order reads at a glance. */
 function syncSortButton() {
   const field = SORT_FIELDS.find((f) => f.value === $('#sortSelect').value) || SORT_FIELDS[0];
   const descending = state.config.sortDir === 'desc';
-  $('#sortBtn').title = `Sort: ${field.label}, ${descending ? 'descending' : 'ascending'}`;
-  $('#sortBtn').classList.toggle('flip', descending);
+  $('#sortBtn').title = `Sort: ${field.label}, ${descending ? 'descending' : 'ascending'} — click to change`;
+  $('#sortBtn').setAttribute('aria-label', `Sort: ${field.label}, ${descending ? 'descending' : 'ascending'}`);
+  $('#sortBtnLabel').textContent = `${field.label} ${descending ? '↓' : '↑'}`;
 }
 
 function toggleSortMenu(open) {
@@ -961,13 +962,10 @@ function syncVolumeUI() {
     ? 'Every video opens at this level.'
     : 'Videos play muted until you turn sound on. It lasts until you close the app.';
 
-  // The icon says it without opening the menu: crossed out while muted, one wave
-  // up to half, both above it. Toggled through style.display, since an SVG
-  // element ignores the HTML hidden attribute -- which is why the first cut drew
-  // the cross over the waves at every level.
-  $('#volCross').style.display = audible ? 'none' : '';
-  $('#volWaves').style.display = audible ? '' : 'none';
-  $('#volWave2').style.display = audible && percent > 50 ? '' : 'none';
+  // The button says it without opening the menu: "Sound: off" until sound is
+  // on for the session, then the level.
+  $('#volBtnLabel').textContent = audible ? `${percent}%` : 'off';
+  $('#volBtn').classList.toggle('pressed', audible);
 }
 
 function toggleVolumeMenu(open) {
@@ -1002,11 +1000,13 @@ function openAdvanced() {
       radio.checked = radio.value === advDraft.mode[field];
     }
   }
-  // Additional options start folded, and open only when one of them is in use.
-  $('#advMore').open = ['framing', 'fingerprint', 'profiling', 'suggestions', 'storage', ...RANGE_FACETS]
-    .some((f) => advDraft[f] && advDraft[f].size);
+  // Opens on the first panel holding something, or on Tags.
+  if (!$('#advRail').children.length) buildAdvRail();
+  const held = advPanels().find((p) => advPanelCount(p) > 0);
+  advShown = held ? held.dataset.facet : 'tags';
   $('#advModal').hidden = false;
   renderAdvanced();
+  showAdvPanel(advShown);
 }
 
 /**
@@ -1124,57 +1124,171 @@ function renderAdvanced() {
       .sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1])
       .map(([entry]) => entry);
     for (const entry of ordered) {
-      box.appendChild(chipCycle(`${entry.tag} · ${entry.count}`, advDraft[field].get(entry.tag), () => {
+      const chip = chipCycle(entry.tag, advDraft[field].get(entry.tag), () => {
         cycleIn(advDraft[field], entry.tag);
         renderAdvanced();
-      }));
+      });
+      // The count, quieter than the name: it qualifies the chip, it is not
+      // part of it.
+      const count = document.createElement('span');
+      count.className = 'chip-count';
+      count.textContent = entry.count.toLocaleString();
+      chip.appendChild(count);
+      box.appendChild(chip);
     }
   }
 
-  updateAdvMatch();
+  syncAdvRail();
+}
+
+
+/**
+ * How many videos of the listing the draft would leave. Counted over what is
+ * scanned, which is what Apply will show; the whole-tree numbers are on the
+ * folder cards.
+ */
+function advDraftCount() {
+  if (!advActive(advDraft)) return state.files.length;
+  const adv = compileAdvanced(advDraft);
+  const ctx = filterCtx();
+  let n = 0;
+  for (const f of state.files) if (matchesAdvanced(f, adv, ctx)) n += 1;
+  return n;
+}
+
+/** The facets in force in the draft, as the rail and the head count them. */
+function advDraftFacets() {
+  let facets = 0;
+  for (const facet of ALL_FACETS) {
+    const held = advDraft[facet];
+    if (held && held.size) facets += 1;
+  }
+  return facets;
 }
 
 /**
- * How many videos the draft would show, counted against the whole tree rather
- * than the current page — otherwise the number moves as you scroll.
+ * The dialog's rail: one row per panel, in the panel's order, wearing a badge
+ * where its facet holds something. Clicking a row shows its panel; the arrow
+ * keys walk the rail.
  */
-function updateAdvMatch() {
-  const el = $('#advMatch');
-  if (!advActive(advDraft)) { el.textContent = 'no filters — showing everything'; return; }
-  // Included and excluded are counted apart, since "2 tags" would otherwise
-  // read the same whether they were wanted or banned.
-  const bits = [];
-  const say = (facet, one, many = one + 's', extra = '') => {
-    const inn = picked(advDraft[facet], 'in').length;
-    const out = picked(advDraft[facet], 'out').length;
-    if (inn) bits.push(`${inn} ${inn === 1 ? one : many}${extra}`);
-    if (out) bits.push(`without ${out} ${out === 1 ? one : many}`);
-    // The emptiness chip reads as a phrase, not a count.
-    const nothing = advDraft[facet].get(NOTHING);
-    if (nothing === 'in') bits.push(`no ${many} at all`);
-    if (nothing === 'out') bits.push(`some ${many}`);
-  };
-  say('height', 'height', 'heights', ` (${advDraft.mode.height || 'all'})`);
-  say('bust', 'bust', 'busts', ` (${advDraft.mode.bust || 'all'})`);
-  say('body', 'body type', 'body types', ` (${advDraft.mode.body || 'all'})`);
-  say('race', 'race', 'races', ` (${advDraft.mode.race || 'all'})`);
-  say('favourites', 'favourite tier', 'favourite tiers', ` (${advDraft.mode.favourites || 'all'})`);
-  say('models', 'model', 'models', ` (${advDraft.mode.models})`);
-  say('tags', 'tag', 'tags', ` (${advDraft.mode.tags})`);
-  say('ratings', 'rating');
-  // The one-question rows, read from the same table the chips are drawn from,
-  // so a new answer shows up in the summary without being listed twice.
-  for (const [, facet, options] of CHOICE_ROWS) {
-    for (const [value, label] of options) {
-      const mode = advDraft[facet].get(value);
-      if (mode === 'in') bits.push(label);
-      if (mode === 'out') bits.push(`not ${label}`);
+let advShown = 'tags';
+
+function advPanels() {
+  return [...document.querySelectorAll('#advModal .adv-panel [data-facet]')];
+}
+
+function advPanelFacets(panel) {
+  return (panel.dataset.facets || panel.dataset.facet).split(/\s+/);
+}
+
+function advPanelCount(panel) {
+  return advPanelFacets(panel).reduce((n, facet) => {
+    const held = advDraft[facet];
+    return n + (held && held.size ? 1 : 0);
+  }, 0);
+}
+
+function showAdvPanel(facet, { focus = false } = {}) {
+  advShown = facet;
+  for (const panel of advPanels()) panel.classList.toggle('adv-current', panel.dataset.facet === facet);
+  for (const row of document.querySelectorAll('#advRail .adv-rail-row')) {
+    const on = row.dataset.facet === facet;
+    row.classList.toggle('on', on);
+    row.setAttribute('aria-current', on ? 'true' : 'false');
+    row.tabIndex = on ? 0 : -1;
+    if (on && focus) row.focus();
+  }
+  // A panel with a search box opens with the caret in it.
+  const current = document.querySelector('#advModal .adv-panel .adv-current');
+  const find = current && current.querySelector('.chip-find');
+  if (find && !focus) find.focus({ preventScroll: true });
+}
+
+function buildAdvRail() {
+  const rail = $('#advRail');
+  if (!rail) return;
+  rail.replaceChildren();
+  let lastGroup = '';
+  for (const panel of advPanels()) {
+    const group = panel.dataset.facetGroup || '';
+    if (group && group !== lastGroup) {
+      const head = document.createElement('div');
+      head.className = 'adv-rail-head';
+      head.textContent = group;
+      rail.appendChild(head);
+    }
+    lastGroup = group;
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'adv-rail-row';
+    row.dataset.facet = panel.dataset.facet;
+    const name = document.createElement('span');
+    name.className = 'adv-rail-name';
+    name.textContent = panel.dataset.facetName;
+    row.appendChild(name);
+    const badge = document.createElement('span');
+    badge.className = 'adv-rail-badge';
+    badge.hidden = true;
+    row.appendChild(badge);
+    row.addEventListener('click', () => showAdvPanel(panel.dataset.facet));
+    row.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
+      ev.preventDefault();
+      const rows = [...rail.querySelectorAll('.adv-rail-row')];
+      const at = rows.indexOf(row);
+      const next = rows[(at + (ev.key === 'ArrowDown' ? 1 : rows.length - 1)) % rows.length];
+      showAdvPanel(next.dataset.facet, { focus: true });
+    });
+    rail.appendChild(row);
+  }
+  const hint = document.createElement('div');
+  hint.className = 'adv-rail-hint';
+  hint.textContent = '↑↓ facet · Tab chips · Enter cycles';
+  rail.appendChild(hint);
+  showAdvPanel(advShown);
+}
+
+/** The rail's badges, the per-panel "1 included · 1 excluded", and the foot. */
+function syncAdvRail() {
+  for (const panel of advPanels()) {
+    const row = document.querySelector(`#advRail .adv-rail-row[data-facet="${panel.dataset.facet}"]`);
+    const count = advPanelCount(panel);
+    if (row) {
+      const badge = row.querySelector('.adv-rail-badge');
+      badge.textContent = count ? String(count) : '';
+      badge.hidden = !count;
+      row.classList.toggle('held', count > 0);
+    }
+    const said = panel.querySelector('.adv-picked');
+    const facet = panel.dataset.facet;
+    if (said && advDraft[facet]) {
+      const inn = picked(advDraft[facet], 'in').length;
+      const out = picked(advDraft[facet], 'out').length;
+      const bits = [];
+      if (inn) bits.push(`${inn} included`);
+      if (out) bits.push(`${out} excluded`);
+      said.textContent = bits.join(' · ');
     }
   }
-  for (const facet of RANGE_FACETS) {
-    for (const value of advDraft[facet].keys()) bits.push(`${FACET_NAMES[facet]} ${facetValueText(facet, value)}`);
+  // Everything picked, across every panel, with a cross each.
+  const facets = renderFilterChips(advDraft, $('#advActive'), {
+    clear: (facet) => {
+      advDraft[facet] = new Map();
+      renderAdvanced();
+    },
+  });
+  const wrap = document.querySelector('#advModal .adv-active-wrap');
+  if (wrap) wrap.hidden = facets === 0;
+  const matched = advDraftCount();
+  const n = (x) => x.toLocaleString();
+  const apply = $('#advApply');
+  if (apply) apply.textContent = advActive(advDraft) ? `Apply · ${n(matched)} video${matched === 1 ? '' : 's'}` : 'Apply';
+  const head = $('#advMatch');
+  if (head) {
+    head.textContent = facets
+      ? `${facets} active · ${n(matched)} of ${n(state.files.length)} match`
+      : `no filters — all ${n(state.files.length)} shown`;
   }
-  el.textContent = bits.join(' · ');
 }
 
 /**

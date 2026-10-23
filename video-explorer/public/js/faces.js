@@ -1640,6 +1640,38 @@ function pillNoun(word) {
   return el;
 }
 
+/**
+ * What a sweep pill says, in the strip's order: what it counts, what it is
+ * doing as a word, the numbers, the cached count, and -- only while it is
+ * running through a counted library -- a short bar of how far it has got.
+ */
+function paintPill(text, { noun, word, main, cached = 0, fraction = null }) {
+  text.replaceChildren();
+  text.appendChild(pillNoun(noun));
+  const doing = document.createElement('span');
+  doing.className = 'faces-doing';
+  doing.textContent = word;
+  text.appendChild(doing);
+  const numbers = document.createElement('span');
+  numbers.className = 'faces-main';
+  numbers.textContent = main;
+  text.appendChild(numbers);
+  if (cached > 0) {
+    const kept = document.createElement('span');
+    kept.className = 'faces-cached';
+    kept.textContent = `· ${Number(cached).toLocaleString()} cached`;
+    text.appendChild(kept);
+  }
+  if (fraction !== null && Number.isFinite(fraction)) {
+    const bar = document.createElement('span');
+    bar.className = 'faces-bar';
+    const fill = document.createElement('span');
+    fill.style.width = `${Math.max(0, Math.min(100, Math.round(fraction * 100)))}%`;
+    bar.appendChild(fill);
+    text.appendChild(bar);
+  }
+}
+
 function renderFramingPill() {
   const pill = $('#framingPill');
   const text = $('#framingText');
@@ -1665,11 +1697,10 @@ function renderFramingPill() {
   pill.classList.toggle('paused', doing === 'paused' || doing === 'stopped');
   pill.classList.toggle('done', finished && !busy);
 
-  text.replaceChildren();
   const said = {
-    counting: 'counting the library\u2026',
-    framing: 'framing\u2026',
-    'standing aside': 'standing aside\u2026',
+    counting: 'counting\u2026',
+    framing: 'running',
+    'standing aside': 'standing aside',
     waiting: 'idle',
     paused: 'paused',
     stopped: 'stopped',
@@ -1677,26 +1708,16 @@ function renderFramingPill() {
   // Idle before the library has been counted is not "nothing left": it is
   // the count still to come, and the pill and its card both say so.
   const uncounted = !counted && (doing === 'waiting' || doing === 'counting');
-  text.appendChild(pillNoun('Frames'));
-  const main = document.createElement('span');
-  main.textContent = counted && downloaded ? `${n(framed)} / ${n(downloaded)}` : `${n(framed)}`;
-  text.appendChild(main);
-
-  const stateEl = document.createElement('span');
-  stateEl.className = 'faces-doing';
-  stateEl.textContent = ' ' + (finished && !busy ? 'all framed'
-    : uncounted ? said.counting : (said[doing] || 'framed'));
-  text.appendChild(stateEl);
-
   // Strips kept for videos that have since gone back to the cloud: work that
   // still counts for something, but not against this denominator. The pills
   // either side of this one report their own the same way.
-  if (cached > 0) {
-    const kept = document.createElement('span');
-    kept.className = 'faces-cached';
-    kept.textContent = ` \u00b7 ${n(cached)} cached`;
-    text.appendChild(kept);
-  }
+  paintPill(text, {
+    noun: 'Frames',
+    word: finished && !busy ? 'done' : uncounted ? said.counting : (said[doing] || 'idle'),
+    main: counted && downloaded ? `${n(framed)} / ${n(downloaded)}` : `${n(framed)}`,
+    cached,
+    fraction: busy && counted && downloaded ? framed / downloaded : null,
+  });
 
   setPillPop(pill, [
     doing === 'framing' ? `Building the preview frames for ${current}`
@@ -1767,40 +1788,27 @@ function renderDupePill() {
   pill.classList.toggle('paused', doing === 'paused' || doing === 'stopped');
   pill.classList.toggle('done', finished && !busy);
 
-  text.replaceChildren();
   const said = {
-    loading: 'opening the fingerprints\u2026',
-    counting: 'counting the library\u2026',
-    reading: 'fingerprinting\u2026',
-    matching: 'comparing\u2026',
+    loading: 'opening\u2026',
+    counting: 'counting\u2026',
+    reading: 'running',
+    matching: 'comparing',
     waiting: 'idle',
     paused: 'paused',
     stopped: 'stopped',
   };
   const uncounted = !counted && (doing === 'waiting' || doing === 'counting');
-  text.appendChild(pillNoun('Prints'));
-  const main = document.createElement('span');
-  main.textContent = counted && downloaded
-    ? `${n(fingerprintedOnDisk)} / ${n(downloaded)}`
-    : `${n(fingerprinted)}`;
-  text.appendChild(main);
-
-  const state = document.createElement('span');
-  state.className = 'faces-doing';
-  state.textContent = ' ' + (finished && !busy ? 'all fingerprinted'
-    : uncounted ? said.counting : (said[doing] || 'fingerprinted'));
-  text.appendChild(state);
-
   // Read exactly as the faces pill reads: work done on videos that have since
   // gone back to the cloud, kept and still counting for something. How many
   // copies could be deleted is a finding rather than progress, so it moves to
   // the tooltip, where the pill beside this one keeps its findings too.
-  if (cached > 0) {
-    const kept = document.createElement('span');
-    kept.className = 'faces-cached';
-    kept.textContent = ` \u00b7 ${n(cached)} cached`;
-    text.appendChild(kept);
-  }
+  paintPill(text, {
+    noun: 'Prints',
+    word: finished && !busy ? 'done' : uncounted ? said.counting : (said[doing] || 'idle'),
+    main: counted && downloaded ? `${n(fingerprintedOnDisk)} / ${n(downloaded)}` : `${n(fingerprinted)}`,
+    cached,
+    fraction: busy && counted && downloaded ? fingerprintedOnDisk / downloaded : null,
+  });
 
   setPillPop(pill, [
     doing === 'reading' ? `Fingerprinting ${current}`
@@ -1891,35 +1899,22 @@ function renderFacePill() {
 
   // What it is doing comes first, because that is the question being asked of
   // it. The fraction is the answer to a different one.
-  text.replaceChildren();
   const said = {
-    loading: 'opening the face index…',
-    counting: 'counting the library…',
-    reading: 'reading…',
+    loading: 'opening\u2026',
+    counting: 'counting\u2026',
+    reading: 'running',
     waiting: 'idle',
     paused: 'paused',
     stopped: 'stopped',
   };
   const uncounted = !counted && (doing === 'waiting' || doing === 'counting');
-  text.appendChild(pillNoun('Faces'));
-  const main = document.createElement('span');
-  main.textContent = counted && downloaded
-    ? `${n(profiledOnDisk)} / ${n(downloaded)}`
-    : `${n(profiled)}`;
-  text.appendChild(main);
-
-  const state = document.createElement('span');
-  state.className = 'faces-doing';
-  state.textContent = ' ' + (finished && !busy ? 'all profiled'
-    : uncounted ? said.counting : (said[doing] || 'profiled'));
-  text.appendChild(state);
-
-  if (cached > 0) {
-    const kept = document.createElement('span');
-    kept.className = 'faces-cached';
-    kept.textContent = ` \u00b7 ${n(cached)} cached`;
-    text.appendChild(kept);
-  }
+  paintPill(text, {
+    noun: 'Faces',
+    word: finished && !busy ? 'done' : uncounted ? said.counting : (said[doing] || 'idle'),
+    main: counted && downloaded ? `${n(profiledOnDisk)} / ${n(downloaded)}` : `${n(profiled)}`,
+    cached,
+    fraction: busy && counted && downloaded ? profiledOnDisk / downloaded : null,
+  });
 
   setPillPop(pill, [
     doing === 'reading' ? `Reading ${current}`

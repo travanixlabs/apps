@@ -8,32 +8,49 @@
   <meta name="theme-color" content="#0e1116">
   <link rel="icon" href="/icon-192.png" sizes="192x192">
   <link rel="apple-touch-icon" href="/icon-192.png">
+  <!-- Manrope for headings only; the rest is the system face. The app runs
+       offline often, and then the headings simply fall back to Segoe UI. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 
 <header class="topbar">
+  <h1 class="brand visually-hidden">Video Explorer</h1>
   <div class="topbar-row">
-    <h1 class="brand">Video&nbsp;Explorer</h1>
-
-    <div class="folder-field">
-      <input id="dirInput" type="text" spellcheck="false" placeholder="Paste a folder path, e.g. D:\Videos">
-      <button id="browseBtn" class="btn" title="Pick a folder">Browse…</button>
+    <!-- The folder you are in: back, forward, home and up, then the path as a
+         trail of crumbs that edits on click (the old path box, shown in its
+         place while you type). Built by renderBreadcrumb. -->
+    <nav id="breadcrumb" class="breadcrumb" aria-label="Folder" hidden></nav>
+    <div id="pathEdit" class="path-edit">
+      <input id="dirInput" type="text" spellcheck="false" placeholder="Paste a folder path, e.g. D:\Videos"
+             aria-label="Folder path">
       <button id="scanBtn" class="btn btn-primary">Open</button>
+      <button id="browseBtn" class="btn" title="Pick a folder">Browse…</button>
     </div>
 
-    <label class="check" title="Show every video beneath this folder in one flat list">
-      <input id="recursiveToggle" type="checkbox"> Flatten subfolders
+    <!-- A state button: the box is hidden, the label wears the pressed look. -->
+    <label class="btn state-btn flatten-btn" title="Show every video beneath this folder in one flat list">
+      <input id="recursiveToggle" type="checkbox"> <span>Flatten subfolders</span>
     </label>
 
+    <span class="topbar-gap"></span>
+
+    <div class="search-box">
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none"
+           stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <circle cx="6.8" cy="6.8" r="4.6"/><path d="M10.3 10.3 14 14"/>
+      </svg>
+      <input id="searchInput" type="search" class="search" placeholder="Search"
+             title="Terms are ANDed. A bare term matches the filename, subfolder, or any tag. Prefix with # or tag: to match tags only.">
+      <kbd class="search-key" aria-hidden="true">/</kbd>
+    </div>
+
     <div class="menu-host">
-      <button id="sortBtn" class="btn btn-icon" aria-haspopup="menu" aria-expanded="false"
-              aria-label="Sort" title="Sort">
-        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-          <path d="M4.5 12.5V3.5m0 9L2 10m2.5 2.5L7 10M11.5 3.5v9m0-9L9 6m2.5-2.5L14 6"
-                fill="none" stroke="currentColor" stroke-width="1.4"
-                stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
+      <button id="sortBtn" class="btn state-btn" aria-haspopup="menu" aria-expanded="false"
+              title="Sort">
+        <span class="state-lead">Sort:</span><span id="sortBtnLabel">Name ↑</span>
       </button>
       <div id="sortMenu" class="menu" role="menu" hidden></div>
       <!-- Kept as the single source of truth for the current field, so the
@@ -52,41 +69,24 @@
     </div>
 
 
-    <button id="advBtn" class="btn btn-icon" aria-label="Advanced filters"
-            title="Advanced filters — tags, rating, models, performer, sweeps">
-      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-        <path d="M1.5 2.5h13L9.5 8.6v4.2l-3 1.7V8.6z" fill="none" stroke="currentColor"
-              stroke-width="1.4" stroke-linejoin="round"/>
-      </svg>
+    <div class="menu-host">
+      <button id="groupBtn" class="btn state-btn group-btn" aria-haspopup="menu" aria-expanded="false"
+              aria-label="Group by" title="Group by">
+        <span class="state-lead">Group:</span><span id="groupBtnLabel" class="group-btn-label">Off</span>
+      </button>
+      <div id="groupMenu" class="menu" role="menu" hidden></div>
+    </div>
+
+    <button id="advBtn" class="btn state-btn" aria-label="Filter"
+            title="Filter — tags, rating, models, performer, sweeps">
+      Filter
       <!-- How many facets are in force. -->
       <span id="advDot" class="adv-count" hidden></span>
     </button>
 
     <div class="menu-host">
-      <button id="groupBtn" class="btn btn-icon group-btn" aria-haspopup="menu" aria-expanded="false"
-              aria-label="Group by" title="Group by">
-        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none"
-             stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="2" y="2.5" width="12" height="4" rx="1"/>
-          <path d="M3.5 9.5h9M3.5 12.5h9"/>
-        </svg>
-        <span id="groupBtnLabel" class="group-btn-label" hidden></span>
-      </button>
-      <div id="groupMenu" class="menu" role="menu" hidden></div>
-    </div>
-
-    <div class="menu-host">
-      <button id="volBtn" class="btn btn-icon" title="Volume">
-        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-          <path d="M2.5 6h2L7.5 3.4v9.2L4.5 10h-2z" fill="currentColor"/>
-          <g id="volWaves" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
-            <path d="M9.8 6.1a2.7 2.7 0 0 1 0 3.8"/>
-            <path id="volWave2" d="M11.6 4.4a5.2 5.2 0 0 1 0 7.2"/>
-          </g>
-          <!-- display, not `hidden`: SVG elements ignore the HTML hidden attribute. -->
-          <path id="volCross" d="M10.4 6.4l3.4 3.2m0-3.2l-3.4 3.2" fill="none" stroke="currentColor"
-                stroke-width="1.4" stroke-linecap="round" style="display: none"/>
-        </svg>
+      <button id="volBtn" class="btn state-btn" title="Sound">
+        <span class="state-lead">Sound:</span><span id="volBtnLabel">off</span>
       </button>
       <div id="volMenu" class="menu vol-menu" hidden>
         <label class="vol-row">
@@ -107,27 +107,6 @@
         <circle cx="8" cy="8" r="4.6"/>
       </svg>
     </button>
-  </div>
-
-  <div class="topbar-row secondary">
-    <input id="searchInput" type="search" class="search"
-           placeholder="Filter by name, subfolder, or tag — #tag for tags only"
-           title="Terms are ANDed. A bare term matches the filename, subfolder, or any tag. Prefix with # or tag: to match tags only.">
-
-    <!-- No `title` on any of the three: these numbers move every two seconds,
-         and a native tooltip reads the attribute once, when it opens, then
-         shows that text until the pointer leaves. The card below is repainted
-         by the same poll that moves the pill, so it stays honest. -->
-    <button id="framingPill" class="faces-pill framing-pill" hidden>
-      <span class="faces-dot"></span><span id="framingText">framing</span>
-    </button>
-    <button id="dupesPill" class="faces-pill dupes-pill" hidden>
-      <span class="faces-dot"></span><span id="dupesText">duplicates</span>
-    </button>
-    <button id="facesPill" class="faces-pill" hidden>
-      <span class="faces-dot"></span><span id="facesText">faces</span>
-    </button>
-    <span id="status" class="status" aria-live="polite"></span>
   </div>
 
   <!-- The filter in force, a chip a facet, each one clearing its own. Hidden
@@ -156,19 +135,23 @@
   </div>
 </header>
 
-<nav id="breadcrumb" class="breadcrumb" hidden></nav>
+<!-- Fills as a chunk of the listing draws, and while a folder is being read. -->
+<div id="loadBar" class="load-bar" aria-hidden="true"><span></span></div>
 
+<!-- The subfolders, as one row of cards. The line above them is the button
+     that folds the row away; whether it is folded is remembered per folder. -->
 <section id="foldersSection" class="folders-pane" hidden>
-  <h2 class="section-head">
-    <button id="foldersCollapse" class="collapse-btn" title="Collapse or expand" aria-label="Collapse or expand the folders">▾</button>
-    Folders <span id="folderCount" class="count"></span>
-  </h2>
-  <div id="folders" class="folder-grid"></div>
+  <button id="foldersCollapse" class="band-head" type="button" aria-expanded="true">
+    <span class="band-arrow" aria-hidden="true">▾</span>
+    <span id="folderCount" class="band-count"></span>
+    <span id="bandSummary" class="band-summary"></span>
+  </button>
+  <div id="folders" class="folder-grid" role="list"></div>
 </section>
 
 <main id="scrollArea">
-  <div id="empty">
-    <p class="empty-title">Point me at a folder of MP4s.</p>
+  <div id="empty" class="empty-state">
+    <h2 class="empty-title">Point me at a folder of MP4s.</h2>
     <p>Type or <strong>Browse…</strong> to a path, then press <strong>Open</strong>. Hover any tile to play through 10 points in the video.</p>
   </div>
 
@@ -181,6 +164,25 @@
     <div id="grid" class="grid"></div>
   </section>
 </main>
+
+<!-- What the three sweeps are doing, along the bottom: a dot per sweep in the
+     colour of its state, the state as a word, the numbers, and a short bar
+     while one is running. The listing's count sits at the right end. No
+     `title` on the pills: these numbers move every two seconds, and a native
+     tooltip reads the attribute once, when it opens. The card is repainted by
+     the same poll that moves the pill, so it stays honest. -->
+<footer id="sweepStrip" class="sweep-strip">
+  <button id="framingPill" class="faces-pill framing-pill" hidden>
+    <span class="faces-dot"></span><span id="framingText">framing</span>
+  </button>
+  <button id="dupesPill" class="faces-pill dupes-pill" hidden>
+    <span class="faces-dot"></span><span id="dupesText">duplicates</span>
+  </button>
+  <button id="facesPill" class="faces-pill" hidden>
+    <span class="faces-dot"></span><span id="facesText">faces</span>
+  </button>
+  <span id="status" class="status" aria-live="polite"></span>
+</footer>
 
 <!-- Folder picker -->
 <div id="pickerModal" class="modal" hidden>
@@ -206,9 +208,11 @@
 <!-- Inline player -->
 <div id="playerModal" class="modal" hidden>
   <div class="modal-card modal-wide" role="dialog" aria-modal="true" aria-labelledby="playerTitle">
-    <header class="modal-head">
+    <header class="modal-head player-head">
       <span id="playerCount" class="player-count mono" hidden></span>
+      <span id="playerPath" class="player-path"></span>
       <h2 id="playerTitle">Playing</h2>
+      <span id="playerFacts" class="player-facts"></span>
       <button id="playerExpand" class="btn btn-icon player-expand" type="button"
               title="Full window" aria-label="Full window" aria-pressed="false">
         <svg class="pe-grow" viewBox="0 0 16 16" width="14" height="14" fill="none"
@@ -340,53 +344,49 @@
         </button>
       </div>
     </div>
-    <footer class="modal-foot">
-      <div class="player-nav">
-        <button id="playerPrev" class="qbtn" title="Previous video (←)" aria-label="Previous video">‹</button>
-        <button id="playerNext" class="qbtn" title="Next video (→)" aria-label="Next video">›</button>
-        <button id="playerRandom" class="qbtn mode-btn" type="button" aria-pressed="false"
-                title="Random — next is any video in this listing not yet played">
-          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none"
-               stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M1.5 4h2.2c1 0 1.6.5 2.2 1.3l4 5.4c.6.8 1.2 1.3 2.2 1.3h2.4"/>
-            <path d="M1.5 12h2.2c1 0 1.6-.5 2.2-1.3l.9-1.2"/>
-            <path d="M9 6.5l1-1.2C10.6 4.5 11.2 4 12.2 4h2.3"/>
-            <path d="M12.7 2.3L14.9 4l-2.2 1.7"/>
-            <path d="M12.7 10.3l2.2 1.7-2.2 1.7"/>
-          </svg>
-        </button>
-        <button id="playerRepeat" class="qbtn mode-btn" type="button" aria-pressed="false"
-                title="Repeat — at the end of the listing, start again">
-          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none"
-               stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 6.5v-.4A2.6 2.6 0 0 1 5.6 3.5h6.2M11.8 1.7l2 1.8-2 1.8"/>
-            <path d="M13 9.5v.4a2.6 2.6 0 0 1-2.6 2.6H4.2M4.2 14.3l-2-1.8 2-1.8"/>
-          </svg>
-        </button>
+    <footer class="modal-foot player-foot">
+      <!-- Row one: what you make of it -- the stars, the names, the labels. -->
+      <div class="player-label-row">
+        <div id="playerRecord" class="player-record"
+             title="1–5 for stars; hold Shift, Alt or Ctrl to add a half (Shift+0 is ½); 0 clears"></div>
+        <span class="player-keys-hint" aria-hidden="true">1–5 keys</span>
       </div>
-      <div id="playerRecord" class="player-record"
-           title="1–5 for stars; hold Shift, Alt or Ctrl to add a half (Shift+0 is ½); 0 clears"></div>
-      <div id="playerSuggest" class="player-suggest" hidden></div>
-      <!-- Where else this face is. Under the names, because it is the same
-           index answering the other half of the question. -->
-      <div id="playerSimilar" class="player-similar" hidden></div>
-      <div id="playerActions" class="quickbar quickbar-footer"></div>
-      <button id="playerAvail" class="qbtn avail-btn" type="button"></button>
-      <span class="info-host">
-        <button id="playerInfo" class="qbtn" aria-label="File details" aria-describedby="playerInfoPop">
-          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-            <circle cx="8" cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.4"/>
-            <path d="M8 7.1v4.1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-            <circle cx="8" cy="4.6" r=".95" fill="currentColor"/>
-          </svg>
-        </button>
-        <span id="playerInfoPop" class="info-pop" role="tooltip">
-          <span id="playerPos" class="info-pos"></span>
-          <span id="playerMeta" class="mono"></span>
+      <!-- Row two: where to go next on the left, what to do with the file on the right. -->
+      <div class="player-action-row">
+        <div class="player-nav">
+          <button id="playerPrev" class="btn" title="Previous video (←)" aria-label="Previous video">← Prev</button>
+          <button id="playerNext" class="btn" title="Next video (→)" aria-label="Next video">Next →</button>
+          <button id="playerRandom" class="btn mode-btn" type="button" aria-pressed="false"
+                  title="Random — next is any video in this listing not yet played">Random</button>
+          <button id="playerRepeat" class="btn mode-btn" type="button" aria-pressed="false"
+                  title="Repeat — at the end of the listing, start again">Repeat</button>
+        </div>
+        <span class="player-action-gap"></span>
+        <div id="playerActions" class="quickbar quickbar-footer"></div>
+        <button id="playerAvail" class="qbtn qbtn-labelled avail-btn" type="button"></button>
+        <span class="info-host">
+          <button id="playerInfo" class="qbtn qbtn-labelled" aria-label="File details" aria-describedby="playerInfoPop">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <circle cx="8" cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+              <path d="M8 7.1v4.1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+              <circle cx="8" cy="4.6" r=".95" fill="currentColor"/>
+            </svg><span class="qbtn-label">Info</span>
+          </button>
+          <span id="playerInfoPop" class="info-pop" role="tooltip">
+            <span id="playerPos" class="info-pos"></span>
+            <span id="playerMeta" class="mono"></span>
+          </span>
         </span>
-      </span>
-      <button id="playerKeys" class="linkish keys-link" type="button"
-              title="Keyboard shortcuts (?)">Keys ?</button>
+        <span class="player-action-rule" aria-hidden="true"></span>
+        <button id="playerKeys" class="btn btn-ghost keys-link" type="button"
+                title="Keyboard shortcuts (?)">Keys ?</button>
+      </div>
+      <!-- Row three: who this looks like, and where else the face is. Side by
+           side, because they are the same index asked two questions. -->
+      <div class="player-rows">
+        <div id="playerSuggest" class="player-suggest" hidden></div>
+        <div id="playerSimilar" class="player-similar" hidden></div>
+      </div>
     </footer>
   </div>
 </div>
@@ -447,163 +447,189 @@
 
 <!-- Advanced filters -->
 <div id="advModal" class="modal" hidden>
-  <div class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="advTitle">
+  <div class="modal-card wide adv-card" role="dialog" aria-modal="true" aria-labelledby="advTitle">
     <header class="modal-head">
-      <h2 id="advTitle">Advanced filters</h2>
+      <h2 id="advTitle">Filter</h2>
       <span id="advMatch" class="adv-match" aria-live="polite"></span>
       <button class="btn btn-icon modal-close" aria-label="Close">✕</button>
     </header>
-    <p class="adv-legend">Click a chip once to require it, again to exclude it, again to clear.</p>
 
+    <!-- A rail of facets on the left, one facet's chips on the right. The rail
+         is built from the panels (buildAdvRail) and wears a count where a
+         facet is in force; the strip at the foot of the panel lists everything
+         picked across all of them, so nothing is out of sight. -->
     <div class="adv-body">
-      <!-- No name box here. The filter field in the top bar already matches the
-           filename, the subfolder and the tags, filters as you type, and does
-           not have to be opened first. -->
-      <!-- Most-used first: what a video is about, how good it is, and who is
-           in it. Then what belongs to the performers, then the sweeps. -->
-      <div class="adv-block">
-        <div class="adv-label">
-          Tags
-          <span class="adv-mode">
-            <label><input type="radio" name="tagMode" value="all" checked> all</label>
-            <label><input type="radio" name="tagMode" value="any"> any</label>
-          </span>
-          <button class="linkish" data-clear="tags">Clear</button>
-        </div>
-        <input id="advTagsFind" class="chip-find" type="text" autocomplete="off"
-               spellcheck="false" placeholder="search tags">
-        <div id="advTags" class="chip-row scroller"></div>
-      </div>
+      <nav id="advRail" class="adv-rail" aria-label="Facets"></nav>
 
-      <div class="adv-block">
-        <div class="adv-label">
-          Rating
-          <button class="linkish" data-clear="rating">Clear</button>
-        </div>
-        <div id="advRating" class="chip-row"></div>
-      </div>
-
-      <div class="adv-block">
-        <div class="adv-label">
-          Models
-          <span class="adv-mode">
-            <label><input type="radio" name="modelMode" value="all" checked> all</label>
-            <label><input type="radio" name="modelMode" value="any"> any</label>
-          </span>
-          <button class="linkish" data-clear="models">Clear</button>
-        </div>
-        <input id="advModelsFind" class="chip-find" type="text" autocomplete="off"
-               spellcheck="false" placeholder="Type to find a performer">
-        <div id="advModels" class="chip-row scroller"></div>
-      </div>
-
-      <!-- Height, bust, body, race and favourite tier belong to performers: a
-           video carries what its credited performers have. -->
-      <section class="adv-group" aria-labelledby="advPersonHead">
-        <h3 id="advPersonHead" class="adv-group-head">Performer</h3>
-
-        <div class="adv-block">
+      <div class="adv-panel">
+        <!-- No name box here. The search field in the top bar already matches the
+             filename, the subfolder and the tags, filters as you type, and does
+             not have to be opened first. -->
+        <!-- Most-used first: what a video is about, how good it is, and who is
+             in it. Then what belongs to the performers, then the sweeps. -->
+        <div class="adv-block" data-facet="tags" data-facet-name="Tags">
           <div class="adv-label">
-            Height
-            <span class="adv-mode">
+            <h4>Tags</h4>
+            <span class="adv-mode seg" role="radiogroup" aria-label="Match all or any">
+              <label><input type="radio" name="tagMode" value="all" checked> all</label>
+              <label><input type="radio" name="tagMode" value="any"> any</label>
+            </span>
+            <span class="adv-picked" data-picked="tags"></span>
+            <button class="linkish" data-clear="tags">Clear</button>
+          </div>
+          <input id="advTagsFind" class="chip-find" type="text" autocomplete="off"
+                 spellcheck="false" placeholder="Find a tag">
+          <div id="advTags" class="chip-row scroller"></div>
+        </div>
+
+        <div class="adv-block" data-facet="ratings" data-facet-name="Rating">
+          <div class="adv-label">
+            <h4>Rating</h4>
+            <span class="adv-picked" data-picked="ratings"></span>
+            <button class="linkish" data-clear="rating">Clear</button>
+          </div>
+          <div id="advRating" class="chip-row"></div>
+        </div>
+
+        <div class="adv-block" data-facet="models" data-facet-name="Models">
+          <div class="adv-label">
+            <h4>Models</h4>
+            <span class="adv-mode seg" role="radiogroup" aria-label="Match all or any">
+              <label><input type="radio" name="modelMode" value="all" checked> all</label>
+              <label><input type="radio" name="modelMode" value="any"> any</label>
+            </span>
+            <span class="adv-picked" data-picked="models"></span>
+            <button class="linkish" data-clear="models">Clear</button>
+          </div>
+          <input id="advModelsFind" class="chip-find" type="text" autocomplete="off"
+                 spellcheck="false" placeholder="Type to find a performer">
+          <div id="advModels" class="chip-row scroller"></div>
+        </div>
+
+        <!-- Height, bust, body, race and favourite tier belong to performers: a
+             video carries what its credited performers have. -->
+        <div class="adv-block" data-facet="height" data-facet-name="Height" data-facet-group="Performer">
+          <div class="adv-label">
+            <h4>Height</h4>
+            <span class="adv-mode seg" role="radiogroup" aria-label="Match all or any">
               <label><input type="radio" name="heightMode" value="all" checked> all</label>
               <label><input type="radio" name="heightMode" value="any"> any</label>
             </span>
+            <span class="adv-picked" data-picked="height"></span>
             <button class="linkish" data-clear="height">Clear</button>
           </div>
           <div id="advHeight" class="chip-row"></div>
         </div>
 
-        <div class="adv-block">
+        <div class="adv-block" data-facet="bust" data-facet-name="Bust" data-facet-group="Performer">
           <div class="adv-label">
-            Bust
-            <span class="adv-mode">
+            <h4>Bust</h4>
+            <span class="adv-mode seg" role="radiogroup" aria-label="Match all or any">
               <label><input type="radio" name="bustMode" value="all" checked> all</label>
               <label><input type="radio" name="bustMode" value="any"> any</label>
             </span>
+            <span class="adv-picked" data-picked="bust"></span>
             <button class="linkish" data-clear="bust">Clear</button>
           </div>
           <div id="advBust" class="chip-row"></div>
         </div>
 
-        <div class="adv-block">
+        <div class="adv-block" data-facet="body" data-facet-name="Body" data-facet-group="Performer">
           <div class="adv-label">
-            Body
-            <span class="adv-mode">
+            <h4>Body</h4>
+            <span class="adv-mode seg" role="radiogroup" aria-label="Match all or any">
               <label><input type="radio" name="bodyMode" value="all" checked> all</label>
               <label><input type="radio" name="bodyMode" value="any"> any</label>
             </span>
+            <span class="adv-picked" data-picked="body"></span>
             <button class="linkish" data-clear="body">Clear</button>
           </div>
           <div id="advBody" class="chip-row"></div>
         </div>
 
-        <div class="adv-block">
+        <div class="adv-block" data-facet="race" data-facet-name="Race" data-facet-group="Performer">
           <div class="adv-label">
-            Race
-            <span class="adv-mode">
+            <h4>Race</h4>
+            <span class="adv-mode seg" role="radiogroup" aria-label="Match all or any">
               <label><input type="radio" name="raceMode" value="all" checked> all</label>
               <label><input type="radio" name="raceMode" value="any"> any</label>
             </span>
+            <span class="adv-picked" data-picked="race"></span>
             <button class="linkish" data-clear="race">Clear</button>
           </div>
           <div id="advRace" class="chip-row"></div>
         </div>
 
-        <div class="adv-block">
+        <div class="adv-block" data-facet="favourites" data-facet-name="Favourites" data-facet-group="Performer">
           <div class="adv-label">
-            Favourites
-            <span class="adv-mode">
+            <h4>Favourites</h4>
+            <span class="adv-mode seg" role="radiogroup" aria-label="Match all or any">
               <label><input type="radio" name="favouritesMode" value="all" checked> all</label>
               <label><input type="radio" name="favouritesMode" value="any"> any</label>
             </span>
+            <span class="adv-picked" data-picked="favourites"></span>
             <button class="linkish" data-clear="favourites">Clear</button>
           </div>
           <div id="advFavourites" class="chip-row"></div>
         </div>
-      </section>
 
-      <!-- Sync: what the sweeps have done, and where the file lives. Last: it
-           is the least-asked question on the dialog. -->
-      <details id="advMore" class="adv-block adv-sync">
-        <summary class="adv-label">Additional options</summary>
-        <div class="sync-row"><span class="sync-name">Framing</span>
-          <div id="advFraming" class="chip-row"></div>
-          <button class="linkish" data-clear="framing">Clear</button></div>
-        <div class="sync-row"><span class="sync-name">Duplicates</span>
-          <div id="advFingerprint" class="chip-row"></div>
-          <button class="linkish" data-clear="fingerprint">Clear</button></div>
-        <div class="sync-row"><span class="sync-name">Faces</span>
-          <div id="advProfiling" class="chip-row"></div>
-          <button class="linkish" data-clear="profiling">Clear</button></div>
-        <div class="sync-row"><span class="sync-name">Models suggested</span>
-          <div id="advSuggestions" class="chip-row"></div>
-          <button class="linkish" data-clear="suggestions">Clear</button></div>
-        <div class="sync-row"><span class="sync-name">Models suggested %</span>
-          <div class="chip-row range-row" data-range="suggestedPct"
-               title="Videos with at least one suggestion still waiting whose match is in this range">
-            <input type="number" min="20" max="100" step="1" placeholder="20" aria-label="Lowest suggested match %">
-            <span>–</span>
-            <input type="number" min="20" max="100" step="1" placeholder="100" aria-label="Highest suggested match %">
-            <span>%</span></div>
-          <button class="linkish" data-clear="suggestedPct">Clear</button></div>
-        <div class="sync-row"><span class="sync-name">Models labelled %</span>
-          <div class="chip-row range-row" data-range="labelledPct"
-               title="Videos with at least one credited performer whose match is in this range">
-            <input type="number" min="20" max="100" step="1" placeholder="20" aria-label="Lowest labelled match %">
-            <span>–</span>
-            <input type="number" min="20" max="100" step="1" placeholder="100" aria-label="Highest labelled match %">
-            <span>%</span></div>
-          <button class="linkish" data-clear="labelledPct">Clear</button></div>
-        <div class="sync-row"><span class="sync-name">Downloaded / cloud</span>
+        <div class="adv-block" data-facet="storage" data-facet-name="Storage">
+          <div class="adv-label">
+            <h4>Downloaded / cloud</h4>
+            <span class="adv-picked" data-picked="storage"></span>
+            <button class="linkish" data-clear="storage">Clear</button>
+          </div>
           <div id="advStorage" class="chip-row"></div>
-          <button class="linkish" data-clear="storage">Clear</button></div>
-      </details>
+        </div>
 
+        <!-- Sync: what the sweeps have done. Last: it is the least-asked
+             question on the dialog. One panel for the lot. -->
+        <div id="advMore" class="adv-block adv-sync" data-facet="sweeps" data-facet-name="Sweeps"
+             data-facets="framing fingerprint profiling suggestions suggestedPct labelledPct">
+          <div class="adv-label"><h4>Sweeps</h4></div>
+          <div class="sync-row"><span class="sync-name">Framing</span>
+            <div id="advFraming" class="chip-row"></div>
+            <button class="linkish" data-clear="framing">Clear</button></div>
+          <div class="sync-row"><span class="sync-name">Duplicates</span>
+            <div id="advFingerprint" class="chip-row"></div>
+            <button class="linkish" data-clear="fingerprint">Clear</button></div>
+          <div class="sync-row"><span class="sync-name">Faces</span>
+            <div id="advProfiling" class="chip-row"></div>
+            <button class="linkish" data-clear="profiling">Clear</button></div>
+          <div class="sync-row"><span class="sync-name">Models suggested</span>
+            <div id="advSuggestions" class="chip-row"></div>
+            <button class="linkish" data-clear="suggestions">Clear</button></div>
+          <div class="sync-row"><span class="sync-name">Models suggested %</span>
+            <div class="chip-row range-row" data-range="suggestedPct"
+                 title="Videos with at least one suggestion still waiting whose match is in this range">
+              <input type="number" min="20" max="100" step="1" placeholder="20" aria-label="Lowest suggested match %">
+              <span>–</span>
+              <input type="number" min="20" max="100" step="1" placeholder="100" aria-label="Highest suggested match %">
+              <span>%</span></div>
+            <button class="linkish" data-clear="suggestedPct">Clear</button></div>
+          <div class="sync-row"><span class="sync-name">Models labelled %</span>
+            <div class="chip-row range-row" data-range="labelledPct"
+                 title="Videos with at least one credited performer whose match is in this range">
+              <input type="number" min="20" max="100" step="1" placeholder="20" aria-label="Lowest labelled match %">
+              <span>–</span>
+              <input type="number" min="20" max="100" step="1" placeholder="100" aria-label="Highest labelled match %">
+              <span>%</span></div>
+            <button class="linkish" data-clear="labelledPct">Clear</button></div>
+        </div>
+
+        <!-- Everything picked, across every facet: so what is chosen in a
+             panel you are not looking at stays in sight. -->
+        <div class="adv-active-wrap">
+          <div class="adv-active-lead">Active across facets</div>
+          <div id="advActive" class="adv-active"></div>
+        </div>
+      </div>
     </div>
 
     <footer class="modal-foot">
       <button id="advReset" class="btn btn-ghost">Reset all</button>
+      <span class="adv-foot-hint">Click a chip once to include it, again to exclude it, again to clear. Counts update as you pick; Apply closes.</span>
+      <button id="advCancel" class="btn">Cancel</button>
       <button id="advApply" class="btn btn-primary">Apply</button>
     </footer>
   </div>
@@ -653,12 +679,20 @@
   <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
     <header class="modal-head">
       <h2 id="settingsTitle">Settings</h2>
+      <!-- Every change saves as it is made; this says so, for a moment. -->
+      <span id="settingsSaved" class="settings-saved" role="status" aria-live="polite" hidden>● Saved</span>
       <button class="btn btn-icon modal-close" aria-label="Close">✕</button>
     </header>
+    <!-- Four tabs, in the order they are reached for: where the library is,
+         how previews are made, how the grid looks, and the labels. -->
+    <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+      <button class="settings-tab on" type="button" role="tab" aria-selected="true" data-tab="library">Library</button>
+      <button class="settings-tab" type="button" role="tab" aria-selected="false" data-tab="previews">Previews</button>
+      <button class="settings-tab" type="button" role="tab" aria-selected="false" data-tab="appearance">Appearance</button>
+      <button class="settings-tab" type="button" role="tab" aria-selected="false" data-tab="labels">Labels</button>
+    </div>
     <div class="settings-body">
-      <!-- Four groups, in the order they are reached for: where the library
-           is, how previews are made, how the grid looks, and the labels. -->
-      <h3 class="settings-head settings-head-first">Library</h3>
+      <section class="settings-pane on" data-pane="library" role="tabpanel">
       <label class="field-row">Default folder
         <span class="field-path">
           <input id="setHomeDir" type="text" spellcheck="false" placeholder="C:\Users\…\OneDrive">
@@ -675,8 +709,9 @@
       <p class="hint">Names, comma separated, applied at the default folder only. The sync root keeps
         Documents, Music and the rest beside your libraries; this hides them without hiding anything
         deeper in. Leave it blank to list everything.</p>
+      </section>
 
-      <h3 class="settings-head">Previews</h3>
+      <section class="settings-pane" data-pane="previews" role="tabpanel" hidden>
       <label class="field-row">Hover engine
         <select id="setPreviewMode">
           <option value="live">Live video — instant, plays each segment</option>
@@ -701,8 +736,9 @@
       </label>
       <p class="hint">Changing frame count or tile width rebuilds previews on next hover. Existing sprites stay cached under <span class="mono">.cache</span>.</p>
       <button id="clearCacheBtn" class="btn btn-danger">Clear preview cache</button>
+      </section>
 
-      <h3 class="settings-head">Appearance</h3>
+      <section class="settings-pane" data-pane="appearance" role="tabpanel" hidden>
       <label class="field-row">Card size
         <span class="slider-field">
           <input id="cardWidth" type="range" min="200" max="520" step="20" value="200">
@@ -713,7 +749,7 @@
         <input id="setCardDetails" type="checkbox"> Show details on cards — date, resolution and subfolder
       </label>
       <p class="hint">The size, the dwell and the details take effect at once, so the grid behind
-        this can be judged while you set them. They are remembered without pressing Save.</p>
+        this can be judged while you set them.</p>
       <!-- One colour for performers: a video has one, so there is nothing to
            pick a colour per value FOR -- the kind is what you are telling
            apart at a glance. Labels get one each, below. -->
@@ -746,10 +782,12 @@
         </label>
       </div>
 
+      </section>
+
       <!-- Labels are a vocabulary, so each one gets its own colour, and the
            list is where they are made, renamed and removed. A rename or a
            delete here reaches every video carrying it. -->
-      <h3 class="settings-head">Labels</h3>
+      <section class="settings-pane" data-pane="labels" role="tabpanel" hidden>
       <div class="label-add">
         <input id="labelNew" type="text" placeholder="New label" autocomplete="off">
         <button id="labelAdd" class="btn btn-primary">Add</button>
@@ -758,9 +796,10 @@
         deleting one takes it off every video. Neither can be undone from here, so a
         delete asks first and says how many videos it will touch.</p>
       <div id="labelList" class="label-list"></div>
+      </section>
     </div>
-    <footer class="modal-foot">
-      <button id="settingsSave" class="btn btn-primary">Save</button>
+    <footer class="modal-foot settings-foot">
+      <span class="hint">Every change saves immediately. Esc closes.</span>
     </footer>
   </div>
 </div>

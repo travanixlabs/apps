@@ -163,7 +163,7 @@ function appendPage() {
   const source = pageSource();
   const start = state.rendered;
   const end = Math.min(source.length, start + CHUNK);
-  if (start >= end) { syncGridTail(); return; }
+  if (start >= end) { syncGridTail(); setLoadBar(1); return; }
   const batch = [];
 
   // Built off-document and attached once: 240 separate appends to a live grid
@@ -190,6 +190,24 @@ function appendPage() {
   syncFileCount();
   fetchMetaFor(batch);
   updateStatusLine();
+  // The bar under the toolbar: how much of the listing is drawn. Full, it goes.
+  setLoadBar(source.length ? end / source.length : 1);
+}
+
+/**
+ * The two-pixel bar under the toolbar. A fraction fills it that far and
+ * clears it once full; `null` is a folder being read, which has no fraction
+ * yet, so the bar sweeps instead.
+ */
+function setLoadBar(fraction) {
+  const bar = $('#loadBar');
+  if (!bar) return;
+  const fill = bar.firstElementChild;
+  bar.classList.toggle('busy', fraction === null);
+  if (fraction === null) { fill.style.width = ''; return; }
+  const done = fraction >= 1;
+  fill.style.width = done ? '100%' : `${Math.round(fraction * 100)}%`;
+  bar.classList.toggle('done', done);
 }
 
 /**
@@ -356,7 +374,7 @@ function buildGroupHead(group) {
   if (person) {
     const score = document.createElement('span');
     score.className = 'group-score';
-    score.textContent = group.points.toLocaleString();
+    score.textContent = `${group.points.toLocaleString()} pts`;
     score.title = 'Points per video: 5★ 10,000 · 4.5★ 7,500 · 4★ 5,000 · 3.5★ 2,500 · 3★ 1,000'
       + ' · 2.5★ 500 · 2★ 250 · 1.5★ 100 · 1★ 75 · 0.5★ 50 — counting only what is in this listing.';
     line.appendChild(score);
@@ -643,7 +661,10 @@ function updateStatusLine() {
   if (!state.config.recursive && state.totalBelow > state.files.length) {
     bits.push(`${state.totalBelow.toLocaleString()} below`);
   }
-  setStatus(bits.join('  ·  '));
+  if (state.selected.size) bits.unshift(`${state.selected.size.toLocaleString()} selected`);
+  setStatus(bits.join(' · '));
+  // The band's one-line summary says the same count, where the band is.
+  if (typeof syncBand === 'function' && !$('#foldersSection').hidden) syncBand();
 }
 
 /**
@@ -718,10 +739,27 @@ function updateCardMeta(filePath, known) {
 
     const preview = card.querySelector('.preview');
     if (preview && info.duration) preview.dataset.duration = String(info.duration);
-    // The resolution arrives with the probe.
+    // The duration and the resolution arrive with the probe.
     const meta = card.querySelector('.card-meta');
-    if (meta) meta.textContent = cardMetaText(file);
+    if (meta) meta.replaceWith(buildCardMeta(file));
   }
+}
+
+/**
+ * The line under a card's name: "12:34 · 1080p · 26 Aug 2025" on the left,
+ * the stars on the right. The facts give way first (ellipsis); the stars are
+ * short and keep their place.
+ */
+function buildCardMeta(file) {
+  const row = document.createElement('span');
+  row.className = 'card-meta';
+  const facts = document.createElement('span');
+  facts.className = 'card-meta-text';
+  facts.textContent = cardMetaText(file);
+  facts.title = facts.textContent;
+  row.appendChild(facts);
+  if (file.rating) row.appendChild(buildCornerRating(file.rating));
+  return row;
 }
 
 /**
@@ -732,18 +770,59 @@ function updateCardMeta(filePath, known) {
  */
 function renderEmptyState(mode = null) {
   const empty = $('#empty');
-  const which = mode || (state.dir ? 'empty' : 'onboarding');
-  if (!mode && (state.files.length || state.folders.length)) { empty.hidden = true; return; }
+  let which = mode || (state.dir ? 'empty' : 'onboarding');
+  if (!mode) {
+    // Videos here, none left by the filter or the search: a different
+    // message, with the way out of it.
+    if (state.files.length && !state.view.length) which = 'filtered';
+    else if (state.files.length || state.folders.length) { empty.hidden = true; return; }
+  }
   empty.hidden = false;
-  if (which === 'onboarding') {
-    empty.innerHTML = '<p class="empty-title">Point me at a folder of MP4s.</p>'
-      + '<p>Type or <strong>Browse…</strong> to a path, then press <strong>Open</strong>. '
-      + 'Hover any tile to play through 10 points in the video.</p>';
-  } else if (which === 'error') {
-    empty.innerHTML = '<p class="empty-title">That folder could not be opened.</p>'
-      + '<p>Check the path, or <strong>Browse…</strong> to another one.</p>';
-  } else {
-    empty.innerHTML = '<p class="empty-title">Nothing here.</p><p>No videos and no subfolders in this folder.</p>';
+  empty.classList.toggle('is-error', which === 'error');
+  const n = (x) => Number(x || 0).toLocaleString();
+  const facets = (() => {
+    let c = 0;
+    for (const f of ALL_FACETS) if (state.adv[f] && state.adv[f].size) c += 1;
+    return c;
+  })();
+  const said = {
+    onboarding: {
+      title: 'Point me at a folder of MP4s.',
+      text: 'Type or browse to a path, then press Open. Hover any tile to play through 10 points in the video.',
+      action: ['Browse…', () => pickFolder('Choose a video folder', (dest) => { $('#dirInput').value = dest; scan(dest); })],
+    },
+    error: {
+      title: 'Folder not found',
+      text: `${state.dir || 'That folder'} could not be opened. Check the path, or browse to another one.`,
+      action: ['Choose a folder', () => pickFolder('Choose a video folder', (dest) => { $('#dirInput').value = dest; scan(dest); })],
+    },
+    filtered: {
+      title: 'Nothing matches',
+      text: `${facets ? `${facets} filter${facets === 1 ? '' : 's'}` : 'The search'}, 0 of ${n(state.files.length)} videos.`
+        + (facets ? ' Try dropping one.' : ' Try a shorter term.'),
+      action: facets ? ['Edit filter', () => openAdvanced()] : ['Clear search', () => { $('#searchInput').value = ''; searchNow(); }],
+    },
+    empty: {
+      title: 'This folder is empty',
+      text: 'No videos here' + (state.folders.length ? '. Subfolders, if any, are in the band above.' : ' and no subfolders.'),
+      action: state.parent ? ['Go up', () => navigateTo(state.parent)] : null,
+    },
+  }[which];
+  empty.replaceChildren();
+  const title = document.createElement('h2');
+  title.className = 'empty-title';
+  title.textContent = said.title;
+  empty.appendChild(title);
+  const text = document.createElement('p');
+  text.textContent = said.text;
+  empty.appendChild(text);
+  if (said.action) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn';
+    btn.textContent = said.action[0];
+    btn.addEventListener('click', said.action[1]);
+    empty.appendChild(btn);
   }
 }
 
@@ -800,7 +879,8 @@ function buildCard(file, index, group = null, seq = null) {
     durationBadge.textContent = fmtDuration(info.duration);
     corner.appendChild(durationBadge);
   }
-  if (file.rating) corner.appendChild(buildCornerRating(file.rating));
+  // The rating sits on the meta line under the name now, so the picture
+  // carries only the duration and the tick row.
   preview.appendChild(corner);
 
   // Grouped by suggested performer, how like her the faces are. Only there:
@@ -890,12 +970,10 @@ function buildCard(file, index, group = null, seq = null) {
   name.title = file.name;
   details.appendChild(name);
 
-  // One quiet line of when, how sharp and where -- switchable in Settings, for
-  // anyone who wants the cards back to name and labels only.
-  const meta = document.createElement('span');
-  meta.className = 'card-meta';
-  meta.textContent = cardMetaText(file);
-  details.appendChild(meta);
+  // One quiet line of how long, how sharp and when, with the rating at its
+  // right end -- switchable in Settings, for anyone who wants the cards back
+  // to name and labels only. The rating stays either way.
+  details.appendChild(buildCardMeta(file));
 
   // Below that, the rating and the labels. The running time is on the picture,
   // cloud-only has its own mark there, and the size and codec are in the
@@ -1087,11 +1165,13 @@ function actionsFor(file, { card = null, inPlayer = false } = {}) {
     // row, because it is the only one that does not touch the file.
     ...(file.url ? [{
       icon: ICONS.link,
+      label: 'Source',
       title: `Open ${sourceLabel(file.url).replace(/ ↗$/, '')} — ${file.url}`,
       href: file.url,
     }] : []),
     ...(file.cloudOnly ? [{
       icon: ICONS.cloud,
+      label: 'Preview',
       title: `Fetch preview — downloads ${fmtBytes(file.size)} from OneDrive`,
       run: () => optInCloud(file, cardFor()),
     }] : []),
@@ -1100,17 +1180,20 @@ function actionsFor(file, { card = null, inPlayer = false } = {}) {
     ...(inPlayer ? [] : [
       {
         icon: ICONS.tag,
+        label: 'Tags',
         title: 'Tags',
         run: () => openTagDialog([fileAt(file.path) || file]),
       },
     ]),
     {
       icon: ICONS.rename,
+      label: 'Rename',
       title: 'Rename',
       run: () => (inPlayer ? renameFromPlayer(file) : startRename(file, cardFor())),
     },
     {
       icon: ICONS.move,
+      label: 'Move',
       title: 'Move to…',
       run: () => pickFolder('Move to folder', async (dest) => {
         if (inPlayer) releasePlayer();
@@ -1121,6 +1204,7 @@ function actionsFor(file, { card = null, inPlayer = false } = {}) {
     },
     {
       icon: ICONS.trash,
+      label: 'Delete',
       title: 'Delete (Recycle Bin)',
       danger: true,
       run: async () => {
@@ -1143,11 +1227,19 @@ function actionsFor(file, { card = null, inPlayer = false } = {}) {
  * a real one for the shell to hand it to the browser, and preventing its
  * default is exactly what would stop that.
  */
-function buildActionButton(action) {
+function buildActionButton(action, { labelled = false } = {}) {
   const el = document.createElement(action.href ? 'a' : 'button');
-  el.className = 'qbtn' + (action.danger ? ' danger' : '');
+  el.className = 'qbtn' + (action.danger ? ' danger' : '') + (labelled ? ' qbtn-labelled' : '');
   // Every action's icon is one of ICONS, drawn markup rather than a glyph.
   el.innerHTML = action.icon;
+  // In the player there is room for the word, and a row of words reads
+  // faster than a row of glyphs you have to hover.
+  if (labelled && action.label) {
+    const word = document.createElement('span');
+    word.className = 'qbtn-label';
+    word.textContent = action.label;
+    el.appendChild(word);
+  }
   el.title = action.title;
   el.setAttribute('aria-label', action.title);
   // In the Tab order only while the card has the focus (see rovingCard).
@@ -1487,10 +1579,7 @@ function syncGroupButton() {
   btn.title = mode ? `Grouped by ${names.long.toLowerCase()} — click to change` : 'Group by…';
   btn.setAttribute('aria-label', mode ? `Group by: ${names.long}` : 'Group by');
   const label = $('#groupBtnLabel');
-  if (label) {
-    label.textContent = names.short;
-    label.hidden = !mode;
-  }
+  if (label) label.textContent = mode ? names.short : 'Off';
   // The heading over the grid says it too, where the sections are.
   const echo = $('#groupEcho');
   if (echo) {
@@ -1540,6 +1629,8 @@ function syncSelectionUI() {
 
 function updateSelectionBar() {
   const count = state.selected.size;
+  // The strip at the foot says "2 selected" too; it reads the selection.
+  if (typeof updateStatusLine === 'function' && state.files.length) updateStatusLine();
   $('#selectionBar').hidden = count === 0;
   $('#selectionCount').textContent = `${count} selected`;
   if (!count) return;

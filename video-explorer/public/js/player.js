@@ -291,7 +291,32 @@ function buildPlayerActions(file) {
   const bar = $('#playerActions');
   bar.innerHTML = '';
   for (const action of actionsFor(file, { inPlayer: true })) {
-    bar.appendChild(buildActionButton(action));
+    bar.appendChild(buildActionButton(action, { labelled: true }));
+  }
+}
+
+/**
+ * The head's two quieter lines beside the name: where the video is, and the
+ * facts a glance wants -- how sharp, how big, whether it is here.
+ */
+function syncPlayerHead(file) {
+  const where = $('#playerPath');
+  if (where) {
+    const bits = [];
+    if (state.dir) bits.push(baseName(state.dir) || state.dir);
+    if (file.relFolder && file.relFolder !== '.') bits.push(...String(file.relFolder).split(/[\\/]/).filter(Boolean));
+    where.textContent = bits.length ? bits.join(' › ') + ' ›' : '';
+    where.title = file.path;
+  }
+  const facts = $('#playerFacts');
+  if (facts) {
+    const info = state.meta.get(file.path) || {};
+    const lines = info.width && info.height ? Math.min(info.width, info.height) : 0;
+    facts.textContent = [
+      lines ? (lines >= 2100 ? '4K' : `${lines}p`) : null,
+      fmtBytes(file.size),
+      file.cloudOnly ? 'cloud-only' : null,
+    ].filter(Boolean).join(' · ');
   }
 }
 
@@ -309,6 +334,7 @@ function playFile(file, seq = null) {
   buildPlayerSuggestions(file);
   buildPlayerSimilar(file);
   $('#playerTitle').textContent = file.name;
+  syncPlayerHead(file);
   const info = state.meta.get(file.path) || {};
   $('#playerMeta').textContent = [
     info.duration ? fmtDuration(info.duration) : null,
@@ -327,6 +353,10 @@ function playFile(file, seq = null) {
     if (!known.duration) {
       state.meta.set(file.path, { ...known, duration });
       updateCardMeta(file.path);
+    }
+    if (!known.width && player.videoWidth) {
+      state.meta.set(file.path, { ...(state.meta.get(file.path) || {}), width: player.videoWidth, height: player.videoHeight });
+      syncPlayerHead(file);
     }
     $('#playerMeta').textContent = [
       fmtDuration(duration),
