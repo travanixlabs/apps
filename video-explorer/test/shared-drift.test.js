@@ -38,6 +38,25 @@ test('the phone reads the shared files rather than carrying its own copies', { s
   for (const name of FILES) assert.ok(html.includes(`./shared/${name}`), `mobile/index.html does not load shared/${name}`);
 });
 
+test('no page script declares a top-level function or const with a shared name (it would shadow the shared one)', () => {
+  // A classic script's top-level function is a global: a page function
+  // named like a shared helper replaced it for the whole page, and the
+  // page's suggestedNames(file) once called itself for ever that way.
+  const shared = new Set();
+  for (const name of ['facets.js', 'merge.js', 'format.js', 'listing.js']) {
+    Object.keys(require(path.join(__dirname, '..', 'shared', name))).forEach((k) => shared.add(k));
+  }
+  const pages = fs.readdirSync(path.join(__dirname, '..', 'public', 'js')).map((n) => path.join('public', 'js', n));
+  pages.push(path.join('public', 'filter.js'));
+  for (const rel of pages) {
+    const text = fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+    for (const name of shared) {
+      const declared = new RegExp(`^(async\\s+)?function\\s+${name}\\s*\\(|^(const|let|var)\\s+${name}\\b`, 'm').test(text);
+      assert.ok(!declared, `${rel} declares ${name}, which shared/ already provides`);
+    }
+  }
+});
+
 test('the shared merge is what the label store uses', () => {
   const library = require('../library.js');
   const shared = require('../shared/merge.js');

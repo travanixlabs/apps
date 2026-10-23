@@ -31,7 +31,7 @@
   }
   const format = (typeof module === 'object' && module.exports && typeof require === 'function')
     ? require('../shared/format.js') : root;
-  if (typeof format.suggestedNames !== 'function') throw new Error('filter.js needs shared/format.js loaded before it');
+  if (typeof format.offeredNames !== 'function') throw new Error('filter.js needs shared/format.js loaded before it');
   const api = build(shared, format);
   if (typeof module === 'object' && module.exports) module.exports = api;
   // A classic script: the page reads these as globals, exactly as it did when
@@ -77,7 +77,7 @@
   function pendingSuggestions(f) {
     // The names still waiting: at the floor, neither credited nor refused.
     // One rule, in shared/format.js, for the page, the server and the phone.
-    return format.suggestedNames(f.suggested, { floor: FACE_FLOOR, refused: f.notModels, credited: f.models }).length;
+    return format.offeredNames(f.suggested, { floor: FACE_FLOOR, refused: f.notModels, credited: f.models }).length;
   }
 
   const CHOICE_FACETS = Object.keys(CHOICES);

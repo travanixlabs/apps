@@ -355,7 +355,7 @@ function applyFilterSort() {
 function suggestedNames(file) {
   // The one rule (shared/format.js), the phone's too. Pending only: a name
   // already credited has been dealt with, so it goes when the box says so.
-  return globalThis.suggestedNames(file.suggested, {
+  return offeredNames(file.suggested, {
     floor: FACE_FLOOR,
     refused: file.notModels,
     credited: groupOnly.suggested ? file.models : [],
