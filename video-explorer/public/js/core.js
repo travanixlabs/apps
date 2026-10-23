@@ -62,6 +62,60 @@ window.addEventListener('unhandledrejection', (ev) => {
   reportPageError('Something went wrong', ev.reason);
 });
 
+/**
+ * Who the faces say is in each video, for the whole library, by key
+ * (size:mtime). Fetched once from /api/faces/suggestions and again whenever
+ * the status poll says the set moved; every listing entry is filled from it
+ * as it arrives (hydrate), so the listing itself carries none -- at the root
+ * they were a third of a 36MB reply, per navigation.
+ */
+const suggestionsByKey = new Map();
+let suggestionsStamp = 0;
+let suggestionsLoading = null;
+
+const suggestionsKey = (file) => keyFor({ size: file.size, mtimeMs: file.mtimeMs });
+
+async function loadSuggestions() {
+  if (suggestionsLoading) return suggestionsLoading;
+  suggestionsLoading = (async () => {
+    try {
+      const data = await api('/api/faces/suggestions');
+      suggestionsByKey.clear();
+      for (const [key, list] of Object.entries(data.videos || {})) suggestionsByKey.set(key, list);
+      suggestionsStamp = Number(data.stamp) || 0;
+      applySuggestions();
+    } catch { /* the pills will say the faces are not available */ }
+    suggestionsLoading = null;
+  })();
+  return suggestionsLoading;
+}
+
+/** A fresh set onto the listing in hand: changed cards redrawn, the view too if it reads them. */
+function applySuggestions() {
+  let changed = 0;
+  for (const file of state.files) {
+    const next = suggestionsByKey.get(suggestionsKey(file)) || [];
+    const was = file.suggested || [];
+    if (was.length === next.length && was.every((s, i) => s.name === next[i].name && s.score === next[i].score && s.band === next[i].band)) continue;
+    file.suggested = next;
+    changed += 1;
+    if (typeof refreshCardRecord === 'function') refreshCardRecord(file);
+  }
+  if (!changed) return;
+  // Grouped by what they suggest, or filtered on it, the page itself moves;
+  // over an open video that waits, like a relist does.
+  if (state.grouped === 'suggested' || advActive()) {
+    if (typeof relistWhenFree === 'function' && !$('#playerModal').hidden) relistWhenFree();
+    else render();
+  }
+}
+
+/** Called from the status poll: the server's stamp against the one we hold. */
+function syncSuggestions(stamp) {
+  if (!Number.isFinite(Number(stamp)) || Number(stamp) === suggestionsStamp) return;
+  loadSuggestions();
+}
+
 const state = {
   config: {},
   files: [],          // videos shown for the current folder
@@ -504,6 +558,8 @@ function hydrate(file) {
   }
   // The same list the server slims by: shared/listing.js.
   fillListing(file);
+  // The suggestions come by key from the set the page holds, not the listing.
+  if (!file.suggested.length) file.suggested = suggestionsByKey.get(suggestionsKey(file)) || [];
   searchHay(file);
   return file;
 }

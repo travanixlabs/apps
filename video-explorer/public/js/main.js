@@ -1087,6 +1087,9 @@ async function init() {
   attachGridHandlers();
   try {
     state.config = await api('/api/config');
+    // The whole library's suggestions, by key, before the first listing is
+    // drawn -- or as soon after as they arrive (applySuggestions).
+    loadSuggestions();
   } catch {
     state.config = {
       previewMode: 'live', frames: 10, dwellMs: 2000, tileWidth: 640, cardWidth: 200,

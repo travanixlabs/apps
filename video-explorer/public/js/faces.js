@@ -1574,6 +1574,8 @@ async function pollStatus() {
   dupeStatus = all ? all.dupes : null;
   framingStatus = all ? all.framing : null;
   warnIfFfmpegMissing(all);
+  // The suggestions moved (a re-score, a refusal, a sweep): fetch the set.
+  if (all && all.faces) syncSuggestions(all.faces.suggestionsStamp);
   if (!document.hidden) {
     renderFacePill();
     renderDupePill();

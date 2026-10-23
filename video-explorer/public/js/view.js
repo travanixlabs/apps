@@ -1368,7 +1368,10 @@ async function sendRecordEdits(body) {
       if (record.settled !== undefined) file.settled = record.settled;
       // And the ranking, when the reply carried a new one -- refusing a name
       // changes what this video suggests, and the chip would otherwise stay.
-      if (record.suggested !== undefined) file.suggested = record.suggested;
+      if (record.suggested !== undefined) {
+        file.suggested = record.suggested;
+        suggestionsByKey.set(suggestionsKey(file), record.suggested);
+      }
       if (record.people !== undefined) file.people = record.people;
       file.url = record.url;
       // Bookmarked moments. Copied back so the timeline redraws from the store

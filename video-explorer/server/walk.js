@@ -268,7 +268,10 @@ const round3 = (x) => (typeof x === 'number' ? Math.round(x * 1000) / 1000 : x);
 // Only what the grid, the filters and the grouping read. The margin, the
 // runner-up and her video count are read when a face is actually opened --
 // a hover card, a strip tile, the face dialog -- and come from
-// /api/faces/suggested then. They were a third of a 36MB root listing.
+// /api/faces/suggested then. The listing itself now carries no suggestions
+// at all: the page holds the whole set from /api/faces/suggestions and
+// fills each entry by key (core.js hydrate). This shape is what that route
+// and the record replies send.
 function listedSuggestion(s) {
   return {
     name: s.name,
@@ -285,9 +288,8 @@ function describeVideo(video, dir, stripSet = null, known = null) {
   faces.notePath(video, video.path);
   const meta = knownMeta(video);
   const entry = filterView(video, stripSet, known);
-  if (entry.suggested && entry.suggested.length) {
-    entry.suggested = entry.suggested.map(listedSuggestion);
-  }
+  // Not sent per entry: the page has the set by key (see listedSuggestion).
+  delete entry.suggested;
   // No `ext`: the page never read it, and the name it came from is right here.
   return slim({
     name: path.basename(video.path),

@@ -33,6 +33,11 @@ module.exports = () => [
     return sendJson(res, 200, faces.setEnabled((await body()).enabled !== false));
   }],
 
+  // Every video's suggestions, by key, with the stamp that says which set
+  // this is. Fetched once at launch and again whenever /api/status reports
+  // the stamp moved; the listing itself carries none (see walk.js).
+  ['GET', '/api/faces/suggestions', async ({ res }) => sendJson(res, 200, faces.allSuggestions())],
+
   // Where one video stands: read or not, and what came closest if nothing
   // cleared the bar. Asked when the player opens rather than carried with
   // every listing entry.

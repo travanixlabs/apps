@@ -777,6 +777,7 @@ function rebuild() {
   if (!state.centroids.size) return;
   for (const [key, entry] of Object.entries(state.index.videos)) scoreVideo(key, entry);
   scoredFor = castSignature();
+  suggestionsMoved();
 }
 
 /** For the app: the same answer without holding up every request while it works. */
@@ -1054,6 +1055,7 @@ function rescoreOne(stat) {
   // Turning a name down is part of what the remembered ranking describes, so
   // the fingerprint moves with it and the new answer is written down.
   scoredFor = castSignature();
+  suggestionsMoved();
   writeScoresSoon();
   return out;
 }
@@ -1297,9 +1299,29 @@ async function rescore(cast) {
   state.suggestions = into;
   state.pendingSuggestions = null;
   scoredFor = castSignature();
+  suggestionsMoved();
   digestSoon();
   writeScoresSoon();
   return true;
+}
+
+/**
+ * Bumped whenever a suggestion anywhere changes -- a re-score, a refusal,
+ * an adopted scores file. The page reads it from /api/status and fetches the
+ * set again (allSuggestions) when it moves; the listing itself no longer
+ * carries the suggestions, which were a third of its weight at the root.
+ */
+let suggestionsStamp = 1;
+function suggestionsMoved() { suggestionsStamp += 1; }
+
+/** Every video's suggestions as the listing used to carry them, by key. */
+function allSuggestions() {
+  const videos = {};
+  for (const key of state.suggestions.keys()) {
+    const list = suggestionsFor(key);
+    if (list.length) videos[key] = list.map((s) => ({ name: s.name, score: Math.round(s.score * 1000) / 1000, band: s.band, person: s.person }));
+  }
+  return { stamp: suggestionsStamp, videos };
 }
 
 /* --------------------------------------------------- the ranking, remembered
@@ -2544,6 +2566,8 @@ function status() {
     scorer: lastScorer,
     rescoreMs: lastRescoreMs,
     matrixBuild,
+    // Moves whenever any video's suggestions do; the page refetches them.
+    suggestionsStamp,
     stale,
     covering: sweepRoots(),
     model: engine.available().model,
@@ -2596,4 +2620,5 @@ module.exports = {
   faceImage, profile, rebuild, rebuildSoon, flush, keyFor,
   // The pure ranking, for the test that holds it to the thread's answer.
   rankFaces, BANDS, TOP_K,
+  allSuggestions,
 };
