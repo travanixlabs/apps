@@ -95,7 +95,9 @@ const server = http.createServer(async (req, res) => {
     const body = () => { parsed = parsed || readBody(req); return parsed; };
     return await handler({ req, res, url, body });
   } catch (err) {
-    const status = err.statusCode || 500;
+    // A file that is no longer there (deleted or moved outside the app since
+    // the listing was drawn) is a 404, not a server fault to log with a stack.
+    const status = err.statusCode || (err.code === 'ENOENT' ? 404 : 500);
     if (status >= 500) logFailure(`ERROR ${req.method} ${route}`, err);
     if (!res.headersSent) sendJson(res, status, { error: err.message || String(err) });
     else res.end();
