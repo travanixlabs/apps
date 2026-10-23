@@ -584,7 +584,10 @@ async function ensureThumb(file, stat) {
 // thing the age can hide is a strip another process built -- the command-line
 // sweep, or another machine syncing one in -- and for those half a minute late
 // is nothing.
-const STRIP_NAMES_TTL_MS = 30 * 1000;
+// Five minutes now. A 77,000-entry readdir every half minute was a 10MB set
+// rebuilt a hundred times an hour for a listing that noteStrip keeps current
+// for everything this process writes.
+const STRIP_NAMES_TTL_MS = 5 * 60 * 1000;
 let stripNames = null;   // { at, names: Promise<Set> }
 
 function cachedStripNames() {
@@ -664,6 +667,32 @@ async function migrateCacheNames() {
  * find. Files go to the Recycle Bin, not deleted: they are previews, but they
  * are previews of videos that may be sitting in the Bin themselves.
  */
+/**
+ * Strip builds work in `tmp_<key>` folders beside the cache, removed when the
+ * build ends -- unless the process was killed first, in which case the folder
+ * and its frames sit in the sync root for good. At launch, any such folder
+ * older than a few minutes belongs to no build that is running.
+ */
+const STALE_TMP_MS = 10 * 60 * 1000;
+
+async function removeStaleTemps() {
+  let names = [];
+  try { names = await fsp.readdir(state.CACHE_DIR); } catch { return 0; }
+  let removed = 0;
+  for (const name of names) {
+    if (!name.startsWith('tmp_')) continue;
+    const full = path.join(state.CACHE_DIR, name);
+    try {
+      const st = await fsp.stat(full);
+      if (!st.isDirectory() || Date.now() - st.mtimeMs < STALE_TMP_MS) continue;
+      await fsp.rm(full, { recursive: true, force: true });
+      removed += 1;
+    } catch { /* gone, or in use */ }
+  }
+  if (removed) log(`cache: removed ${removed} tmp_ folder(s) left by builds that never finished`);
+  return removed;
+}
+
 async function tidyCache() {
   if (state.config.cacheTidyV3) return { skipped: true };
   const started = Date.now();
@@ -785,5 +814,5 @@ module.exports = {
   flushMeta, adoptEmbedded, getMeta, cloudSource, cacheName, spriteSalt, thumbCachePath,
   spriteCachePath, countStrips, adoptLegacyCache, writeCacheManifest,
   cachedMeta, ensureSprite, ensureThumb, cachedStripNames, migrateCacheNames,
-  tidyCache, migrateCache, clearCache, loadMetaIndex,
+  tidyCache, migrateCache, clearCache, loadMetaIndex, removeStaleTemps,
 };

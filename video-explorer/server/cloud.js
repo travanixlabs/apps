@@ -7,7 +7,16 @@
  */
 
 const { graphLimit, waitFor, sleep } = require('./util');
-const { graph, state } = require('./config');
+const { state } = require('./config');
+
+// Optional: absent or signed-out simply means no cloud thumbnails. Lives here,
+// with the only code that calls it, rather than in config.
+let graph = null;
+try {
+  graph = require('../graph');
+} catch {
+  graph = null;
+}
 
 // Files Graph has no thumbnail for, so one 404 isn't retried on every scroll.
 const graphMisses = new Set();
@@ -83,5 +92,5 @@ async function graphThumbnail(file) {
 }
 
 module.exports = {
-  graphStreamInfo, graphStreamUrl, graphThumbnail,
+  graph, graphStreamInfo, graphStreamUrl, graphThumbnail,
 };

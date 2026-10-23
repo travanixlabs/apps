@@ -112,7 +112,10 @@ test('the server starts, answers, and serves from the split modules', { timeout:
     assert.strictEqual((await request(port, 'GET', '/shared/..%2Fserver.js')).status, 404);
     assert.strictEqual((await request(port, 'GET', '/shared/nothing.js')).status, 404);
 
-    const scan = await request(port, 'GET', `/api/scan?dir=${encodeURIComponent(empty)}`);
+    // A scan is a POST: it authorises reads under the folder, and a GET that
+    // grants anything can be made by an <img src> on any page.
+    assert.strictEqual((await request(port, 'GET', `/api/scan?dir=${encodeURIComponent(empty)}`)).status, 405);
+    const scan = await request(port, 'POST', '/api/scan', { dir: empty });
     assert.strictEqual(scan.status, 200, scan.text);
     assert.deepStrictEqual(scan.json.files, []);
     assert.deepStrictEqual(scan.json.folders, []);
@@ -131,7 +134,14 @@ test('the server starts, answers, and serves from the split modules', { timeout:
     const two = path.join(clips, 'two.mp4');
     fs.writeFileSync(one, 'not really a video, one');
     fs.writeFileSync(two, 'not really a video, the second');
-    assert.strictEqual((await request(port, 'GET', `/api/scan?dir=${encodeURIComponent(clips)}`)).status, 200);
+    assert.strictEqual((await request(port, 'POST', '/api/scan', { dir: clips })).status, 200);
+    // The settings route takes only user settings of the right shape: a
+    // string for `roots` or a number for `sort` is ignored, not stored.
+    const typed = await request(port, 'POST', '/api/config', { roots: 'x', sort: 7, dwellMs: 1500 });
+    assert.strictEqual(typed.status, 200);
+    assert.ok(Array.isArray(typed.json.roots) && typed.json.roots.length > 0);
+    assert.strictEqual(typed.json.sort, 'rating');
+    assert.strictEqual(typed.json.dwellMs, 1500);
     const bulk = await request(port, 'POST', '/api/library', {
       items: [{ path: one, addNotModels: ['Ann', 'Bea'] }, { path: two, addNotModels: ['Cat'] }],
     });

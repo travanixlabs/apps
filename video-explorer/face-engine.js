@@ -305,6 +305,10 @@ function alignFace(rgb, width, height, face) {
   const toSource = similarityTransform(face.points);
   if (!toSource) return null;
   const out = Buffer.allocUnsafe(CROP_BYTES);
+  // Hoisted out of the pixel loop: a closure per output sample was 37,632
+  // allocations per crop, up to 48 crops a video.
+  const clampX = (px) => Math.min(width - 1, Math.max(0, px));
+  const clampY = (py) => Math.min(height - 1, Math.max(0, py));
   for (let y = 0; y < CROP; y += 1) {
     for (let x = 0; x < CROP; x += 1) {
       const [fx, fy] = toSource(x + 0.5, y + 0.5);
@@ -312,14 +316,17 @@ function alignFace(rgb, width, height, face) {
       const y0 = Math.floor(fy);
       const ax = fx - x0;
       const ay = fy - y0;
+      const row0 = clampY(y0) * width;
+      const row1 = clampY(y0 + 1) * width;
+      const col0 = clampX(x0);
+      const col1 = clampX(x0 + 1);
+      const i00 = (row0 + col0) * 3;
+      const i10 = (row0 + col1) * 3;
+      const i01 = (row1 + col0) * 3;
+      const i11 = (row1 + col1) * 3;
       for (let c = 0; c < 3; c += 1) {
-        const at = (px, py) => {
-          const cx = Math.min(width - 1, Math.max(0, px));
-          const cy = Math.min(height - 1, Math.max(0, py));
-          return rgb[(cy * width + cx) * 3 + c];
-        };
-        const top = at(x0, y0) * (1 - ax) + at(x0 + 1, y0) * ax;
-        const bottom = at(x0, y0 + 1) * (1 - ax) + at(x0 + 1, y0 + 1) * ax;
+        const top = rgb[i00 + c] * (1 - ax) + rgb[i10 + c] * ax;
+        const bottom = rgb[i01 + c] * (1 - ax) + rgb[i11 + c] * ax;
         out[(y * CROP + x) * 3 + c] = Math.round(top * (1 - ay) + bottom * ay);
       }
     }

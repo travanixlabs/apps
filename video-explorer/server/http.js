@@ -84,7 +84,10 @@ function typeFor(target) {
 
 async function serveStatic(res, relPath, base = PUBLIC_DIR) {
   const target = path.join(base, relPath);
-  if (!path.resolve(target).startsWith(path.resolve(base))) {
+  // With the separator: `public2` would otherwise pass as inside `public`.
+  const root = path.resolve(base);
+  const resolved = path.resolve(target);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
     return sendJson(res, 403, { error: 'Forbidden' });
   }
   try {
@@ -171,7 +174,12 @@ async function streamVideo(req, res, file) {
   const match = /bytes=(\d*)-(\d*)/.exec(range);
   let start = match && match[1] ? Number(match[1]) : 0;
   let end = match && match[2] ? Number(match[2]) : stat.size - 1;
-  if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= stat.size) {
+  // A suffix range, "bytes=-500": the last 500 bytes, not the first.
+  if (match && !match[1] && match[2]) {
+    start = Math.max(0, stat.size - Number(match[2]));
+    end = stat.size - 1;
+  }
+  if (!match || Number.isNaN(start) || Number.isNaN(end) || start > end || start >= stat.size) {
     res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` });
     return res.end();
   }

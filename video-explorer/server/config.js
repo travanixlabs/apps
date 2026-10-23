@@ -16,19 +16,7 @@ const path = require('path');
 const os = require('os');
 const { execFileSync } = require('child_process');
 
-const faces = require('../faces');
-const dupes = require('../dupes');
-const framing = require('../framing');
-
-const { log, exists, sleep } = require('./util');
-
-// Optional: absent or signed-out simply means no cloud thumbnails.
-let graph = null;
-try {
-  graph = require('../graph');
-} catch {
-  graph = null;
-}
+const { log, exists, sleep, loadJsonSync } = require('./util');
 
 // One up from here: server/ holds the code, the app folder holds public/,
 // config.json and the rest.
@@ -40,7 +28,7 @@ const PUBLIC_DIR = path.join(APP_DIR, 'public');
 const SHARED_DIR = path.join(APP_DIR, 'shared');
 // Settings live next to the source when run directly. The packaged app points
 // this at its per-user data folder, so it never writes inside Program files.
-const CONFIG_FILE = process.env.VIDEO_EXPLORER_CONFIG || path.join(APP_DIR, 'config.json');
+const { CONFIG_FILE, LOCAL_DIR } = require('./paths');
 
 /**
  * Previews and face profiles live in OneDrive, beside the labels.
@@ -60,7 +48,7 @@ const CONFIG_FILE = process.env.VIDEO_EXPLORER_CONFIG || path.join(APP_DIR, 'con
 function defaultCacheDir(oneDriveRoot) {
   if (process.env.VIDEO_EXPLORER_CACHE) return process.env.VIDEO_EXPLORER_CACHE;
   if (oneDriveRoot) return path.join(oneDriveRoot, '.video-explorer', 'cache');
-  return path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'video-explorer', 'cache');
+  return path.join(LOCAL_DIR, 'cache');
 }
 
 const HOST = '127.0.0.1';
@@ -143,8 +131,89 @@ const state = {
 };
 state.META_FILE = path.join(state.CACHE_DIR, 'meta.json');
 
+/**
+ * Which keys a request may set. The rest -- the authorised folders and their
+ * timestamps, the cache migrations, recent destinations -- are this server's
+ * bookkeeping: `{"roots":"x"}` posted by a page bug once made every path
+ * route fail, and was saved. A user setting must also keep the type its
+ * default has (an array stays an array, a plain object a plain object).
+ */
+const SERVER_STATE = new Set(['roots', 'rootsSeen', 'cacheNamesV2', 'cacheTidyV3', 'recentDests']);
+const USER_SETTINGS = Object.keys(DEFAULT_CONFIG).filter((k) => !SERVER_STATE.has(k));
+
+const sameShape = (a, b) => {
+  if (Array.isArray(a)) return Array.isArray(b);
+  if (a === null) return b === null;
+  if (typeof a === 'object') return Boolean(b) && typeof b === 'object' && !Array.isArray(b);
+  return typeof a === typeof b;
+};
+
+/** The user-settable keys of `body`, each the right shape; the rest ignored. */
+function userSettings(body) {
+  const out = {};
+  if (!body || typeof body !== 'object') return out;
+  for (const key of USER_SETTINGS) {
+    if (!(key in body)) continue;
+    if (!sameShape(DEFAULT_CONFIG[key], body[key])) continue;
+    out[key] = body[key];
+  }
+  return out;
+}
+
+/**
+ * The config file read in over the defaults.
+ *
+ * A file that will not parse used to be silently every setting back to its
+ * default -- and the pruning that follows wrote that emptiness over it within
+ * seconds, taking the roots, the label colours and the migration flags with
+ * it. Now the broken file is copied beside itself first, the loss is said out
+ * loud, label colours are read back from colours.json (the copy the phone
+ * reads), and nothing is written until a setting actually changes.
+ */
+let configHeld = false;
+
+function loadConfig() {
+  let raw = null;
+  try { raw = fs.readFileSync(CONFIG_FILE, 'utf8'); } catch { raw = null; }
+  let read = {};
+  let broken = '';
+  if (raw !== null) {
+    try {
+      read = JSON.parse(raw.replace(/^﻿/, ''));
+      if (!read || typeof read !== 'object' || Array.isArray(read)) { broken = 'not an object'; read = {}; }
+    } catch (err) {
+      broken = err.message;
+      read = {};
+    }
+  }
+  state.config = { ...DEFAULT_CONFIG, ...read };
+  if (broken) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const copy = `${CONFIG_FILE}.broken-${stamp}`;
+    try { fs.copyFileSync(CONFIG_FILE, copy); } catch { /* unreadable: nothing to keep */ }
+    log(`CONFIG UNREADABLE: ${path.basename(CONFIG_FILE)} (${broken}) -- copied to ${path.basename(copy)}; `
+      + 'starting from defaults, not written back until a setting changes');
+    const colours = loadJsonSync(path.join(state.CACHE_DIR, 'colours.json'), null);
+    if (colours && typeof colours === 'object') {
+      if (colours.labels && typeof colours.labels === 'object') state.config.labelColours = colours.labels;
+      if (colours.facets && typeof colours.facets === 'object') state.config.facetColours = colours.facets;
+      if (Array.isArray(colours.spare)) state.config.spareLabels = colours.spare;
+      log('config: label colours recovered from colours.json');
+    }
+    configHeld = true;
+  }
+  return { broken };
+}
+
 let saveTimer = null;
-function saveConfigSoon() {
+/**
+ * `user: true` is a setting somebody changed; without it, this is the server
+ * tidying its own bookkeeping, which does not get to replace a config file
+ * that could not be read.
+ */
+function saveConfigSoon({ user = false } = {}) {
+  if (user) configHeld = false;
+  if (configHeld) return;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
@@ -208,6 +277,9 @@ async function writeColours() {
     version: 1,
     labels: state.config.labelColours || {},
     facets: state.config.facetColours || {},
+    // And the labels made but not yet used: with the colours, it is what a
+    // config file that could not be read is rebuilt from (see loadConfig).
+    spare: Array.isArray(state.config.spareLabels) ? state.config.spareLabels : [],
   });
   try {
     const at = path.join(state.CACHE_DIR, 'colours.json');
@@ -257,6 +329,10 @@ function oneDriveAccounts() {
 
 /** The email of the account this app is signed into via Graph, if any. */
 async function graphAccountEmail() {
+  // Lazily, and optional: Graph lives with the cloud code (server/cloud.js);
+  // this is the one question config asks it, at startup.
+  let graph = null;
+  try { graph = require('../graph'); } catch { graph = null; }
   if (!graph || !graph.isSignedIn()) return '';
   try {
     // A dead network would otherwise stall startup on a TCP timeout.
@@ -444,6 +520,14 @@ async function pruneRoots() {
   return { before, after: kept.length, gone, stale };
 }
 
+/**
+ * Who hears when the authorised folders grow. The sweeps register from
+ * server.js; this module does not know them, so it can be loaded -- and
+ * tested -- without the face engine behind it.
+ */
+const rootListeners = [];
+function onRootsChanged(fn) { rootListeners.push(fn); }
+
 function rememberRoot(dir) {
   const resolved = path.resolve(dir);
   const root = clampRoot(resolved);
@@ -454,9 +538,7 @@ function rememberRoot(dir) {
   // Opening a folder inside one already authorised adds nothing to sweep; only
   // genuinely new ground makes the denominator wrong.
   if (state.config.roots.length !== had) {
-    faces.rootsChanged();
-    dupes.rootsChanged();
-    framing.rootsChanged();
+    for (const fn of rootListeners) { try { fn(); } catch { /* one listener's problem */ } }
   }
   state.config.lastDir = resolved;
   saveConfigSoon();
@@ -469,7 +551,8 @@ function rememberDest(dir) {
 }
 
 module.exports = {
-  graph, PUBLIC_DIR, SHARED_DIR, CONFIG_FILE, defaultCacheDir, HOST, PORT, DEFAULT_CONFIG,
-  saveConfigSoon, flushConfig, writeColours, applyHomeDir, authoriseOrThrow,
-  collapseRoots, pruneRoots, rememberRoot, rememberDest, state,
+  PUBLIC_DIR, SHARED_DIR, CONFIG_FILE, defaultCacheDir, HOST, PORT, DEFAULT_CONFIG,
+  USER_SETTINGS, userSettings, loadConfig,
+  saveConfigSoon, flushConfig, writeColours, applyHomeDir, authoriseOrThrow, isAuthorised,
+  clampRoot, collapseRoots, pruneRoots, rememberRoot, rememberDest, onRootsChanged, state,
 };

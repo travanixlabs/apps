@@ -448,6 +448,15 @@ async function api(url, options) {
   return body;
 }
 
+/** A JSON POST, which is most of what the page asks the server. */
+function post(url, payload) {
+  return api(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}),
+  });
+}
+
 /**
  * A listing entry, with everything the server left out put back.
  *
@@ -539,10 +548,7 @@ async function scan(dir, { record = true } = {}) {
     // The scan always lists everything that is there. Narrowing to what is
     // downloaded is a filter, not a different listing — Advanced filters →
     // Availability — so the count in the heading stays honest about the folder.
-    const recursive = $('#recursiveToggle').checked ? '1' : '0';
-    const data = await api(
-      `/api/scan?dir=${encodeURIComponent(target)}&recursive=${recursive}`,
-    );
+    const data = await post('/api/scan', { dir: target, recursive: $('#recursiveToggle').checked });
     state.dir = data.dir;
     state.parent = data.parent;
     if (record) pushHistory(data.dir);

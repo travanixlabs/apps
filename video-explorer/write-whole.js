@@ -30,9 +30,25 @@ const tempFor = (file) => {
   return `${file}.${process.pid}-${tempSeq}.tmp`;
 };
 
+/**
+ * The bytes are forced to the disk before the rename: without the fsync the
+ * rename can be journalled ahead of the data, and a power cut in between
+ * leaves the new name pointing at a file of zeros -- the one outcome the
+ * temp-and-rename is there to prevent.
+ */
+async function writeSynced(temp, body) {
+  const fh = await fsp.open(temp, 'w');
+  try {
+    await fh.writeFile(body);
+    await fh.sync().catch(() => {}); // a filesystem that refuses is still a write
+  } finally {
+    await fh.close();
+  }
+}
+
 async function writeWhole(file, body) {
   const temp = tempFor(file);
-  await fsp.writeFile(temp, body);
+  await writeSynced(temp, body);
   let last = null;
   for (let i = 0; i < 5; i += 1) {
     try {
@@ -54,7 +70,13 @@ async function writeWhole(file, body) {
  */
 function writeWholeSync(file, body) {
   const temp = tempFor(file);
-  fs.writeFileSync(temp, body);
+  const fd = fs.openSync(temp, 'w');
+  try {
+    fs.writeFileSync(fd, body);
+    try { fs.fsyncSync(fd); } catch { /* see writeSynced */ }
+  } finally {
+    fs.closeSync(fd);
+  }
   let last = null;
   for (let i = 0; i < 3; i += 1) {
     try {
@@ -68,4 +90,4 @@ function writeWholeSync(file, body) {
   throw last || new Error(`could not replace ${path.basename(file)}`);
 }
 
-module.exports = { writeWhole, writeWholeSync };
+module.exports = { writeWhole, writeWholeSync, writeSynced };

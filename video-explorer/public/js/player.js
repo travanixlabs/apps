@@ -176,7 +176,7 @@ function pickFolder(title, onConfirm) {
 
 async function openPickerAt(dir) {
   try {
-    const data = await api(`/api/dirs?dir=${encodeURIComponent(dir || '')}`);
+    const data = await post('/api/dirs', { dir: dir || '' });
     state.picker.dir = data.dir;
     $('#pickerPath').value = data.dir;
     $('#pickerHint').textContent = data.dir ? '' : 'Pick a drive to start';

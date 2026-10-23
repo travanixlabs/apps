@@ -20,7 +20,6 @@
 const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
-const os = require('os');
 // The races, traits, tiers, rating scale and the key itself, shared with the
 // filter, the face index and the phone so the lists cannot drift apart.
 const {
@@ -29,6 +28,8 @@ const {
 // Through the file log: these are the lines that say the labels were merged,
 // refused, or left read-only, in an app with no console anyone can see.
 const { log } = require('./server/util');
+const { writeSynced } = require('./write-whole');
+const { LOCAL_DIR } = require('./server/paths');
 
 // Models are kept separate from tags rather than being a tag convention: they
 // are a different kind of fact, they want their own filter facet, and a
@@ -137,7 +138,7 @@ let readOnly = '';
 function resolveFile(oneDriveRoot) {
   if (process.env.VIDEO_EXPLORER_LIBRARY) return process.env.VIDEO_EXPLORER_LIBRARY;
   if (oneDriveRoot) return path.join(oneDriveRoot, '.video-explorer', 'library.json');
-  return path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'video-explorer', 'library.json');
+  return path.join(LOCAL_DIR, 'library.json');
 }
 
 /**
@@ -172,7 +173,8 @@ async function init(oneDriveRoot) {
   if (raw !== null) {
     try {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.records) data = parsed;
+      // The same test adoptDisk makes: a records map, not a list or a string.
+      if (parsed && parsed.records && typeof parsed.records === 'object' && !Array.isArray(parsed.records)) data = parsed;
       else readOnly = `${path.basename(FILE)} has no records in it`;
     } catch (err) {
       readOnly = `${path.basename(FILE)} is not valid JSON (${err.message})`;
@@ -499,7 +501,8 @@ async function writeNow() {
   await fsp.mkdir(path.dirname(FILE), { recursive: true });
   tempSeq += 1;
   const temp = `${FILE}.${process.pid}-${tempSeq}.writing`;
-  await fsp.writeFile(temp, body);
+  // Forced to the disk before the rename (see write-whole.js).
+  await writeSynced(temp, body);
 
   // The rename is the whole of the atomicity, so a refusal is retried rather
   // than worked around. OneDrive holds a handle on the target now and then and
@@ -561,7 +564,30 @@ function save(delayMs = SAVE_MS) {
  * write of ours is waiting -- that write merges anyway.
  */
 async function refreshFromDisk() {
-  if (readOnly || timer || !FILE) return false;
+  if (!FILE || timer) return false;
+  // Read-only because the file could not be read at launch -- a half-synced
+  // copy, a lock -- is a condition that passes. Try it again: readable now,
+  // and the records come in and editing is allowed from here on, with no
+  // restart. Only whole-file success clears it; the empty `data` is never
+  // written while it stands.
+  if (readOnly) {
+    let raw;
+    let parsed;
+    try {
+      raw = await fsp.readFile(FILE, 'utf8');
+      parsed = JSON.parse(raw);
+    } catch { return false; }
+    if (!parsed || !parsed.records || typeof parsed.records !== 'object' || Array.isArray(parsed.records)) return false;
+    data = parsed;
+    if (!Array.isArray(data.favourites)) data.favourites = [];
+    if (!data.races || typeof data.races !== 'object' || Array.isArray(data.races)) data.races = {};
+    baseRaw = raw;
+    diskStamp = await stampOf(FILE);
+    lastWritten = Object.keys(data.records).length;
+    log(`library: ${path.basename(FILE)} reads again (${lastWritten} records) -- no longer read-only`);
+    readOnly = '';
+    return true;
+  }
   let changed = false;
   writing = writing.then(async () => { changed = await adoptDisk(); }, async () => { changed = await adoptDisk(); });
   await writing;
@@ -815,6 +841,44 @@ function removeTagEverywhere(name, field = 'tags') {
   return { changed };
 }
 
+/**
+ * One performer becomes another, everywhere this file knows her: credits,
+ * refusals, race, traits and favourite tier. The target keeps what it already
+ * has -- a race or tier set on the new name is not overwritten by the old
+ * one's -- and the old name is cleared. One save at the end.
+ */
+function renamePerformer(from, to) {
+  refuseIfReadOnly();
+  const name = String(from || '').trim().replace(/\s+/g, ' ');
+  const named = String(to || '').trim().replace(/\s+/g, ' ');
+  if (!name || !named) return { credited: 0, refused: 0 };
+  const credited = renameTag(name, named, 'models').changed;
+  const refused = renameTag(name, named, 'notModels').changed;
+  const race = performerRaces()[name.toLowerCase()];
+  if (race && !performerRaces()[named.toLowerCase()]) setPerformerRace(named, race);
+  setPerformerRace(name, '');
+  const traits = performerTraits()[name.toLowerCase()];
+  if (traits && !performerTraits()[named.toLowerCase()]) setPerformerTraits(named, traits);
+  setPerformerTraits(name, { height: '', bust: '', body: [] });
+  if (isFavouriteModel(name)) {
+    const tier = favouriteTiers()[name.toLowerCase()];
+    setFavouriteModel(name, false);
+    if (!isFavouriteModel(named)) setFavouriteModel(named, true, tier);
+  }
+  return { credited, refused };
+}
+
+/**
+ * Whether a patch changes what the faces may suggest for the video: a name
+ * turned down (or put back), or the video marked all profiled. Those re-score
+ * that one video; nothing else in a patch does.
+ */
+function touchesSuggestions(patch) {
+  if (!patch || typeof patch !== 'object') return false;
+  return patch.notModels !== undefined || patch.addNotModels !== undefined
+    || patch.removeNotModels !== undefined || patch.settled !== undefined;
+}
+
 function counts(field = 'tags') {
   const found = new Map();
   for (const record of Object.values(data.records)) {
@@ -1003,7 +1067,7 @@ module.exports = {
   refreshFromDisk, mergeLibraries,
   notModelsByKey,
   tagCounts, modelCounts, studioCounts, productionCounts, stats, normaliseTags,
-  renameTag, removeTagEverywhere,
+  renameTag, removeTagEverywhere, renamePerformer, touchesSuggestions,
   favouriteModels, isFavouriteModel, setFavouriteModel, favouriteTiers,
   performerRaces, setPerformerRace, performerTraits, setPerformerTraits,
 };

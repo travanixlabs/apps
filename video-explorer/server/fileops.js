@@ -246,14 +246,42 @@ async function copyFileTo(src, destDir) {
   await fsp.mkdir(destDir, { recursive: true });
   const dest = await uniqueDestination(destDir, path.basename(src));
   await fsp.copyFile(src, dest);
+  // A copy keeps the source's modified time, so the two would share a key
+  // and one record; its own stamp makes it a video of its own, as a copy
+  // made in Explorer would be.
+  const now = new Date();
+  await fsp.utimes(dest, now, now).catch(() => {});
+  return dest;
+}
+
+// Names Windows reserves for devices, with or without an extension: a file
+// called CON.mp4 cannot be made, read or deleted by ordinary means.
+const RESERVED_NAME = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i;
+const MAX_NAME = 255;
+const MAX_PATH = 259;
+
+/**
+ * A name a file can actually have: the characters Windows refuses replaced,
+ * a trailing dot or space dropped (Windows drops them silently, so the name
+ * tested for a clash was not the name that would be made), device names and
+ * over-long names and paths refused with a reason.
+ */
+function cleanFileName(newName, src) {
+  const clean = path.basename(String(newName || ''))
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim().replace(/[. ]+$/, '');
+  if (!clean) throw new Error('Invalid file name');
+  const withExt = path.extname(clean) ? clean : clean + path.extname(src);
+  if (RESERVED_NAME.test(path.basename(withExt, path.extname(withExt)))) {
+    throw new Error(`"${withExt}" is a name Windows reserves for a device`);
+  }
+  if (withExt.length > MAX_NAME) throw new Error(`The name is too long (${withExt.length} characters; 255 is the most)`);
+  const dest = path.join(path.dirname(src), withExt);
+  if (dest.length > MAX_PATH) throw new Error(`The full path would be too long (${dest.length} characters; 259 is the most)`);
   return dest;
 }
 
 async function renameFile(src, newName) {
-  const clean = path.basename(newName).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
-  if (!clean) throw new Error('Invalid file name');
-  const withExt = path.extname(clean) ? clean : clean + path.extname(src);
-  const dest = path.join(path.dirname(src), withExt);
+  const dest = cleanFileName(newName, src);
   if (path.resolve(dest).toLowerCase() !== path.resolve(src).toLowerCase() && await exists(dest)) {
     throw new Error('A file with that name already exists');
   }
@@ -292,6 +320,14 @@ async function actOn(body) {
       try { keys.set(src, dupes.keyFor(await fsp.stat(src))); } catch { /* already gone */ }
     }
     const binned = await recycle(srcs);
+    // Keys that another file in the same set still holds, after the delete.
+    const survivors = new Set();
+    for (const key of new Set(keys.values())) {
+      for (const member of dupes.members()) {
+        if (member.key !== key || srcs.some((s) => s.toLowerCase() === member.path.toLowerCase())) continue;
+        if (await exists(member.path)) { survivors.add(key); break; }
+      }
+    }
     for (const src of srcs) {
       const got = binned.get(src);
       if (!got || !got.ok) {
@@ -304,8 +340,10 @@ async function actOn(body) {
       // is no longer anywhere, so it must stop being offered as somewhere else
       // this face can be found. Its profile is kept: restore it from the Bin
       // and the key is unchanged, so everything known comes back with it.
-      if (key) dupes.forget(key);
-      if (key) faces.forgetPath(key);
+      // Only when no other copy with the same key is still on disk: an in-app
+      // copy shares the record on purpose, and the survivor is still a copy.
+      if (key && !survivors.has(key)) dupes.forget(key);
+      if (key) faces.forgetPath(key, src);
       results.push({ path: src, ok: true, message: 'Sent to Recycle Bin' });
     }
     return results;
@@ -358,4 +396,5 @@ async function actOn(body) {
 
 module.exports = {
   embedTags, pairCarryOver, carryOver, handleAction, authoriseDestination, differentVolume,
+  cleanFileName, renameFile, uniqueDestination,
 };

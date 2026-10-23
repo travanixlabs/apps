@@ -14,7 +14,6 @@
 const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
-const os = require('os');
 
 const CLIENT_ID = process.env.GRAPH_CLIENT_ID || 'ca1688c6-9077-4485-a565-d0ca35a4cb0a';
 // "common" accepts both work and personal accounts — the synced OneDrive here
@@ -28,8 +27,7 @@ const AUTH_BASE = `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0`;
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
 // Tokens never go in OneDrive — that would sync a credential to the cloud.
-const TOKEN_FILE = process.env.GRAPH_TOKEN_FILE
-  || path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'video-explorer', 'graph-token.json');
+const { GRAPH_TOKEN_FILE: TOKEN_FILE } = require('./server/paths');
 
 let cached = null;
 

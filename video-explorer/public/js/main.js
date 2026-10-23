@@ -196,7 +196,7 @@ function wireEvents() {
 
   // picker
   $('#pickerUp').addEventListener('click', async () => {
-    const data = await api(`/api/dirs?dir=${encodeURIComponent(state.picker.dir || '')}`);
+    const data = await post('/api/dirs', { dir: state.picker.dir || '' });
     openPickerAt(data.parent || '');
   });
   $('#pickerGo').addEventListener('click', () => openPickerAt($('#pickerPath').value.trim()));

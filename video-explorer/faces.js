@@ -26,7 +26,6 @@
 const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
-const os = require('os');
 
 const engine = require('./face-engine');
 const priority = require('./priority');
@@ -36,6 +35,7 @@ const tree = require('./tree');
 const { keyFor, FACE_FLOOR } = require('./shared/facets.js');
 // Written whole or not at all; shared with the fingerprint store.
 const { writeWhole } = require('./write-whole');
+const { LOCAL_DIR, FACE_MODEL_DIR } = require('./server/paths');
 
 // Through the file log: the app runs in a window with no console anyone can
 // see, and these are the lines that say why a sweep stopped.
@@ -166,9 +166,7 @@ const keyFromFileName = (name) => name.replace(/\.json$/, '').replace('_', ':');
 const ENTRIES = 'v';
 
 function init({ cacheDir, library, roots, home }) {
-  state.dir = cacheDir || path.join(
-    process.env.LOCALAPPDATA || os.tmpdir(), 'video-explorer', 'faces',
-  );
+  state.dir = cacheDir || path.join(LOCAL_DIR, 'faces');
   state.library = library;
   state.rootsOf = roots;
   state.homeOf = home || (() => '');
@@ -176,8 +174,7 @@ function init({ cacheDir, library, roots, home }) {
   // of weights are a download, not the user's data, and syncing them to every
   // device to save one download would be the waste the cache was once accused
   // of being. So this is not derived from where the store lives.
-  const modelDir = process.env.VIDEO_EXPLORER_FACE_MODELS
-    || path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'video-explorer', 'face-models');
+  const modelDir = FACE_MODEL_DIR;
 
   const ready = engine.init(modelDir);
   state.index = { version: VERSION, model: ready.model || '', videos: {} };
@@ -212,9 +209,22 @@ function init({ cacheDir, library, roots, home }) {
   }
   writeMeta(ready.model);
 
+  // The snapshot pair (a 74MB .bin and its map) used to be written only at
+  // the shutdown flush, which the host gives a few seconds -- a night's
+  // sweep could be cut off mid-write. Written every few minutes while dirty
+  // instead, so the flush at close has little left to do.
+  if (snapshotTimer) clearInterval(snapshotTimer);
+  snapshotTimer = setInterval(() => {
+    if (state.snapshotDirty && !state.loading) writeSnapshot().catch(() => {});
+  }, SNAPSHOT_EVERY_MS);
+  if (snapshotTimer.unref) snapshotTimer.unref();
+
   rebuildInBackground();
   return { ...ready, profiled: Object.keys(state.index.videos).length, modelDir };
 }
+
+const SNAPSHOT_EVERY_MS = 5 * 60 * 1000;
+let snapshotTimer = null;
 
 function writeMeta(model) {
   try {
@@ -269,8 +279,7 @@ function migrateFromSingleFile(model) {
  * machine mid-sweep, or another machine syncing profiles in.
  */
 function snapshotFile() {
-  return path.join(process.env.LOCALAPPDATA || os.tmpdir(),
-    'video-explorer', 'faces-snapshot.json');
+  return path.join(LOCAL_DIR, 'faces-snapshot.json');
 }
 
 const vectorFile = () => `${snapshotFile().replace(/\.json$/, '')}.bin`;
@@ -618,6 +627,9 @@ function digestSoon() {
  * writes again only if something changed since.
  */
 let digestWriting = Promise.resolve();
+// What the last digest written held, so an unchanged one is not re-uploaded.
+let digestHash = 0;
+let digestHashModel = null;
 
 function writeDigest() {
   const next = digestWriting.then(() => writeDigestNow());
@@ -650,19 +662,28 @@ async function writeDigestNow() {
 
   try {
     await fsp.mkdir(state.dir, { recursive: true });
-    // Through a rename: a torn 15MB file in the sync root is what the phone
-    // would otherwise download after a crash, and it parses as nothing.
-    await writeWhole(path.join(state.dir, DIGEST), JSON.stringify({
-      version: 2,
-      model: state.index.model || '',
-      updated: Date.now(),
-      profiled: Object.keys(videos).length,
-      performers: state.centroids.size,
-      videos,
-      faceless,
-    }));
+    // Identical to the last write, apart from the stamp: not written. During
+    // a sweep the timer fired every five minutes whether a suggestion had
+    // moved or not, and each firing was a 13MB upload from the sync root.
+    const body = JSON.stringify({ videos, faceless });
+    const sameAsWritten = digestHash === hashText(body) && digestHashModel === (state.index.model || '');
+    if (!sameAsWritten) {
+      // Through a rename: a torn 15MB file in the sync root is what the phone
+      // would otherwise download after a crash, and it parses as nothing.
+      await writeWhole(path.join(state.dir, DIGEST), JSON.stringify({
+        version: 2,
+        model: state.index.model || '',
+        updated: Date.now(),
+        profiled: Object.keys(videos).length,
+        performers: state.centroids.size,
+        videos,
+        faceless,
+      }));
+      digestHash = hashText(body);
+      digestHashModel = state.index.model || '';
+    }
     await writeLineups();
-    return true;
+    return !sameAsWritten;
   } catch {
     // Not written, so still owed -- the next flush or digestSoon picks it up.
     digestDirty = true;
@@ -1258,8 +1279,7 @@ let scoredFor = '';
 let scoresTimer = null;
 
 function scoresFile() {
-  return path.join(process.env.LOCALAPPDATA || os.tmpdir(),
-    'video-explorer', 'faces-scores.json');
+  return path.join(LOCAL_DIR, 'faces-scores.json');
 }
 
 function castSignature() {
@@ -1801,7 +1821,14 @@ function notePath(stat, at) {
  * Throwing away hours of reading because a file moved would be the expensive
  * mistake, and it is not one this can be talked into.
  */
-function forgetPath(key) {
+function forgetPath(key, at = '') {
+  // Two copies of a video share a key (size and modified time), so deleting
+  // one must not unlearn where the other is: with a path given, only that
+  // path is forgotten.
+  if (at && state.pathByKey.has(key)
+    && path.resolve(state.pathByKey.get(key)).toLowerCase() !== path.resolve(at).toLowerCase()) {
+    return false;
+  }
   return state.pathByKey.delete(key);
 }
 

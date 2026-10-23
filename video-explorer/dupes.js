@@ -29,13 +29,13 @@
 const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
-const os = require('os');
 
 const engine = require('./dupe-engine');
 const priority = require('./priority');
 const tree = require('./tree');
 // The key every store here agrees on, shared with the label store and the phone.
 const { keyFor } = require('./shared/facets.js');
+const { LOCAL_DIR } = require('./server/paths');
 // Written whole or not at all: the digest and the prints live in the sync root.
 const { writeWhole, writeWholeSync } = require('./write-whole');
 
@@ -254,8 +254,7 @@ async function loadDigest() {
  * show in the directory listing, and a name-diff finds exactly what changed.
  */
 function snapshotFile() {
-  return path.join(process.env.LOCALAPPDATA || os.tmpdir(),
-    'video-explorer', 'prints-snapshot.json');
+  return path.join(LOCAL_DIR, 'prints-snapshot.json');
 }
 
 async function readSnapshot() {
@@ -281,8 +280,7 @@ async function writeSnapshot() {
     for (const [key, row] of state.light) rows[key] = row;
     // Through a rename, so a kill mid-write leaves the old snapshot rather
     // than half of a new one.
-    await fsp.writeFile(`${file}.tmp`, JSON.stringify({ version: VERSION, rows }));
-    await fsp.rename(`${file}.tmp`, file);
+    await writeWhole(file, JSON.stringify({ version: VERSION, rows }));
   } catch { snapshotDirty = true; /* a full disk: the next print tries again */ }
 }
 
@@ -1072,8 +1070,18 @@ function members() {
   return out;
 }
 
-function status() {
-  const fingerprinted = state.light.size;
+/**
+ * The counts that walk the whole index, worked out once per change rather
+ * than once per two-second poll: 28,000 keys reduced, and every group's
+ * dismissal looked up, for numbers that only move when a print lands or a
+ * set is set aside.
+ */
+let tally = null;
+let tallyFor = '';
+
+function counts() {
+  const stamp = `${state.light.size}:${state.pathByKey.size}:${state.groups.length}:${state.dismissed.size}:${state.counted}:${state.matched}:${state.pairs.length}`;
+  if (tally && tallyFor === stamp) return tally;
   // Fingerprints whose video is no longer on this machine. They keep working
   // -- the key is size and modified time, which freeing a file up to the cloud
   // does not touch -- so this is the count of work that outlived its file.
@@ -1083,6 +1091,20 @@ function status() {
   const cached = state.counted
     ? [...state.light.keys()].reduce((n, k) => n + (state.pathByKey.has(k) ? 0 : 1), 0)
     : 0;
+  tally = {
+    cached,
+    // Sets you have set aside are not findings: the pill would otherwise go on
+    // promising copies the listing no longer shows.
+    groups: state.groups.reduce((n, g, at) => n + (dismissedAt(at) ? 0 : 1), 0),
+    copies: state.groups.reduce((n, g, at) => n + (dismissedAt(at) ? 0 : g.length - 1), 0),
+  };
+  tallyFor = stamp;
+  return tally;
+}
+
+function status() {
+  const fingerprinted = state.light.size;
+  const { cached, groups, copies } = counts();
   return {
     available: true,
     ready: state.ready,
@@ -1113,12 +1135,10 @@ function status() {
     rate: state.done > 2 && state.startedAt
       ? Math.round(state.done / ((Date.now() - state.startedAt) / 3600000))
       : 0,
-    // Sets you have set aside are not findings: the pill would otherwise go on
-    // promising copies the listing no longer shows.
-    groups: state.groups.reduce((n, g, at) => n + (dismissedAt(at) ? 0 : 1), 0),
+    groups,
     pairs: state.matched,
     possible: state.pairs.length - state.matched,
-    copies: state.groups.reduce((n, g, at) => n + (dismissedAt(at) ? 0 : g.length - 1), 0),
+    copies,
     dismissedSets: state.dismissed.size,
   };
 }

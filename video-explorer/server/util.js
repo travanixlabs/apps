@@ -29,8 +29,7 @@ const { execFile } = require('child_process');
  * and a line written by an uncaught exception has to be on the disk before the
  * process can be trusted to still be there.
  */
-const LOG_DIR = process.env.VIDEO_EXPLORER_LOG_DIR
-  || path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'video-explorer', 'logs');
+const { LOG_DIR } = require('./paths');
 const LOG_KEEP_DAYS = 7;
 let logDirReady = false;
 

@@ -1,5 +1,11 @@
 'use strict';
 
+// Before anything touches the filesystem: Node's four-thread pool serves
+// every stat, readdir, readFile and gzip -- and ONNX inference sits on the
+// same threads. A face sweep's model runs were queueing a 27,000-file walk
+// behind them (2s alone, 18s under a sweep). Eight gives the walk a lane.
+if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = '8';
+
 /**
  * Video Explorer — local hover-preview file browser for MP4 libraries.
  * One npm dependency (onnxruntime-node, for familiar faces) + ffmpeg/ffprobe on PATH.
@@ -24,16 +30,16 @@ const dupes = require('./dupes');
 const framing = require('./framing');
 
 const {
-  pruneLogs, log, logFailure, exists, loadJsonSync, run,
+  pruneLogs, log, logFailure, exists, run,
 } = require('./server/util');
 const {
-  CONFIG_FILE, defaultCacheDir, HOST, PORT, DEFAULT_CONFIG, writeColours,
-  applyHomeDir, pruneRoots, state,
+  defaultCacheDir, HOST, PORT, writeColours, loadConfig,
+  applyHomeDir, pruneRoots, onRootsChanged, state,
 } = require('./server/config');
 const {
   flushMeta, cacheName, spriteSalt, countStrips, adoptLegacyCache,
   writeCacheManifest, ensureSprite, cachedStripNames, migrateCacheNames,
-  tidyCache, loadMetaIndex,
+  tidyCache, loadMetaIndex, removeStaleTemps,
 } = require('./server/cache');
 const { carryOver } = require('./server/fileops');
 const { server, flushAll, setCoreReady } = require('./server/routes');
@@ -90,7 +96,13 @@ async function main() {
   const booted = Date.now();
   const mark = (what) => log(`boot +${Date.now() - booted}ms: ${what}`);
   await fsp.mkdir(state.CACHE_DIR, { recursive: true });
-  state.config = { ...DEFAULT_CONFIG, ...loadJsonSync(CONFIG_FILE, {}) };
+  // A file that will not parse is copied aside and said out loud, never
+  // silently replaced by the defaults -- see loadConfig.
+  loadConfig();
+  // Opening a folder outside everything swept so far widens each sweep's
+  // denominator; the sweeps hear about it here rather than being required by
+  // the config module.
+  onRootsChanged(() => { faces.rootsChanged(); dupes.rootsChanged(); framing.rootsChanged(); });
   // Flattening is a view you reach for, not a mode you live in: reopening the
   // app into 5,682 videos from one folder is jarring, so it starts off.
   state.config.recursive = false;
@@ -255,6 +267,8 @@ async function loadCore(mark) {
   // After the rename pass has had its turn, and well behind everything a
   // person is waiting on: this walks the roots once and then never again.
   setTimeout(() => { tidyCache().catch((err) => log('cache tidy failed:', err.message)); }, 8000);
+  // Folders a killed strip build left behind.
+  setTimeout(() => { removeStaleTemps().catch(() => {}); }, 12000);
 
   /**
    * Count the library up front, so a pill knows its own numbers before it is
@@ -317,6 +331,10 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
     process.exit(0);
   });
 }
-process.on('exit', () => { flushMeta(); faces.flush(); });
+// Only what can be done synchronously: the metadata index. The face store
+// and the labels are async writes, which 'exit' cannot wait for -- they land
+// on their own timers while the app runs (see faces.js, library.js) and in
+// the /api/shutdown flush the host waits on.
+process.on('exit', () => { flushMeta(); });
 
 main();

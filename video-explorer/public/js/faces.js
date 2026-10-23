@@ -1604,10 +1604,7 @@ function relistWhenFree() {
 async function relistQuietly() {
   if (!state.dir) return;
   try {
-    const recursive = $('#recursiveToggle').checked ? '1' : '0';
-    const data = await api(
-      `/api/scan?dir=${encodeURIComponent(state.dir)}&recursive=${recursive}`,
-    );
+    const data = await post('/api/scan', { dir: state.dir, recursive: $('#recursiveToggle').checked });
     if (data.dir !== state.dir) return; // moved on while we were asking
     setFiles(hydrateAll(data.files));
     state.folders = data.folders || [];
