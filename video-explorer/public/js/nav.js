@@ -270,23 +270,22 @@ function folderTallyText(folder) {
 }
 
 /**
- * Whether the band is folded in this folder. Remembered per folder, under the
- * lowercased path, because the folder that needs its forty subfolders out of
- * the way is not the one whose three you want to see.
+ * Whether the band is folded. Folded on every launch; opening it lasts the
+ * session (a reload keeps it, the next launch folds it again). One state for
+ * every folder: it is a question of how much of the window the band may
+ * have, not of which folder you are in.
  */
+const BAND_KEY = 've.bandOpen';
+
 function bandFoldedHere() {
-  const held = state.config.bandFolded;
-  return Boolean(held && state.dir && held[state.dir.toLowerCase()]);
+  try { return sessionStorage.getItem(BAND_KEY) !== '1'; } catch { return true; }
 }
 
 function setBandFolded(folded) {
-  if (!state.dir) return;
-  const key = state.dir.toLowerCase();
-  const held = { ...(state.config.bandFolded || {}) };
-  if (folded) held[key] = true;
-  else delete held[key];
-  state.config.bandFolded = held;
-  saveConfig({ bandFolded: held });
+  try {
+    if (folded) sessionStorage.removeItem(BAND_KEY);
+    else sessionStorage.setItem(BAND_KEY, '1');
+  } catch { /* storage refused: it folds again on the next render */ }
   syncBand();
 }
 

@@ -83,8 +83,8 @@ Navigation is explorer-style: one folder level at a time. Subfolders are a
 **band** of cards above the videos — a 16:9 cover from the first video inside,
 the recursive video count, and "· 37 on disk" when only some are downloaded —
 one row that scrolls sideways. The line above the band ("42 subfolders ·
-flattened · 6,485 videos") folds it away, and whether it is folded is
-remembered **per folder**. At the home folder the libraries take the full width
+flattened · 6,485 videos") opens and folds it. The band is **folded on every
+launch**; opening it lasts the session. At the home folder the libraries take the full width
 with a wide cover. Folders containing no videos at any depth are dimmed but
 still navigable.
 
