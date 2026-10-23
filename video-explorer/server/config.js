@@ -390,12 +390,19 @@ async function applyHomeDir() {
   log(`home: ${state.config.homeDir}${state.homeAccount.email ? ' (' + state.homeAccount.email + ')' : ''} [${state.homeAccount.source}]`);
 }
 
+/**
+ * A folder as a prefix other paths are tested against: with the separator,
+ * so C: does not cover C:2 -- and only one of them when the folder is
+ * a drive root, which already ends with it (C:\ + \ matched nothing).
+ */
+const withSep = (dir) => (dir.endsWith(path.sep) ? dir : dir + path.sep);
+
 /** Sources must live under a folder the user explicitly opened. */
 function isAuthorised(target) {
   const resolved = path.resolve(target);
   return state.config.roots.some((root) => {
     const r = path.resolve(root);
-    return resolved === r || resolved.toLowerCase().startsWith(r.toLowerCase() + path.sep);
+    return resolved === r || resolved.toLowerCase().startsWith(withSep(r.toLowerCase()));
   });
 }
 
@@ -420,7 +427,7 @@ const ROOT_DAYS = 60;
 const under = (child, parent) => {
   const c = path.resolve(child).toLowerCase();
   const r = path.resolve(parent).toLowerCase();
-  return c === r || c.startsWith(r + path.sep);
+  return c === r || c.startsWith(withSep(r));
 };
 
 /**

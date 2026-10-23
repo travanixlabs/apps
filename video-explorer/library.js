@@ -632,6 +632,17 @@ function normaliseTags(tags) {
 }
 
 /**
+ * A record with nothing in it. A rejection counts as content: "not her" is a
+ * decision, and dropping the record would hand the same suggestion straight
+ * back. So does a bookmark: it is a place somebody chose to remember.
+ */
+function isEmptyRecord(r) {
+  return !r.rating && !(r.tags || []).length && !(r.models || []).length
+    && !(r.notModels || []).length && !(r.marks || []).length
+    && !r.studio && !r.production && !r.url && !r.resume && !r.settled;
+}
+
+/**
  * `tags` replaces outright; `addTags`/`removeTags` merge, which is what a
  * multi-select edit needs — tagging 10 files must not wipe the tags each
  * already has.
@@ -726,13 +737,8 @@ function apply(stat, name, patch, { lazy = false } = {}) {
     }
   }
 
-  // An empty record is noise in a file that syncs; drop it instead. A rejection
-  // counts as content: "not her" is a decision, and dropping the record would
-  // hand the same suggestion straight back. So does a bookmark: it is a place
-  // somebody chose to remember.
-  if (!next.rating && !(next.tags || []).length && !(next.models || []).length
-    && !(next.notModels || []).length && !(next.marks || []).length
-    && !next.studio && !next.production && !next.url && !next.resume && !next.settled) {
+  // An empty record is noise in a file that syncs; drop it instead.
+  if (isEmptyRecord(next)) {
     delete data.records[key];
     save(lazy ? LAZY_SAVE_MS : SAVE_MS);
     return { ...EMPTY };
@@ -834,11 +840,13 @@ function removeTagEverywhere(name, field = 'tags') {
   const want = String(name || '').trim().toLowerCase();
   if (!want) return { changed: 0 };
   let changed = 0;
-  for (const record of Object.values(data.records)) {
+  for (const [key, record] of Object.entries(data.records)) {
     const held = record[field] || [];
     if (!held.some((t) => String(t).toLowerCase() === want)) continue;
     record[field] = held.filter((t) => String(t).toLowerCase() !== want);
     record.updated = Date.now();
+    // The label was all it had: the empty record goes, as an edit's would.
+    if (isEmptyRecord(record)) delete data.records[key];
     changed += 1;
   }
   if (changed) save();

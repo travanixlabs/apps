@@ -615,6 +615,9 @@ function digestSoon() {
     digestTimer = null;
     writeDigest().catch(() => {});
   }, DIGEST_DEBOUNCE_MS);
+  // Background work must never be the reason the process stays up: the
+  // shutdown flush writes whatever is still owed.
+  if (digestTimer.unref) digestTimer.unref();
 }
 
 /**
@@ -2621,4 +2624,6 @@ module.exports = {
   // The pure ranking, for the test that holds it to the thread's answer.
   rankFaces, BANDS, TOP_K,
   allSuggestions,
+  // The store's innards, for the tests that drive it without the engine.
+  __forTest: { state, writeEntry, writeSnapshot, readSnapshot, adoptScores, loadEntries, suggestionsFor },
 };

@@ -220,6 +220,7 @@ async function loadDigest() {
     // The names in the digest cover videos whose fingerprints have not been
     // read yet, so a review list works the moment the server is up.
     for (const group of body.groups || []) {
+      if (group.length < 2) continue; // a group of one was dropped above
       for (const g of group) {
         if (!state.light.has(g.key)) {
           state.light.set(g.key, { gaps: [], secs: g.secs || 0, cuts: 0, name: g.name || '' });
@@ -1166,6 +1167,8 @@ async function rekey(from, to) {
 }
 
 module.exports = {
+  // The store's innards, for the tests that drive it without ffmpeg.
+  __forTest: { state },
   knownKeys,
   rekey,
   init,

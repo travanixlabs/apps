@@ -211,7 +211,7 @@ function authoriseDestination(dir) {
   const lower = resolved.toLowerCase();
   const under = (root) => {
     const r = path.resolve(root).toLowerCase();
-    return lower === r || lower.startsWith(r + path.sep);
+    return lower === r || lower.startsWith(r.endsWith(path.sep) ? r : r + path.sep);
   };
   const ok = [...(state.config.roots || []), state.config.homeDir].filter(Boolean).some(under)
     || (state.config.recentDests || []).some((d) => path.resolve(d).toLowerCase() === lower)

@@ -32,7 +32,7 @@ let walks = 0;      // how many times the disk was actually walked
 const inside = (outer, inner) => {
   const o = path.resolve(outer).toLowerCase();
   const i = path.resolve(inner).toLowerCase();
-  return i === o || i.startsWith(o + path.sep);
+  return i === o || i.startsWith(o.endsWith(path.sep) ? o : o + path.sep);
 };
 
 /**
