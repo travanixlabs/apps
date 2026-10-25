@@ -3972,3 +3972,8 @@ body.dragging .card { cursor: grabbing; }
 .folders-pane.expanded.collapsed .folder-grid { display: none; }
 /* Folded at home with nothing else listed, the pane is one line, not the window. */
 .folders-pane.expanded.collapsed { flex: 0 0 auto; }
+
+/* Sound says its state in colour: red while silent, green once there is sound. */
+#volBtn.sound-off { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 55%, transparent); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+#volBtn.sound-on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 55%, transparent); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+#volBtn.sound-off .state-lead, #volBtn.sound-on .state-lead { color: inherit; opacity: .8; }

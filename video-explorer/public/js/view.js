@@ -966,6 +966,9 @@ function syncVolumeUI() {
   // on for the session, then the level.
   $('#volBtnLabel').textContent = audible ? `${percent}%` : 'off';
   $('#volBtn').classList.toggle('pressed', audible);
+  // Red while silent, green once there is sound.
+  $('#volBtn').classList.toggle('sound-off', !audible);
+  $('#volBtn').classList.toggle('sound-on', audible);
 }
 
 function toggleVolumeMenu(open) {
