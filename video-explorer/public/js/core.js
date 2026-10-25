@@ -413,14 +413,29 @@ function buildStarRow(current, onPick, className = 'stars') {
 
 const VIEW_DEFAULTS = { sort: 'rating', sortDir: 'desc', recursive: false, grouped: '' };
 const RESET_KEY = 've-reset-home';
-// The filters and the search, carried across an F5. Session storage, so it
-// lasts exactly as long as this window: a fresh launch starts with none of it.
+// The filters, the search and Flatten, carried across an F5 and a close and
+// reopen alike. Local storage, written as the view changes: only a hard reset
+// or a new build starts without it.
 const VIEW_KEY = 've-view';
+// The build the kept view was left under (see /api/config's `build`).
+const BUILD_KEY = 've-build';
 // Set by Ctrl+Shift+F5 on the way out: the reload that follows starts clean.
 const HARD_KEY = 've-reset-view';
 
-/** Drops filters, search and sort back to the defaults, saving as it goes. */
+/** Keeps the filters, the search and Flatten for the next launch. */
+function keepView() {
+  try {
+    localStorage.setItem(VIEW_KEY, JSON.stringify({
+      adv: packFilter(state.adv), search: $('#searchInput').value,
+      recursive: $('#recursiveToggle').checked,
+    }));
+  } catch { /* storage refused: the next launch simply starts clean */ }
+}
+
+/** Drops filters, search, sort, grouping and the band back to the defaults, saving as it goes. */
 function resetView() {
+  try { localStorage.removeItem(VIEW_KEY); } catch { /* nothing kept */ }
+  setBandFolded(true);
   Object.assign(state.config, VIEW_DEFAULTS);
   state.grouped = '';
   syncGroupButton();

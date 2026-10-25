@@ -43,6 +43,9 @@ function render() {
   const was = same ? { top: scrollRoot.scrollTop, drawn: state.rendered } : null;
   renderListing();
   heldView = viewSignature();
+  // Every change to the filters, the search or Flatten ends in a draw, so this
+  // keeps the view for the next launch without waiting for the window to close.
+  keepView();
   if (!was) return;
   const source = pageSource().length;
   let el = anchor ? findAnchor(anchor.id) : null;

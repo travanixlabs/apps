@@ -42,21 +42,21 @@ flip. When more than one account is present the tie is broken by asking Graph
 which account this app is actually signed into, so cloud thumbnails and
 streaming resolve against the same drive the grid is showing.
 
-Three ways in, differing only in where you land:
+Four ways in, differing only in where you land:
 
 | | Folder | View |
 | --- | --- | --- |
-| Cold launch | default folder | defaults — a launch carries nothing over |
-| `F5` | the folder you were in | as you left it: filters, search, sort, grouping, flatten |
+| Launch, or `F5` | the folder you were in | as you left it: filters, search, sort, grouping, flatten, the band |
+| First launch of a new build | default folder | back to defaults |
 | `Ctrl`+`F5` | the folder you were in | back to defaults |
 | `Ctrl`+`Shift`+`R` | default folder | back to defaults |
 
-A cold launch should be predictable, but `F5` is what you press when you're
-already somewhere and only want the page rebuilt — losing your place or your
-filters there is pure cost. A view that has got away from you is what
-`Ctrl`+`F5` clears. Cold launch and refresh are told apart by the navigation
-type the browser already reports; the other two need only a flag on top of
-that.
+Closing the app and opening it again carries on where you were; a rebuild or a
+hard reset is the way back to the defaults. The filters, search, flatten and
+the band are kept in the window's local storage as they change; sort and
+grouping are in the settings file. A new build is told by the app folder's
+creation time (`build` on `GET /api/config`), which the native build makes new
+every time.
 
 "View" means the listing: filters, search text, sort field and direction, and
 flatten. Card size, hover engine, page size and the default folder are
@@ -83,8 +83,8 @@ Navigation is explorer-style: one folder level at a time. Subfolders are a
 **band** of cards above the videos — a 16:9 cover from the first video inside,
 the recursive video count, and "· 37 on disk" when only some are downloaded —
 one row that scrolls sideways. The line above the band ("42 subfolders ·
-flattened · 6,485 videos") opens and folds it. The band is **folded on every
-launch**; opening it lasts the session. At the home folder the libraries take the full width
+flattened · 6,485 videos") opens and folds it. The band is **folded by default**; opened, it stays open across launches until
+a hard reset or a new build. At the home folder the libraries take the full width
 with a wide cover. Folders containing no videos at any depth are dimmed but
 still navigable.
 
@@ -735,7 +735,7 @@ the full path.
 
 - **Flatten subfolders** — collapse everything below into one grid (junction-loop safe, 12 levels deep)
 - **Filter** — matches video names, their subfolder, folder names, **tags** and **models**; space-separated terms must all match. **A search covers the whole subtree**: typing in a folder whose videos live in subfolders switches the scan to recursive and ticks **Flatten**, because filtering can only ever see what has been scanned — and a cloud library is exactly the one that sits in subfolders rather than in front of you. Clearing the search leaves the flatten on, rather than spending another scan to put you back where you could not find anything. Prefix a term with `#` or `tag:` to match tags only — `#hd` finds what you tagged, `hd` also finds what's named that way. Clicking a tag chip fills in the `#` form.
-- **Sort** — a state button that says what it holds ("Sort: Rating ↓"), opening the menu: name, date modified, size, duration, rating, model, tag, or folder — and, grouped by performer, **Match %** (how like her each video's faces are, highest first; it is the default sort in those groupings and the previous sort comes back on leaving them). The label sorts read the first value — the alphabetically first performer or tag where there are several — and the unlabelled go last whichever way the arrow points, so reversing brings the labelled tail up rather than a wall of blanks. Picking the field you are already on reverses it, and the button's arrow flips so the direction reads without opening the menu. **Every launch starts on rating, highest first**, with everything unrated below it in name order — a session can sort however it likes and that choice is still written down, it just does not decide what you see when you next open the app (the same treatment `recursive` gets)
+- **Sort** — a state button that says what it holds ("Sort: Rating ↓"), opening the menu: name, date modified, size, duration, rating, model, tag, or folder — and, grouped by performer, **Match %** (how like her each video's faces are, highest first; it is the default sort in those groupings and the previous sort comes back on leaving them). The label sorts read the first value — the alphabetically first performer or tag where there are several — and the unlabelled go last whichever way the arrow points, so reversing brings the labelled tail up rather than a wall of blanks. Picking the field you are already on reverses it, and the button's arrow flips so the direction reads without opening the menu. **The default is rating, highest first**, with everything unrated below it in name order; the sort you pick is kept across launches, and a hard reset or a new build goes back to the default
 - **Sound** — "Sound: off" until sound is turned on for the session, then the level; it opens a slider, one master level every video opens at. The player's own slider writes back to it, so there is one number rather than a toolbar setting and a per-video one drifting apart. The level is a preference, so a refresh does not reset it
 - **Group** — "Group: Off", or the grouping in force; the button wears the people colour when the sections are performers
 - **The sweep strip** — the three sweeps sit along the foot of the window: a dot in the colour of the state (accent running, green idle or done, amber paused), the word, the numbers, a short bar while one is running, and a card with the detail on hover. The listing's count — "2 selected · 6,485 videos · 240 loaded" — sits at the strip's right end

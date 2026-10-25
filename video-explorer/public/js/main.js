@@ -1166,24 +1166,27 @@ async function init() {
 
   // Four ways in:
   //
-  //   cold launch     the default folder, the view at its defaults
-  //   F5              the folder you were in, the view as you left it
+  //   launch, F5      the folder you were in, the view as you left it
+  //   new build       the default folder, the view at its defaults
   //   Ctrl+Shift+F5   the folder you were in, the view at its defaults
   //   Ctrl+Shift+R    the default folder, the view at its defaults
   //
-  // "The view" is the sort, the grouping, the filters and the search. Sort and
-  // grouping live in the saved config, so an F5 keeps them by leaving them be;
-  // the filters live only in memory, and ride the reload in session storage.
-  const reloaded = (performance.getEntriesByType('navigation')[0] || {}).type === 'reload';
+  // "The view" is the sort, the grouping, the filters, the search, Flatten and
+  // the band. Sort and grouping live in the saved config, so leaving them be
+  // keeps them; the rest is kept in local storage as it changes (keepView).
   const toHome = sessionStorage.getItem(RESET_KEY) === '1';
   const hard = sessionStorage.getItem(HARD_KEY) === '1';
   sessionStorage.removeItem(RESET_KEY);
   sessionStorage.removeItem(HARD_KEY);
+  let lastBuild = null;
+  try { lastBuild = localStorage.getItem(BUILD_KEY); } catch { lastBuild = null; }
+  const newBuild = lastBuild !== (state.config.build || '');
+  try { localStorage.setItem(BUILD_KEY, state.config.build || ''); } catch { /* starts clean next time too */ }
   let kept = null;
-  try { kept = JSON.parse(sessionStorage.getItem(VIEW_KEY) || 'null'); } catch { kept = null; }
-  sessionStorage.removeItem(VIEW_KEY);
+  try { kept = JSON.parse(localStorage.getItem(VIEW_KEY) || 'null'); } catch { kept = null; }
 
-  if (!reloaded || toHome || hard) {
+  const fresh = toHome || hard || newBuild;
+  if (fresh) {
     resetView();
   } else if (kept) {
     state.adv = unpackFilter(kept.adv);
@@ -1191,26 +1194,19 @@ async function init() {
     $('#searchInput').value = typeof kept.search === 'string' ? kept.search : '';
     syncAdvBadge();
   }
-  // Written on the way out of every reload, unless the reload is the one that
-  // is meant to forget it.
+  // Also written on the way out, for anything changed since the last draw.
   window.addEventListener('pagehide', () => {
     if (sessionStorage.getItem(HARD_KEY) === '1' || sessionStorage.getItem(RESET_KEY) === '1') return;
-    try {
-      sessionStorage.setItem(VIEW_KEY, JSON.stringify({
-        adv: packFilter(state.adv), search: $('#searchInput').value,
-        recursive: $('#recursiveToggle').checked,
-      }));
-    } catch { /* storage refused: the reload simply starts clean */ }
+    keepView();
   });
 
-  const start = (reloaded && !toHome ? state.config.lastDir : '')
+  const start = (toHome || newBuild ? '' : state.config.lastDir)
     || state.config.homeDir || state.config.lastDir || '';
   $('#dirInput').value = start;
   $('#recursiveToggle').checked = state.config.recursive === true;
-  // Flatten subfolders is part of the view an F5 keeps. It is never saved to
-  // the config -- a launch starts with it off -- so it rides the reload with
-  // the filters.
-  if (reloaded && !toHome && !hard && kept && typeof kept.recursive === 'boolean') {
+  // Flatten subfolders is part of the kept view. It is never saved to the
+  // config, so it rides with the filters.
+  if (!fresh && kept && typeof kept.recursive === 'boolean') {
     $('#recursiveToggle').checked = kept.recursive;
   }
   // `true` is what this was before there were two groupings.

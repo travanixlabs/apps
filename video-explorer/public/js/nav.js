@@ -270,21 +270,21 @@ function folderTallyText(folder) {
 }
 
 /**
- * Whether the band is folded. Folded on every launch; opening it lasts the
- * session (a reload keeps it, the next launch folds it again). One state for
- * every folder: it is a question of how much of the window the band may
- * have, not of which folder you are in.
+ * Whether the band is folded. Folded by default; opened, it stays open across
+ * a reload and a close and reopen, until a hard reset or a new build (see
+ * resetView). One state for every folder: it is a question of how much of the
+ * window the band may have, not of which folder you are in.
  */
 const BAND_KEY = 've.bandOpen';
 
 function bandFoldedHere() {
-  try { return sessionStorage.getItem(BAND_KEY) !== '1'; } catch { return true; }
+  try { return localStorage.getItem(BAND_KEY) !== '1'; } catch { return true; }
 }
 
 function setBandFolded(folded) {
   try {
-    if (folded) sessionStorage.removeItem(BAND_KEY);
-    else sessionStorage.setItem(BAND_KEY, '1');
+    if (folded) localStorage.removeItem(BAND_KEY);
+    else localStorage.setItem(BAND_KEY, '1');
   } catch { /* storage refused: it folds again on the next render */ }
   syncBand();
 }

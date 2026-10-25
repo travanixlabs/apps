@@ -4,6 +4,8 @@
  * The settings, the one status poll, and the shutdown.
  */
 
+const fs = require('fs');
+const path = require('path');
 const faces = require('../../faces');
 const dupes = require('../../dupes');
 const framing = require('../../framing');
@@ -15,7 +17,14 @@ const { getWalkVersion } = require('../walk');
 const { sendJson } = require('../http');
 const { log } = require('../util');
 
-const withAccount = () => ({ ...state.config, homeAccount: state.homeAccount });
+// Which build this is: the app folder's creation time. The native build copies
+// the source into a new folder every time, so a rebuild changes it; the page
+// starts clean on the first launch of a new build (and only then).
+const BUILD = (() => {
+  try { return String(Math.round(fs.statSync(path.join(__dirname, '..', '..')).birthtimeMs)); } catch { return ''; }
+})();
+
+const withAccount = () => ({ ...state.config, homeAccount: state.homeAccount, build: BUILD });
 
 module.exports = (flushAll) => [
   ['GET', '/api/config', async ({ res }) => sendJson(res, 200, withAccount())],
