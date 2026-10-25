@@ -99,6 +99,14 @@ function pinAnchor(el, offset) {
 
 function renderListing() {
   applyFilterSort();
+  // A video the filter or the search has just taken out of the view leaves the
+  // selection with it: a batch action must only ever reach what is on show.
+  if (state.selected.size) {
+    const shown = new Set(state.view.map((f) => f.path));
+    for (const path of state.selected) if (!shown.has(path)) state.selected.delete(path);
+    if (!state.selected.size) state.lastClickedIndex = -1;
+    updateSelectionBar();
+  }
   const grid = $('#grid');
   // Detach the live player and drop observations on nodes we're discarding.
   stopLive();
