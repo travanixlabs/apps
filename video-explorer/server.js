@@ -103,15 +103,11 @@ async function main() {
   // denominator; the sweeps hear about it here rather than being required by
   // the config module.
   onRootsChanged(() => { faces.rootsChanged(); dupes.rootsChanged(); framing.rootsChanged(); });
-  // Flattening is a view you reach for, not a mode you live in: reopening the
-  // app into 5,682 videos from one folder is jarring, so it starts off.
+  // The saved flag is not the page's: Flatten rides with the kept view (local
+  // storage), so this only stops an old file's `true` reaching a fresh view.
+  // The sort is left as it was saved: a launch carries on where you left off,
+  // and only a hard reset or a new build goes back to rating, highest first.
   state.config.recursive = false;
-  // Same for the ordering: every launch starts on your own judgement, highest
-  // first, with the unrated bulk below it. A session can sort however it likes
-  // and that choice is still written down -- it just does not decide what you
-  // see when you next open the app.
-  state.config.sort = 'rating';
-  state.config.sortDir = 'desc';
   await applyHomeDir();
   // Before anything is served: the authorised list is the answer to "what can
   // this app read", and it should be as short as the truth allows.
