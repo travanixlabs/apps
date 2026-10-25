@@ -204,14 +204,6 @@ function buildRecordRow(file, { edit = true } = {}) {
 
   // Race, height, bust and body are not shown here: they belong to a person and
   // are set, seen and filtered from her section's heading and the filters.
-  // The studio first, outlined: it is where the video is from, not who is in it.
-  if (file.studio) {
-    const studio = document.createElement('span');
-    studio.className = 'chip chip-studio';
-    studio.textContent = file.studio;
-    studio.title = `Studio: ${file.studio}`;
-    row.appendChild(studio);
-  }
   // Names show when there are names; nothing sits there inviting you to add one.
   if ((file.models || []).length) row.appendChild(buildLabelChips(file, 'models', { add: false, edit }));
   // With no add button and no tags there is nothing to draw, and an empty

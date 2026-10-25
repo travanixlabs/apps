@@ -3541,21 +3541,14 @@ body.dragging .card { cursor: grabbing; }
 .card:hover .select-mark, .card:focus-within .select-mark { top: 36px; }
 .card:hover .avail-mark { opacity: 0; }
 
-/* Pills on a card: studio outlined, performers in the user's colour with the
-   people ring, tags plain. 18px tall, 12px type, in that order. */
+/* Pills on a card: performers in the user's colour with the people ring,
+   tags plain. 18px tall, 12px type, in that order. */
 .record-read .chip {
   font-size: var(--fs-xs);
   line-height: 18px;
   padding: 0 7px;
   max-width: 160px;
   border-radius: var(--r-pill);
-}
-.chip.chip-studio {
-  background: transparent;
-  border-color: var(--border-strong);
-  color: var(--text-dim);
-  cursor: default;
-  font-weight: 400;
 }
 .chip.chip-model,
 .chip.chip-model[style*="--chip-colour"] {
@@ -3587,9 +3580,9 @@ body.dragging .card { cursor: grabbing; }
 .chip.tri.out .tri-mark { color: var(--danger); }
 .chip.tri:hover { color: var(--text); }
 
-/* Narrow tiles: the name and the meta stay, the studio and the tags go. */
+/* Narrow tiles: the name and the meta stay, the tags go. */
 @container (max-width: 180px) {
-  .chip.chip-studio, .record-row .chips:last-child:not(:first-child) { display: none; }
+  .record-row .chips:last-child:not(:first-child) { display: none; }
   .file-name { -webkit-line-clamp: 2; }
 }
 
