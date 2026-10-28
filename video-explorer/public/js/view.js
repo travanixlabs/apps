@@ -1472,30 +1472,12 @@ async function sendRecordEdits(body) {
         if (record.resume !== undefined) state.playing.resume = record.resume;
         drawMarks();
       }
-      const file = fileAt(filePath);
-      if (!file) continue;
-      file.rating = record.rating;
-      file.tags = record.tags;
-      file.models = record.models;
-      // Names turned down on this video. Without copying it the refusal would
-      // be stored and invisible: the strip reads this to list what it is not
-      // suggesting, and to offer each one back.
-      if (record.notModels !== undefined) file.notModels = record.notModels;
-      if (record.settled !== undefined) file.settled = record.settled;
-      // And the ranking, when the reply carried a new one -- refusing a name
-      // changes what this video suggests, and the chip would otherwise stay.
-      if (record.suggested !== undefined) {
-        file.suggested = record.suggested;
-        suggestionsByKey.set(suggestionsKey(file), record.suggested);
-      }
-      if (record.people !== undefined) file.people = record.people;
-      file.url = record.url;
-      // Bookmarked moments. Copied back so the timeline redraws from the store
-      // rather than from what the click optimistically assumed.
-      if (record.marks !== undefined) file.marks = record.marks;
-      if (record.resume !== undefined) file.resume = record.resume;
-      file.updated = record.updated || 0;
-      refreshCardRecord(file);
+      // The listing's video, or else the home rows' copies of it -- and the
+      // open video itself, which may have been opened from either.
+      const listed = fileAt(filePath);
+      const copies = listed ? [listed] : [...(homeFiles.get(filePath) || [])];
+      if (state.playing && state.playing.path === filePath && !copies.includes(state.playing)) copies.push(state.playing);
+      for (const file of copies) applyRecord(file, record);
     }
     pruneFiltered(Object.keys(data.records || {}));
     // Redrawn where it was: the sections keep their order (holdGroupOrder) and
@@ -1505,6 +1487,32 @@ async function sendRecordEdits(body) {
   } catch (err) {
     toast(err.message, 'err');
   }
+}
+
+/** An edit's answer, onto one video object and every card drawn for it. */
+function applyRecord(file, record) {
+  file.rating = record.rating;
+  file.tags = record.tags;
+  file.models = record.models;
+  // Names turned down on this video. Without copying it the refusal would
+  // be stored and invisible: the strip reads this to list what it is not
+  // suggesting, and to offer each one back.
+  if (record.notModels !== undefined) file.notModels = record.notModels;
+  if (record.settled !== undefined) file.settled = record.settled;
+  // And the ranking, when the reply carried a new one -- refusing a name
+  // changes what this video suggests, and the chip would otherwise stay.
+  if (record.suggested !== undefined) {
+    file.suggested = record.suggested;
+    suggestionsByKey.set(suggestionsKey(file), record.suggested);
+  }
+  if (record.people !== undefined) file.people = record.people;
+  file.url = record.url;
+  // Bookmarked moments. Copied back so the timeline redraws from the store
+  // rather than from what the click optimistically assumed.
+  if (record.marks !== undefined) file.marks = record.marks;
+  if (record.resume !== undefined) file.resume = record.resume;
+  file.updated = record.updated || 0;
+  refreshCardRecord(file);
 }
 
 /**

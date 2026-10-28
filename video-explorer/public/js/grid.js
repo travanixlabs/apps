@@ -160,6 +160,11 @@ function renderListing() {
  */
 let homeRowsToken = 0;
 let homeRowsTries = 0;
+// path -> the video objects the home rows drew. They are not in the listing
+// (the home folder lists folders), so an edit looked up by fileAt never found
+// them: the card and the open player kept the old rating until a refresh.
+// A video in both rows is two objects, and both are kept.
+const homeFiles = new Map();
 
 function atHome() {
   return Boolean(state.dir && state.config.homeDir && samePath(state.config.homeDir, state.dir));
@@ -226,6 +231,11 @@ async function renderHomeRows() {
   };
   const opened = hydrateAll(rows.opened);
   const labelled = hydrateAll(rows.labelled);
+  homeFiles.clear();
+  for (const file of [...opened, ...labelled]) {
+    if (!homeFiles.has(file.path)) homeFiles.set(file.path, []);
+    homeFiles.get(file.path).push(file);
+  }
   section('Recently opened', 'Enter resumes where you stopped', opened, 'opened');
   section('Recently labelled', 'ratings, names and tags you added · newest first', labelled, 'labelled');
   $('#filesSection').hidden = !(opened.length || labelled.length);
