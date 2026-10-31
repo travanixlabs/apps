@@ -66,6 +66,7 @@ async function setPerformerTraits(group, patch) {
     toast(err.message, 'err');
     return;
   }
+  toast(`${group.name}: updated`, 'ok');
   // With a performer filter on, the listing itself may have changed.
   if (personFiltered()) { render(); return; }
   for (const head of document.querySelectorAll('.group-head')) {
@@ -100,6 +101,7 @@ async function setPerformerRace(group, race) {
     toast(err.message, 'err');
     return;
   }
+  toast(`${group.name}: updated`, 'ok');
   if (personFiltered()) { render(); return; }
   for (const head of document.querySelectorAll('.group-head')) {
     if (head.dataset.group === group.key) head.replaceWith(buildGroupHead(group));
@@ -1425,9 +1427,9 @@ function syncAdvBadge() {
  * that has never been downloaded. Nothing here touches the video itself —
  * that only happens via "Write into files", which is deliberate.
  */
-async function editRecords(paths, patch) {
+async function editRecords(paths, patch, opts = {}) {
   if (!paths.length) return;
-  return sendRecordEdits({ paths, ...patch });
+  return sendRecordEdits({ paths, ...patch }, opts);
 }
 
 /**
@@ -1435,12 +1437,31 @@ async function editRecords(paths, patch) {
  * [{ path, ...patch }]. A bulk answer that would otherwise be hundreds of
  * calls -- one per name, each re-reading the labels -- is a single one.
  */
-async function editRecordsEach(items) {
+async function editRecordsEach(items, opts = {}) {
   if (!items.length) return;
-  return sendRecordEdits({ items });
+  return sendRecordEdits({ items }, opts);
 }
 
-async function sendRecordEdits(body) {
+/*
+ * "Updated" after an edit you made to a video: a tag, a name, a rating (Tre,
+ * 2026-10-31). Bookkeeping the app does on its own -- marking a video opened,
+ * remembering where it stopped, a bookmark -- says nothing. Edits landing
+ * together (a bulk answer sent in chunks) are one toast, counting the videos.
+ */
+const SILENT_EDITS = new Set(['opened', 'resume', 'setMark', 'removeMark']);
+let updatedPending = new Set();
+let updatedTimer = null;
+function noteUpdated(paths) {
+  for (const p of paths) updatedPending.add(p);
+  clearTimeout(updatedTimer);
+  updatedTimer = setTimeout(() => {
+    const n = updatedPending.size;
+    updatedPending = new Set();
+    toast(n === 1 ? 'Updated' : `Updated ${n.toLocaleString()} videos`, 'ok');
+  }, 400);
+}
+
+async function sendRecordEdits(body, { quiet = false } = {}) {
   try {
     const data = await api('/api/library', {
       method: 'POST',
@@ -1480,6 +1501,10 @@ async function sendRecordEdits(body) {
       for (const file of copies) applyRecord(file, record);
     }
     pruneFiltered(Object.keys(data.records || {}));
+    const keys = body.items ? body.items.flatMap((it) => Object.keys(it)) : Object.keys(body);
+    const meant = keys.some((k) => k !== 'path' && k !== 'paths' && !SILENT_EDITS.has(k));
+    const done = Object.entries(data.records || {}).filter(([, r]) => !r.error).map(([p]) => p);
+    if (!quiet && meant && done.length) noteUpdated(done);
     // Redrawn where it was: the sections keep their order (holdGroupOrder) and
     // the page its place (render's anchor); only the moved cards change.
     const moved = [...before].some(([p, was]) => fileAt(p) && sectionsOf(fileAt(p)) !== was);
@@ -1631,15 +1656,13 @@ function refreshCardRecord(file) {
     const row = card.querySelector('.record-row');
     if (row) row.replaceWith(buildRecordRow(file, { edit: false }));
     markGroupChip(card);
-    // The rating is a badge on the picture now, and the row above does not
-    // touch it -- so a rating set in the player would leave the tile showing
-    // the old one until the listing was rebuilt.
-    const corner = card.querySelector('.badge-corner');
-    if (corner) {
-      const badge = corner.querySelector('.badge-rating');
-      if (badge) badge.remove();
-      if (file.rating) corner.appendChild(buildCornerRating(file.rating));
-    }
+    // The stars sit at the end of the line under the name (buildCardMeta),
+    // which the row above does not touch -- so that line is redrawn, or a
+    // rating set in the player leaves the tile showing the old one. Not the
+    // picture's corner: that holds the duration, and a badge added there
+    // was a second set of stars beside the stale first.
+    const meta = card.querySelector('.card-meta');
+    if (meta) meta.replaceWith(buildCardMeta(file));
   }
   // The player shows the same row, so an edit made in either place has to land
   // in both — otherwise the footer keeps showing the rating you just changed.
