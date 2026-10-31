@@ -800,12 +800,18 @@
            delete here reaches every video carrying it. -->
       <section class="settings-pane" data-pane="labels" role="tabpanel" hidden>
       <div class="label-add">
+        <input id="categoryNew" type="text" placeholder="New category" autocomplete="off">
+        <button id="categoryAdd" class="btn">Add category</button>
+      </div>
+      <div class="label-add">
         <input id="labelNew" type="text" placeholder="New label" autocomplete="off">
+        <select id="labelNewCat" class="label-cat-pick" aria-label="Category for the new label"></select>
         <button id="labelAdd" class="btn btn-primary">Add</button>
       </div>
       <p class="hint">Renaming a label renames it on every video that carries it, and
         deleting one takes it off every video. Neither can be undone from here, so a
-        delete asks first and says how many videos it will touch.</p>
+        delete asks first and says how many videos it will touch. A label in a category
+        wears the category's colour; change the swatch on the category to recolour all of them.</p>
       <div id="labelList" class="label-list"></div>
       </section>
     </div>

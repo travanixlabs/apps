@@ -586,58 +586,261 @@ function labelRows() {
   return rows.sort((a, b) => BY_LETTERS(a.tag, b.tag));
 }
 
+/**
+ * The labels under their categories: each category a heading row with its
+ * colour, its name (renamed in place) and a delete, then its labels; the
+ * labels in no category last. An empty category still shows -- it is
+ * somewhere to put labels.
+ */
 function renderLabelList() {
   const host = $('#labelList');
   if (!host) return;
+  syncNewLabelCategory();
   const rows = labelRows();
   host.replaceChildren();
-  if (!rows.length) {
+  if (!rows.length && !tagCategories().length) {
     const none = document.createElement('div');
     none.className = 'label-empty';
     none.textContent = 'No labels yet. Add one above, or tag a video.';
     host.appendChild(none);
     return;
   }
-  for (const { tag, count } of rows) {
-    const row = document.createElement('div');
-    row.className = 'label-row';
+  const groups = byTagCategory(rows);
+  const inCat = (cat) => (groups.find((g) => g.cat === cat) || { entries: [] }).entries;
+  for (const cat of [...tagCategories(), null]) {
+    const entries = inCat(cat);
+    if (!cat && !entries.length) continue;
+    host.appendChild(buildCategoryRow(cat, entries.length));
+    for (const { tag, count } of entries) host.appendChild(buildLabelRow(tag, count, cat));
+  }
+}
 
+/** The choice of category, as a select: every category, then none. */
+function categorySelect(currentId, onPick) {
+  const pick = document.createElement('select');
+  pick.className = 'label-cat-pick';
+  for (const cat of [...tagCategories(), null]) {
+    const option = document.createElement('option');
+    option.value = cat ? cat.id : '';
+    option.textContent = cat ? cat.name : 'No category';
+    pick.appendChild(option);
+  }
+  pick.value = currentId || '';
+  if (onPick) pick.addEventListener('change', () => onPick(pick.value));
+  return pick;
+}
+
+/** The category the "New label" box adds into, kept to what exists. */
+function syncNewLabelCategory() {
+  const held = $('#labelNewCat');
+  if (!held) return;
+  const was = held.value;
+  held.replaceWith(Object.assign(categorySelect(tagCategories().some((c) => c.id === was) ? was : ''), {
+    id: 'labelNewCat',
+    title: 'Category for the new label',
+  }));
+}
+
+function buildCategoryRow(cat, n) {
+  const row = document.createElement('div');
+  row.className = 'label-row label-cat-row';
+  if (!cat) {
+    const name = document.createElement('span');
+    name.className = 'label-cat-name';
+    name.textContent = 'No category';
+    row.appendChild(name);
+  } else {
     const colour = document.createElement('input');
     colour.type = 'color';
-    colour.value = chipColour('tags', tag) || '#8a94a6';
-    colour.title = `Colour for "${tag}"`;
-    colour.addEventListener('input', () => setLabelColour(tag, colour.value));
+    colour.value = cat.colour || '#8a94a6';
+    colour.title = `Colour for every label in ${cat.name}`;
+    colour.addEventListener('input', () => setCategoryColour(cat.id, colour.value));
     row.appendChild(colour);
-
-    // A text box rather than a rename button: the name IS the control, and a
-    // rename is committed by leaving it or pressing Enter.
     const name = document.createElement('input');
     name.type = 'text';
-    name.className = 'label-name';
-    name.value = tag;
-    name.title = 'Rename — every video carrying it is renamed too';
+    name.className = 'label-name label-cat-name';
+    name.value = cat.name;
+    name.title = 'Rename the category';
     name.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter') { ev.preventDefault(); name.blur(); }
-      if (ev.key === 'Escape') { name.value = tag; name.blur(); }
+      if (ev.key === 'Escape') { name.value = cat.name; name.blur(); }
     });
-    name.addEventListener('blur', () => renameLabel(tag, name.value, name));
+    name.addEventListener('blur', () => renameCategory(cat.id, name.value, name));
     row.appendChild(name);
-
-    const on = document.createElement('span');
-    on.className = 'label-count';
-    on.textContent = count ? `${count} video${count === 1 ? '' : 's'}` : 'unused';
-    row.appendChild(on);
-
+  }
+  const count = document.createElement('span');
+  count.className = 'label-count';
+  count.textContent = `${n} label${n === 1 ? '' : 's'}`;
+  row.appendChild(count);
+  if (cat) {
     const drop = document.createElement('button');
     drop.type = 'button';
     drop.className = 'label-drop';
-    drop.textContent = '\u2715';
-    drop.title = `Delete "${tag}"`;
-    drop.addEventListener('click', () => deleteLabel(tag, count));
+    drop.textContent = '✕';
+    drop.title = `Delete the category "${cat.name}" (its labels stay, in no category)`;
+    drop.addEventListener('click', () => deleteCategory(cat.id, n));
     row.appendChild(drop);
-
-    host.appendChild(row);
   }
+  return row;
+}
+
+function buildLabelRow(tag, count, cat) {
+  const row = document.createElement('div');
+  row.className = 'label-row';
+  // In a category, the colour is the category's: shown, not set here.
+  const colour = document.createElement('input');
+  colour.type = 'color';
+  colour.value = chipColour('tags', tag) || '#8a94a6';
+  if (cat) {
+    colour.disabled = true;
+    colour.dataset.catSwatch = cat.id;
+    colour.title = `${cat.name}'s colour — change it on the category`;
+  } else {
+    colour.title = `Colour for "${tag}"`;
+    colour.addEventListener('input', () => setLabelColour(tag, colour.value));
+  }
+  row.appendChild(colour);
+
+  // A text box rather than a rename button: the name IS the control, and a
+  // rename is committed by leaving it or pressing Enter.
+  const name = document.createElement('input');
+  name.type = 'text';
+  name.className = 'label-name';
+  name.value = tag;
+  name.title = 'Rename — every video carrying it is renamed too';
+  name.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); name.blur(); }
+    if (ev.key === 'Escape') { name.value = tag; name.blur(); }
+  });
+  name.addEventListener('blur', () => renameLabel(tag, name.value, name));
+  row.appendChild(name);
+
+  const pick = categorySelect(cat ? cat.id : '', (id) => setTagCategory(tag, id));
+  pick.title = `Category for "${tag}"`;
+  row.appendChild(pick);
+
+  const on = document.createElement('span');
+  on.className = 'label-count';
+  on.textContent = count ? `${count} video${count === 1 ? '' : 's'}` : 'unused';
+  row.appendChild(on);
+
+  const drop = document.createElement('button');
+  drop.type = 'button';
+  drop.className = 'label-drop';
+  drop.textContent = '\u2715';
+  drop.title = `Delete "${tag}"`;
+  drop.addEventListener('click', () => deleteLabel(tag, count));
+  row.appendChild(drop);
+  return row;
+}
+
+// ------------------------------------------------------- tag categories
+
+/** Saved through the config, like the colours; the server keeps them. */
+function saveCategories() {
+  return saveConfig({
+    tagCategories: state.config.tagCategories || [],
+    tagCategoryOf: state.config.tagCategoryOf || {},
+  });
+}
+
+/** Every tag chip on the page, the filter dialog and the editor, redrawn. */
+function categoriesChanged() {
+  repaintChips('tags');
+  if (!$('#advModal').hidden) renderAdvanced();
+  if (!$('#tagModal').hidden) renderTagSuggestions();
+}
+
+// New categories take the next of these, so two in a row do not look alike.
+const CATEGORY_COLOURS = ['#32c864', '#c993ff', '#fb3ca2', '#2fc6d6', '#a3a3a3', '#e6d84a'];
+
+async function addCategory() {
+  const field = $('#categoryNew');
+  const name = field.value.trim().replace(/\s+/g, ' ');
+  if (!name) return;
+  const cats = tagCategories();
+  if (cats.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+    toast(`There is already a category called "${name}"`, 'warn');
+    return;
+  }
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'category';
+  let id = slug;
+  for (let n = 2; cats.some((c) => c.id === id); n += 1) id = `${slug}-${n}`;
+  const used = new Set(cats.map((c) => String(c.colour).toLowerCase()));
+  const colour = CATEGORY_COLOURS.find((c) => !used.has(c)) || CATEGORY_COLOURS[cats.length % CATEGORY_COLOURS.length];
+  state.config.tagCategories = [...cats, { id, name, colour }];
+  field.value = '';
+  await saveCategories();
+  renderLabelList();
+  toast(`Category "${name}" added \u2014 pick it beside a label to put the label in it`, 'ok');
+}
+
+async function renameCategory(id, raw, field) {
+  const cat = tagCategories().find((c) => c.id === id);
+  if (!cat) return;
+  const name = String(raw || '').trim().replace(/\s+/g, ' ');
+  if (!name || name === cat.name) { field.value = cat.name; return; }
+  if (tagCategories().some((c) => c.id !== id && c.name.toLowerCase() === name.toLowerCase())) {
+    field.value = cat.name;
+    toast(`There is already a category called "${name}"`, 'warn');
+    return;
+  }
+  const was = cat.name;
+  state.config.tagCategories = tagCategories().map((c) => (c.id === id ? { ...c, name } : c));
+  await saveCategories();
+  renderLabelList();
+  categoriesChanged();
+  toast(`Category "${was}" is now "${name}"`, 'ok');
+}
+
+/**
+ * Taken at once and painted where it stands, saved when the drag rests -- as a
+ * label's colour is (saveColoursSoon). The list is not rebuilt mid-drag: that
+ * would take the picker away from under the pointer.
+ */
+function setCategoryColour(id, colour) {
+  state.config.tagCategories = tagCategories().map((c) => (c.id === id ? { ...c, colour } : c));
+  saveColoursSoon('tagCategories');
+  for (const swatch of document.querySelectorAll(`#labelList [data-cat-swatch="${id}"]`)) swatch.value = colour;
+  repaintChips('tags');
+}
+
+async function deleteCategory(id, n) {
+  const cat = tagCategories().find((c) => c.id === id);
+  if (!cat) return;
+  const these = n ? ` Its ${n} label${n === 1 ? '' : 's'} stay${n === 1 ? 's' : ''}, in no category, and keep${n === 1 ? 's' : ''} the colour ${n === 1 ? 'it has' : 'they have'} now.` : '';
+  if (!window.confirm(`Delete the category "${cat.name}"?${these}`)) return;
+  // Its labels keep the colour they wore, as their own.
+  const colours = { ...(state.config.labelColours || {}) };
+  const of = { ...(state.config.tagCategoryOf || {}) };
+  for (const [tag, at] of Object.entries(of)) {
+    if (at !== id) continue;
+    if (cat.colour) colours[tag] = cat.colour;
+    delete of[tag];
+  }
+  state.config.labelColours = colours;
+  state.config.tagCategoryOf = of;
+  state.config.tagCategories = tagCategories().filter((c) => c.id !== id);
+  await saveConfig({
+    labelColours: colours,
+    tagCategories: state.config.tagCategories,
+    tagCategoryOf: of,
+  });
+  renderLabelList();
+  categoriesChanged();
+  toast(`Category "${cat.name}" deleted`, 'ok');
+}
+
+async function setTagCategory(tag, id) {
+  const of = { ...(state.config.tagCategoryOf || {}) };
+  if (id) of[tag.toLowerCase()] = id;
+  else delete of[tag.toLowerCase()];
+  state.config.tagCategoryOf = of;
+  await saveCategories();
+  renderLabelList();
+  categoriesChanged();
+  const cat = tagCategoryOf(tag);
+  toast(cat ? `"${tag}" is in ${cat.name}` : `"${tag}" is in no category`, 'ok');
 }
 
 function setLabelColour(tag, colour) {
@@ -668,6 +871,12 @@ async function addLabel() {
   if (!name) return;
   try {
     await labelAction({ action: 'add', name });
+    // Straight into the category picked beside the box, if one was.
+    const into = ($('#labelNewCat') || {}).value || '';
+    if (into) {
+      state.config.tagCategoryOf = { ...(state.config.tagCategoryOf || {}), [name.toLowerCase()]: into };
+      await saveCategories();
+    }
     field.value = '';
     renderLabelList();
     toast(`Label "${name}" added`, 'ok');

@@ -3995,3 +3995,42 @@ html.locked body > *:not(#lock):not(script) { visibility: hidden; }
 .lock.wrong .lock-dots span { border-color: var(--danger); }
 @keyframes lock-shake { 0%, 100% { transform: none; } 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
 @media (prefers-reduced-motion: reduce) { .lock.wrong .lock-dots { animation: none; } }
+
+/* Tag categories (labels.js: appendByCategory). A heading the width of the
+   row, in the category's colour, over its chips -- in the filter, the tag
+   editor's list, and Settings. */
+.tag-cat-head {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.tag-cat-head::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--chip-colour, var(--border-strong));
+}
+/* Headings take room, so the editor's list gets more of it. */
+#tagSuggest { max-height: 260px; }
+.label-cat-pick {
+  flex: none;
+  max-width: 130px;
+  padding: 3px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-elev-2);
+  color: var(--text);
+}
+.label-cat-row { background: var(--bg-elev-2); position: sticky; top: 0; z-index: 1; }
+.label-cat-row .label-cat-name { font-weight: 700; }
+span.label-cat-name { flex: 1; padding: 3px 6px; color: var(--text-dim); }
+.label-row input[type="color"]:disabled { cursor: default; opacity: .85; }
+.label-list { max-height: 420px; }

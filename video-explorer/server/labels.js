@@ -50,6 +50,12 @@ function renameLabel(rawFrom, rawTo) {
   if (held) colours[lower(to)] = held;
   const spare = spareLabels();
   state.config.labelColours = colours;
+  // Its category goes with it, like its colour.
+  const of = { ...(state.config.tagCategoryOf || {}) };
+  const cat = of[lower(name)];
+  delete of[lower(name)];
+  if (cat) of[lower(to)] = cat;
+  state.config.tagCategoryOf = of;
   state.config.spareLabels = spare.some((t) => lower(t) === lower(name))
     ? [...without(spare, name), to] : spare;
   saveConfigSoon({ user: true });
@@ -64,6 +70,9 @@ function deleteLabel(rawName) {
   const colours = { ...(state.config.labelColours || {}) };
   delete colours[lower(name)];
   state.config.labelColours = colours;
+  const of = { ...(state.config.tagCategoryOf || {}) };
+  delete of[lower(name)];
+  state.config.tagCategoryOf = of;
   state.config.spareLabels = without(spareLabels(), name);
   saveConfigSoon({ user: true });
   return { changed };

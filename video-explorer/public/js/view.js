@@ -1128,7 +1128,7 @@ function renderAdvanced() {
     const ordered = shown.map((entry, i) => [entry, i])
       .sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1])
       .map(([entry]) => entry);
-    for (const entry of ordered) {
+    const makeChip = (entry) => {
       const chip = chipCycle(entry.tag, advDraft[field].get(entry.tag), () => {
         cycleIn(advDraft[field], entry.tag);
         renderAdvanced();
@@ -1139,8 +1139,11 @@ function renderAdvanced() {
       count.className = 'chip-count';
       count.textContent = entry.count.toLocaleString();
       chip.appendChild(count);
-      box.appendChild(chip);
-    }
+      return chip;
+    };
+    // Tags under their categories, each still picked-first then alphabetical.
+    if (field === 'tags') appendByCategory(box, ordered, makeChip);
+    else for (const entry of ordered) box.appendChild(makeChip(entry));
   }
 
   syncAdvRail();

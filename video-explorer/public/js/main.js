@@ -371,6 +371,10 @@ function wireSettings() {
   }
 
   $('#labelAdd').addEventListener('click', addLabel);
+  $('#categoryAdd').addEventListener('click', addCategory);
+  $('#categoryNew').addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); addCategory(); }
+  });
   $('#labelNew').addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter') { ev.preventDefault(); addLabel(); }
   });

@@ -97,6 +97,14 @@ const DEFAULT_CONFIG = {
   // One colour each for the three facets that are one value per video. They
   // are a kind, not a vocabulary, so they do not get a colour per value.
   facetColours: { models: '' },
+  // Categories of tags (Tre, 2026-11-01): [{ id, name, colour }], in the order
+  // they are listed. A tag in a category wears the category's colour, so one
+  // swatch recolours all of them; a tag in none keeps its own labelColours one.
+  tagCategories: [],
+  // lowercased tag -> category id.
+  tagCategoryOf: {},
+  // Set once the categories have been made from the colours already in use.
+  tagCategoriesSeeded: false,
 
   scrubWithMouse: false,
   // Highest rated first: your own judgement beats any property of the file.
@@ -138,7 +146,7 @@ state.META_FILE = path.join(state.CACHE_DIR, 'meta.json');
  * route fail, and was saved. A user setting must also keep the type its
  * default has (an array stays an array, a plain object a plain object).
  */
-const SERVER_STATE = new Set(['roots', 'rootsSeen', 'cacheNamesV2', 'cacheTidyV3', 'recentDests']);
+const SERVER_STATE = new Set(['roots', 'rootsSeen', 'cacheNamesV2', 'cacheTidyV3', 'recentDests', 'tagCategoriesSeeded']);
 const USER_SETTINGS = Object.keys(DEFAULT_CONFIG).filter((k) => !SERVER_STATE.has(k));
 
 const sameShape = (a, b) => {
@@ -202,7 +210,71 @@ function loadConfig() {
     }
     configHeld = true;
   }
+  seedTagCategories();
   return { broken };
+}
+
+/**
+ * The first categories, made from the colours the labels already wear: before
+ * there were categories, a colour was how Tre grouped them -- red the style,
+ * yellow the method, orange the location, blue the outfit. Each coloured label
+ * joins the category whose colour is nearest its own, if it is near at all; a
+ * colour that matches none (the greens) is left as it is, in no category.
+ * Once only: after that the categories are edited in Settings.
+ */
+const FIRST_CATEGORIES = [
+  { id: 'style', name: 'Style', colour: '#f35959' },
+  { id: 'method', name: 'Method', colour: '#dc9628' },
+  { id: 'location', name: 'Location', colour: '#dd612c' },
+  { id: 'outfit', name: 'Outfit', colour: '#3278fa' },
+];
+
+function rgbOf(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function seedTagCategories() {
+  if (state.config.tagCategoriesSeeded) return;
+  if (!Array.isArray(state.config.tagCategories) || !state.config.tagCategories.length) {
+    state.config.tagCategories = FIRST_CATEGORIES.map((c) => ({ ...c }));
+  }
+  const of = { ...(state.config.tagCategoryOf || {}) };
+  for (const [tag, colour] of Object.entries(state.config.labelColours || {})) {
+    if (of[tag]) continue;
+    const rgb = rgbOf(colour);
+    if (!rgb) continue;
+    let best = null;
+    let bestGap = Infinity;
+    for (const cat of state.config.tagCategories) {
+      const c = rgbOf(cat.colour);
+      if (!c) continue;
+      const gap = Math.hypot(rgb[0] - c[0], rgb[1] - c[1], rgb[2] - c[2]);
+      if (gap < bestGap) { bestGap = gap; best = cat; }
+    }
+    // Near enough to be the same colour picked twice (#f35959 and #f45959),
+    // not merely the nearest of four.
+    if (best && bestGap <= 40) of[tag] = best.id;
+  }
+  state.config.tagCategoryOf = of;
+  state.config.tagCategoriesSeeded = true;
+  saveConfigSoon();
+}
+
+/**
+ * The colour each tag is drawn in, categories applied: what a reader that does
+ * not know about categories (the phone, an older page) should paint.
+ */
+function effectiveLabelColours() {
+  const out = { ...(state.config.labelColours || {}) };
+  const cats = new Map((state.config.tagCategories || []).map((c) => [c.id, c]));
+  for (const [tag, id] of Object.entries(state.config.tagCategoryOf || {})) {
+    const cat = cats.get(id);
+    if (cat && cat.colour) out[tag] = cat.colour;
+  }
+  return out;
 }
 
 let saveTimer = null;
@@ -275,8 +347,12 @@ function flushConfig() {
 async function writeColours() {
   const body = JSON.stringify({
     version: 1,
-    labels: state.config.labelColours || {},
+    // With the categories' colours applied, so the phone paints a tag the
+    // colour of its category without having to know what a category is.
+    labels: effectiveLabelColours(),
     facets: state.config.facetColours || {},
+    categories: state.config.tagCategories || [],
+    categoryOf: state.config.tagCategoryOf || {},
     // And the labels made but not yet used: with the colours, it is what a
     // config file that could not be read is rebuilt from (see loadConfig).
     spare: Array.isArray(state.config.spareLabels) ? state.config.spareLabels : [],

@@ -52,8 +52,66 @@ for (const [field, spec] of Object.entries(LABEL_FIELDS)) {
  */
 function chipColour(field, value) {
   const config = state.config || {};
-  if (field === 'tags') return (config.labelColours || {})[String(value).toLowerCase()] || '';
+  if (field === 'tags') {
+    // A tag in a category wears the category's colour: one swatch for all of them.
+    const cat = tagCategoryOf(value);
+    if (cat && cat.colour) return cat.colour;
+    return (config.labelColours || {})[String(value).toLowerCase()] || '';
+  }
   return (config.facetColours || {})[field] || '';
+}
+
+/**
+ * Tag categories (Tre, 2026-11-01): Style, Method, Location, Outfit, and any
+ * added in Settings. Kept in the config as [{ id, name, colour }] in their
+ * order, and tagCategoryOf maps a lowercased tag to a category id.
+ */
+function tagCategories() {
+  const held = (state.config || {}).tagCategories;
+  return Array.isArray(held) ? held : [];
+}
+
+function tagCategoryOf(tag) {
+  const id = ((state.config || {}).tagCategoryOf || {})[String(tag).toLowerCase()];
+  return id ? tagCategories().find((c) => c.id === id) || null : null;
+}
+
+/**
+ * Entries ({ tag, ... }) split by category, in the categories' order and each
+ * keeping the order it was given; the ones in no category last, under null.
+ * Empty groups are left out.
+ */
+function byTagCategory(entries) {
+  const groups = tagCategories().map((cat) => ({ cat, entries: [] }));
+  const other = { cat: null, entries: [] };
+  const at = new Map(groups.map((g) => [g.cat.id, g]));
+  for (const entry of entries) {
+    const cat = tagCategoryOf(entry.tag);
+    ((cat && at.get(cat.id)) || other).entries.push(entry);
+  }
+  return [...groups, other].filter((g) => g.entries.length);
+}
+
+/** The heading over a category's chips, in its colour. "Other" for none. */
+function buildCategoryHead(cat) {
+  const head = document.createElement('div');
+  head.className = 'tag-cat-head';
+  head.textContent = cat ? cat.name : 'Other';
+  if (cat && cat.colour) head.style.setProperty('--chip-colour', cat.colour);
+  return head;
+}
+
+/**
+ * Chips under category headings, into `box`. With no categories at all there
+ * is nothing to head, and the chips go in as one run as they always did.
+ */
+function appendByCategory(box, entries, makeChip) {
+  const groups = byTagCategory(entries);
+  const headed = groups.some((g) => g.cat);
+  for (const { cat, entries: list } of groups) {
+    if (headed) box.appendChild(buildCategoryHead(cat));
+    for (const entry of list) box.appendChild(makeChip(entry));
+  }
 }
 
 /**
@@ -396,7 +454,7 @@ function renderTagSuggestions() {
       .filter((entry) => !used.has(entry.tag.toLowerCase())
         && (!want || entry.tag.toLowerCase().includes(want)));
     box.hidden = field === 'models' && !want;
-    for (const entry of found) {
+    const makeChip = (entry) => {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'chip suggest' + extra;
@@ -411,8 +469,11 @@ function renderTagSuggestions() {
         renderTagSuggestions();
         $(input).focus({ preventScroll: true });
       });
-      box.appendChild(chip);
-    }
+      return chip;
+    };
+    // Tags under their categories, so a style is picked from the styles.
+    if (field === 'tags') appendByCategory(box, found, makeChip);
+    else for (const entry of found) box.appendChild(makeChip(entry));
     if (!found.length && want) {
       box.insertAdjacentHTML('beforeend',
         '<span class="dim">Nothing by that name \u2014 press Enter to add it as new.</span>');
