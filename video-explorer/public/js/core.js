@@ -511,7 +511,7 @@ function toast(message, kind = '', action = null) {
     el.style.opacity = '0';
     setTimeout(() => el.remove(), 260);
     // A message that asks you to do something has to outlast a glance.
-  }, action ? 9000 : (kind === 'warn' ? 6000 : 3200));
+  }, action ? 9000 : (kind === 'warn' ? 9000 : 5000));
 }
 
 function setStatus(text) {
