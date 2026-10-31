@@ -1443,21 +1443,61 @@ async function editRecordsEach(items, opts = {}) {
 }
 
 /*
- * "Updated" after an edit you made to a video: a tag, a name, a rating (Tre,
- * 2026-10-31). Bookkeeping the app does on its own -- marking a video opened,
- * remembering where it stopped, a bookmark -- says nothing. Edits landing
- * together (a bulk answer sent in chunks) are one toast, counting the videos.
+ * A toast after an edit you made to a video, saying what changed and on which:
+ * "Rated 3.5 ★ · <name>", "Tagged Outdoor · 12 videos" (Tre, 2026-10-31; a
+ * bare "Updated" said nothing). Bookkeeping the app does on its own -- marking
+ * a video opened, remembering where it stopped, a bookmark -- says nothing, and
+ * a caller with its own fuller message passes quiet. Edits landing together (a
+ * bulk answer sent in chunks) are one toast, counting the videos.
  */
 const SILENT_EDITS = new Set(['opened', 'resume', 'setMark', 'removeMark']);
 let updatedPending = new Set();
+let updatedWhat = new Set();
 let updatedTimer = null;
-function noteUpdated(paths) {
+
+/** What one edit's patch does, as short phrases. */
+function describeEdit(patch) {
+  const names = (v) => [].concat(v || []).join(', ');
+  const out = [];
+  for (const [key, value] of Object.entries(patch)) {
+    if (key === 'path' || key === 'paths' || SILENT_EDITS.has(key)) continue;
+    const some = [].concat(value || []).length > 0;
+    switch (key) {
+      case 'rating': out.push(Number(value) ? `rated ${starsNumber(value)} ★` : 'rating cleared'); break;
+      case 'tags': out.push(some ? `tags set to ${names(value)}` : 'tags cleared'); break;
+      case 'addTags': if (some) out.push(`tagged ${names(value)}`); break;
+      case 'removeTags': if (some) out.push(`untagged ${names(value)}`); break;
+      case 'models': out.push(some ? `credited set to ${names(value)}` : 'credits cleared'); break;
+      case 'addModels': if (some) out.push(`credited ${names(value)}`); break;
+      case 'removeModels': if (some) out.push(`uncredited ${names(value)}`); break;
+      case 'addNotModels': if (some) out.push(`${names(value)} no longer suggested`); break;
+      case 'removeNotModels': if (some) out.push(`${names(value)} suggested again`); break;
+      case 'settled': out.push(value ? 'marked settled' : 'open to suggestions again'); break;
+      default: out.push(value === '' || value === null ? `${key} cleared` : `${key} changed`);
+    }
+  }
+  return out;
+}
+
+/** A video's name for a toast, wherever it is drawn. */
+function editedName(filePath) {
+  const file = fileAt(filePath) || (homeFiles.get(filePath) || [])[0]
+    || (state.playing && state.playing.path === filePath ? state.playing : null);
+  return file ? file.name : String(filePath).split(/[\\/]/).pop();
+}
+
+function noteUpdated(paths, what) {
   for (const p of paths) updatedPending.add(p);
+  for (const w of what) updatedWhat.add(w);
   clearTimeout(updatedTimer);
   updatedTimer = setTimeout(() => {
     const n = updatedPending.size;
+    const where = n === 1 ? editedName([...updatedPending][0]) : `${n.toLocaleString()} videos`;
+    // Edits that differ video by video (a bulk answer) are too many to list.
+    const said = updatedWhat.size && updatedWhat.size <= 3 ? [...updatedWhat].join(', ') : 'labels updated';
     updatedPending = new Set();
-    toast(n === 1 ? 'Updated' : `Updated ${n.toLocaleString()} videos`, 'ok');
+    updatedWhat = new Set();
+    toast(`${said[0].toUpperCase()}${said.slice(1)} · ${where}`, 'ok');
   }, 400);
 }
 
@@ -1501,10 +1541,9 @@ async function sendRecordEdits(body, { quiet = false } = {}) {
       for (const file of copies) applyRecord(file, record);
     }
     pruneFiltered(Object.keys(data.records || {}));
-    const keys = body.items ? body.items.flatMap((it) => Object.keys(it)) : Object.keys(body);
-    const meant = keys.some((k) => k !== 'path' && k !== 'paths' && !SILENT_EDITS.has(k));
+    const what = [...new Set((body.items || [body]).flatMap(describeEdit))];
     const done = Object.entries(data.records || {}).filter(([, r]) => !r.error).map(([p]) => p);
-    if (!quiet && meant && done.length) noteUpdated(done);
+    if (!quiet && what.length && done.length) noteUpdated(done, what);
     // Redrawn where it was: the sections keep their order (holdGroupOrder) and
     // the page its place (render's anchor); only the moved cards change.
     const moved = [...before].some(([p, was]) => fileAt(p) && sectionsOf(fileAt(p)) !== was);

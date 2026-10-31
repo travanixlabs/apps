@@ -345,7 +345,7 @@ async function refuseSuggestion(file, name) {
   const credited = (file.models || []).some((m) => m.toLowerCase() === name.toLowerCase());
   await editRecords([file.path], credited
     ? { addNotModels: [name], removeModels: [name] }
-    : { addNotModels: [name] });
+    : { addNotModels: [name] }, { quiet: true }); // says what happened itself, below
   toast(credited
     ? `${name} uncredited, and will not be suggested for this video`
     : `${name} will not be suggested for this video`, 'ok');
@@ -369,7 +369,7 @@ async function refuseSuggestedGroup(group) {
     + `${name} will not be suggested for them again.`
     + (skipped ? `\n${skipped} that already credit ${name} are left as they are.` : ''))) return;
   for (let i = 0; i < paths.length; i += 200) {
-    await editRecords(paths.slice(i, i + 200), { addNotModels: [name] });
+    await editRecords(paths.slice(i, i + 200), { addNotModels: [name] }, { quiet: true });
   }
   toast(`${name} turned down on ${paths.length} video${paths.length === 1 ? '' : 's'}`, 'ok');
   render();
@@ -419,7 +419,7 @@ async function settleGroupSuggestions(group, settle = true) {
   const n = `${paths.length.toLocaleString()} video${paths.length === 1 ? '' : 's'}`;
   if (!settle && !window.confirm(`Let ${group.name}'s ${n} be suggested other names again?`)) return;
   const items = paths.map((p) => ({ path: p, settled: settle }));
-  for (let i = 0; i < items.length; i += 500) await editRecordsEach(items.slice(i, i + 500));
+  for (let i = 0; i < items.length; i += 500) await editRecordsEach(items.slice(i, i + 500), { quiet: true });
   toast(settle
     ? `${group.name}: ${n} marked all profiled — no more suggestions on them`
     : `${group.name}: ${n} can be suggested other names again`, 'ok');
@@ -427,7 +427,7 @@ async function settleGroupSuggestions(group, settle = true) {
 }
 
 async function unrefuseSuggestion(file, name) {
-  await editRecords([file.path], { removeNotModels: [name] });
+  await editRecords([file.path], { removeNotModels: [name] }, { quiet: true });
   toast(`${name} can be suggested again`, 'ok');
   if (state.playing) buildPlayerSuggestions(state.playing);
 }
@@ -905,7 +905,7 @@ async function buildPlayerSuggestions(file) {
   dismiss.addEventListener('click', async (ev) => {
     ev.stopPropagation();
     dismiss.disabled = true;
-    await editRecords([current.path], { addNotModels: suggested.map((s) => s.name) });
+    await editRecords([current.path], { addNotModels: suggested.map((s) => s.name) }, { quiet: true });
     toast(`${suggested.length} suggestion${suggested.length === 1 ? '' : 's'} turned down`, 'ok');
     if (state.playing) buildPlayerSuggestions(state.playing);
     else host.replaceChildren();

@@ -438,7 +438,7 @@ async function commitTags(mode) {
   const rating = tagRating === null ? {} : { rating: tagRating };
   await editRecords(paths, mode === 'add'
     ? { addTags: tags, addModels: models, ...rating }
-    : { tags, models, ...rating });
+    : { tags, models, ...rating }, { quiet: true }); // says what happened itself, below
 
   const say = (n, noun) => `${n} ${noun}${n === 1 ? '' : 's'}`;
   const videos = say(paths.length, 'video');
