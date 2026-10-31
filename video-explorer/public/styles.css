@@ -3977,3 +3977,20 @@ body.dragging .card { cursor: grabbing; }
 #volBtn.sound-off { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 55%, transparent); background: color-mix(in srgb, var(--danger) 12%, transparent); }
 #volBtn.sound-on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 55%, transparent); background: color-mix(in srgb, var(--ok) 12%, transparent); }
 #volBtn.sound-off .state-lead, #volBtn.sound-on .state-lead { color: inherit; opacity: .8; }
+
+/* The passcode on opening (js/lock.js). Everything else is hidden until it is right. */
+html.locked body > *:not(#lock):not(script) { visibility: hidden; }
+.lock { position: fixed; inset: 0; z-index: 2147483647; display: grid; place-items: center; background: var(--bg); }
+.lock-panel { position: relative; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 36px 44px; background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); }
+.lock-title { margin: 0; font-size: 1.5rem; color: var(--text); }
+.lock-lead { margin: 0; color: var(--text-dim); }
+.lock-dots { display: flex; gap: 14px; margin: 6px 0; }
+.lock-dots span { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border-strong); }
+.lock-dots span.on { background: var(--accent); border-color: var(--accent); }
+/* The box is what the keys go into; the dots are what you see of it. */
+.lock-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; cursor: default; }
+.lock-note { margin: 0; min-height: 1.2em; color: var(--danger); font-size: var(--fs-sm, .9rem); }
+.lock.wrong .lock-dots { animation: lock-shake .35s; }
+.lock.wrong .lock-dots span { border-color: var(--danger); }
+@keyframes lock-shake { 0%, 100% { transform: none; } 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
+@media (prefers-reduced-motion: reduce) { .lock.wrong .lock-dots { animation: none; } }

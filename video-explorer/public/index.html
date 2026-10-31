@@ -16,6 +16,17 @@
 </head>
 <body>
 
+<div id="lock" class="lock" role="dialog" aria-modal="true" aria-labelledby="lockTitle">
+  <div class="lock-panel">
+    <h2 id="lockTitle" class="lock-title">Video Explorer</h2>
+    <p class="lock-lead">Enter the passcode</p>
+    <div id="lockDots" class="lock-dots" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+    <input id="lockInput" class="lock-input" type="password" inputmode="numeric" autocomplete="off" maxlength="4" aria-label="Passcode" autofocus>
+    <p id="lockNote" class="lock-note" role="alert"></p>
+  </div>
+</div>
+<script src="/js/lock.js"></script>
+
 <header class="topbar">
   <h1 class="brand visually-hidden">Video Explorer</h1>
   <div class="topbar-row">
