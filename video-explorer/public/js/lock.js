@@ -14,7 +14,7 @@
  * underneath is hidden from the first paint rather than flashing up first.
  */
 (() => {
-  const PASSCODE = '6894';
+  const PASSCODE = '6666';
   const KEY = 've-unlocked';
   // Five minutes without a key, a click, a wheel or the mouse moving. A video
   // playing in the player counts as use: watching is not being away.
