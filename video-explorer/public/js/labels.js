@@ -321,6 +321,19 @@ function vocabByName(field) {
   return sorted;
 }
 
+/**
+ * The tags with the ones on no video yet added in, at 0: a label made in
+ * Settings (or taken off its last video) is there to be picked, and the
+ * vocabulary only knows the ones some video carries.
+ */
+function withSpareTags(field, sorted) {
+  const spare = field === 'tags' ? (state.config || {}).spareLabels || [] : [];
+  if (!spare.length) return sorted;
+  const known = new Set(sorted.map((e) => e.tag.toLowerCase()));
+  const extra = spare.filter((t) => !known.has(t.toLowerCase())).map((tag) => ({ tag, count: 0 }));
+  return extra.length ? sorted.concat(extra).sort((a, b) => BY_NAME(a.tag, b.tag)) : sorted;
+}
+
 /** Which input holds which field, so the two sections stay symmetrical. */
 const LABEL_INPUTS = {
   tags: { input: '#tagInput', suggest: '#tagSuggest', picked: '#tagPicked' },
@@ -450,7 +463,7 @@ function renderTagSuggestions() {
     // five thousand performers its own names are otherwise somewhere far down.
     // Performers are found by typing: five thousand names as a wall of pills
     // was more to scroll past than to pick from.
-    const found = field === 'models' && !want ? [] : vocabByName(field)
+    const found = field === 'models' && !want ? [] : withSpareTags(field, vocabByName(field))
       .filter((entry) => !used.has(entry.tag.toLowerCase())
         && (!want || entry.tag.toLowerCase().includes(want)));
     box.hidden = field === 'models' && !want;
