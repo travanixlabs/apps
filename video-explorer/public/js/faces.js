@@ -587,10 +587,10 @@ function labelRows() {
 }
 
 /**
- * The labels under their categories: each category a heading row with its
- * colour, its name (renamed in place) and a delete, then its labels; the
- * labels in no category last. An empty category still shows -- it is
- * somewhere to put labels.
+ * The labels under their categories: each category a block of its own, tinted
+ * in its colour, headed by its name (renamed in place), its swatch and a
+ * delete, its labels inside; the labels in no category last. An empty
+ * category still shows -- it is somewhere to put labels.
  */
 function renderLabelList() {
   const host = $('#labelList');
@@ -610,8 +610,21 @@ function renderLabelList() {
   for (const cat of [...tagCategories(), null]) {
     const entries = inCat(cat);
     if (!cat && !entries.length) continue;
-    host.appendChild(buildCategoryRow(cat, entries.length));
-    for (const { tag, count } of entries) host.appendChild(buildLabelRow(tag, count, cat));
+    const group = document.createElement('div');
+    group.className = 'label-group' + (cat ? '' : ' label-group-none');
+    if (cat) {
+      group.dataset.catGroup = cat.id;
+      group.style.setProperty('--cat', cat.colour || '#8a94a6');
+    }
+    group.appendChild(buildCategoryRow(cat, entries.length));
+    for (const { tag, count } of entries) group.appendChild(buildLabelRow(tag, count, cat));
+    if (cat && !entries.length) {
+      const empty = document.createElement('div');
+      empty.className = 'label-group-empty';
+      empty.textContent = 'No labels yet — pick this category on a label to move it here.';
+      group.appendChild(empty);
+    }
+    host.appendChild(group);
   }
 }
 
@@ -687,19 +700,20 @@ function buildCategoryRow(cat, n) {
 function buildLabelRow(tag, count, cat) {
   const row = document.createElement('div');
   row.className = 'label-row';
-  // In a category, the colour is the category's: shown, not set here.
-  const colour = document.createElement('input');
-  colour.type = 'color';
-  colour.value = chipColour('tags', tag) || '#8a94a6';
+  // In a category, the colour is the category's: a dot in it, not a picker.
   if (cat) {
-    colour.disabled = true;
-    colour.dataset.catSwatch = cat.id;
-    colour.title = `${cat.name}'s colour — change it on the category`;
+    const dot = document.createElement('span');
+    dot.className = 'label-dot';
+    dot.title = `${cat.name}'s colour — change it on the category`;
+    row.appendChild(dot);
   } else {
+    const colour = document.createElement('input');
+    colour.type = 'color';
+    colour.value = chipColour('tags', tag) || '#8a94a6';
     colour.title = `Colour for "${tag}"`;
     colour.addEventListener('input', () => setLabelColour(tag, colour.value));
+    row.appendChild(colour);
   }
-  row.appendChild(colour);
 
   // A text box rather than a rename button: the name IS the control, and a
   // rename is committed by leaving it or pressing Enter.
@@ -801,7 +815,7 @@ async function renameCategory(id, raw, field) {
 function setCategoryColour(id, colour) {
   state.config.tagCategories = tagCategories().map((c) => (c.id === id ? { ...c, colour } : c));
   saveColoursSoon('tagCategories');
-  for (const swatch of document.querySelectorAll(`#labelList [data-cat-swatch="${id}"]`)) swatch.value = colour;
+  for (const group of document.querySelectorAll(`#labelList [data-cat-group="${id}"]`)) group.style.setProperty('--cat', colour);
   repaintChips('tags');
 }
 
