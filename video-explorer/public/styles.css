@@ -3892,7 +3892,9 @@ body.dragging .card { cursor: grabbing; }
 .settings-saved[hidden] { display: none; }
 .settings-foot { height: 40px; padding: 0 16px; }
 .settings-foot .hint { font-size: var(--fs-xs); }
-#settingsModal .modal-card { width: min(720px, 100%); height: min(620px, 92vh); }
+/* As tall as what it holds, up to nearly the window; never shorter than it
+   was, so switching tabs does not make it jump about (Tre, 2026-11-01). */
+#settingsModal .modal-card { width: min(720px, 100%); height: auto; min-height: min(620px, 92vh); max-height: 92vh; }
 #settingsModal .modal-head { height: 48px; padding: 0 10px 0 16px; }
 #settingsModal .modal-head h2 { font-size: var(--fs-lg); }
 
@@ -4032,7 +4034,8 @@ html.locked body > *:not(#lock):not(script) { visibility: hidden; }
 }
 /* Each category its own block, tinted and edged in its colour, so a heading
    cannot be read as one more label. */
-.label-list { max-height: 420px; border: 0; border-radius: 0; display: flex; flex-direction: column; gap: 10px; }
+/* Shown whole: the Settings body scrolls, not the list inside it. */
+.label-list { max-height: none; overflow: visible; border: 0; border-radius: 0; display: flex; flex-direction: column; gap: 10px; }
 .label-group {
   --cat: var(--border-strong);
   border: 1px solid color-mix(in srgb, var(--cat) 45%, var(--border));
@@ -4077,4 +4080,18 @@ span.label-cat-name { flex: 1; padding: 3px 6px; }
   border-radius: 50%;
   background: var(--cat);
 }
+.label-grip {
+  flex: none;
+  margin-right: 2px;
+  color: color-mix(in srgb, var(--cat) 50%, var(--text-faint));
+  font-size: 13px;
+  letter-spacing: -4px;
+  cursor: grab;
+  user-select: none;
+  padding: 2px 6px 2px 0;
+}
+.label-grip:active { cursor: grabbing; }
+.label-group.dragging { opacity: .45; }
+.label-group.drop-before { box-shadow: 0 -3px 0 0 var(--accent); }
+.label-group.drop-after { box-shadow: 0 3px 0 0 var(--accent); }
 .label-group-empty { padding: 8px 14px; font-size: 12px; color: var(--text-faint); font-style: italic; }

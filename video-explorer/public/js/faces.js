@@ -615,6 +615,7 @@ function renderLabelList() {
     if (cat) {
       group.dataset.catGroup = cat.id;
       group.style.setProperty('--cat', cat.colour || '#8a94a6');
+      wireCategoryDrag(group, cat);
     }
     group.appendChild(buildCategoryRow(cat, entries.length));
     for (const { tag, count } of entries) group.appendChild(buildLabelRow(tag, count, cat));
@@ -654,9 +655,81 @@ function syncNewLabelCategory() {
   }));
 }
 
+/**
+ * Categories are put in order by dragging one by its grip onto another: the
+ * order is the one the filter, the tag editor and the phone list them in.
+ * Only the grip starts a drag -- a draggable block would take the pointer from
+ * the name field and the swatch inside it. The block "No category" stays last
+ * and takes no drop.
+ */
+let draggingCategory = null;
+
+function wireCategoryDrag(group, cat) {
+  const clearMarks = () => {
+    for (const g of document.querySelectorAll('#labelList .drop-before, #labelList .drop-after')) {
+      g.classList.remove('drop-before', 'drop-after');
+    }
+  };
+  group.addEventListener('dragstart', (ev) => {
+    draggingCategory = cat.id;
+    ev.dataTransfer.effectAllowed = 'move';
+    ev.dataTransfer.setData('text/plain', cat.name);
+    group.classList.add('dragging');
+  });
+  group.addEventListener('dragend', () => {
+    draggingCategory = null;
+    group.draggable = false;
+    group.classList.remove('dragging');
+    clearMarks();
+  });
+  group.addEventListener('dragover', (ev) => {
+    if (!draggingCategory) return;
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = 'move';
+    const box = group.getBoundingClientRect();
+    const after = ev.clientY > box.top + box.height / 2;
+    clearMarks();
+    if (draggingCategory !== cat.id) group.classList.add(after ? 'drop-after' : 'drop-before');
+  });
+  group.addEventListener('drop', (ev) => {
+    if (!draggingCategory) return;
+    ev.preventDefault();
+    const box = group.getBoundingClientRect();
+    const after = ev.clientY > box.top + box.height / 2;
+    const moved = draggingCategory;
+    clearMarks();
+    if (moved !== cat.id) moveCategory(moved, cat.id, after);
+  });
+}
+
+async function moveCategory(id, ontoId, after) {
+  const cats = tagCategories();
+  const moving = cats.find((c) => c.id === id);
+  if (!moving) return;
+  const rest = cats.filter((c) => c.id !== id);
+  const at = rest.findIndex((c) => c.id === ontoId);
+  if (at < 0) return;
+  rest.splice(after ? at + 1 : at, 0, moving);
+  if (rest.every((c, i) => c.id === cats[i].id)) return;
+  state.config.tagCategories = rest;
+  renderLabelList();
+  categoriesChanged();
+  await saveCategories();
+}
+
 function buildCategoryRow(cat, n) {
   const row = document.createElement('div');
   row.className = 'label-row label-cat-row';
+  if (cat) {
+    const grip = document.createElement('span');
+    grip.className = 'label-grip';
+    grip.textContent = '\u2807\u2807';
+    grip.title = 'Drag to reorder the categories';
+    // Draggable only while held by the grip; dragend takes it back.
+    grip.addEventListener('pointerdown', () => { row.parentElement.draggable = true; });
+    grip.addEventListener('pointerup', () => { row.parentElement.draggable = false; });
+    row.appendChild(grip);
+  }
   if (!cat) {
     const name = document.createElement('span');
     name.className = 'label-cat-name';
