@@ -4018,8 +4018,9 @@ html.locked body > *:not(#lock):not(script) { visibility: hidden; }
   border-radius: 50%;
   background: var(--chip-colour, var(--border-strong));
 }
-/* Headings take room, so the editor's list gets more of it. */
-#tagSuggest { max-height: 260px; }
+/* The editor's tag list is shown whole, never scrolled on its own: the dialog
+   body scrolls instead when it is longer than the window (Tre, 2026-11-01). */
+#tagSuggest { max-height: none; overflow-y: visible; }
 .label-cat-pick {
   flex: none;
   max-width: 130px;
