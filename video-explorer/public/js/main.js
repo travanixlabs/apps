@@ -815,23 +815,24 @@ function onKeyDown(ev) {
     return;
   }
 
-  // Arrows step through the listing while the player is open -- previewing or
-  // playing alike. Seeking is the timeline's, while it has the focus.
-  // Not while typing, and not with a dialog open over the player: left and
-  // right were moving the caret in the label box AND changing the video behind.
-  if (!ev.ctrlKey && !ev.metaKey && playerHasKeys() && !isTyping()
-      && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) {
-    if (ev.target.closest && ev.target.closest('#pbSeek')) return;
-    ev.preventDefault();
-    playSibling(ev.key === 'ArrowLeft' ? -1 : 1);
-    return;
-  }
-  // Up and down move within the video: five seconds either way while it plays,
-  // a frame either way on the frames (held five seconds, then the slideshow
-  // carries on).
+  // Up and down step through the listing while the player is open --
+  // previewing or playing alike; down is the next, as the list reads (Tre,
+  // 2026-11-18: these were left and right). Not while typing, and not with a
+  // dialog open over the player: the arrows were moving the caret in the label
+  // box AND changing the video behind.
   if (!ev.ctrlKey && !ev.metaKey && !ev.altKey && playerHasKeys() && !isTyping()
       && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown')) {
-    const step = ev.key === 'ArrowUp' ? 1 : -1;
+    ev.preventDefault();
+    playSibling(ev.key === 'ArrowUp' ? -1 : 1);
+    return;
+  }
+  // Left and right move within the video: five seconds either way while it
+  // plays, a frame either way on the frames (held five seconds, then the
+  // slideshow carries on). The timeline does its own, while it has the focus.
+  if (!ev.ctrlKey && !ev.metaKey && !ev.altKey && playerHasKeys() && !isTyping()
+      && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) {
+    if (ev.target.closest && ev.target.closest('#pbSeek')) return;
+    const step = ev.key === 'ArrowRight' ? 1 : -1;
     if (previewing()) { ev.preventDefault(); stepPreviewFrame(step); return; }
     if (watching()) { ev.preventDefault(); seekBy(step * 5); wakeBar(); return; }
   }
